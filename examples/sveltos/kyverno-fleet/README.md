@@ -101,7 +101,7 @@ the receipt, and cleans up. The fleet build takes five to seven minutes.
 #    policy organization that owns the reviewed profile, and a scratch
 #    organization for the throwaway cluster Spaces. A browser round trip
 #    each, well under a minute.
-cub --context my-policy auth login     # choose the helm-catalog organization
+cub --context my-policy auth login     # choose the catalog organization
 cub --context my-scratch auth login    # choose a scratch organization
 
 # 2. Explicit consent plus both contexts, then one command. The fleet
@@ -119,10 +119,20 @@ npm run sveltos-oci-delivery:run
 npm run sveltos-oci-delivery:verify
 ```
 
+The recorded run used the maintainers' catalog organization, named
+`helm-catalog`, because it owns the approval policy space and trigger filter
+the runner checks for. To run this in your own organization, create that
+wiring first from
+[the committed policy](../../../config-catalog/policies/catalog-standard.yaml);
+the runner verifies its preconditions and stops early with a named reason
+instead of failing after the fleet build.
+
 Known limit: on current hub.confighub.com the approval gate does not appear in
 the Unit's `ApplyGates` from the Space trigger-filter wiring, so the run stops
 at the approval-boundary observation. That behavior is tracked in
-confighubai/confighub#4975; the run is expected to pass once it is resolved.
+confighubai/confighub#4975, a tracker that is not public;
+`npm run sveltos-gate:probe` answers the same question from outside. The run
+is expected to pass once the defect is resolved.
 When cleaning up scratch Spaces by hand, delete each management Space before
 its `-argo-apps` sibling, or the Target is stranded by a dangling reference
 (confighubai/confighub#4980).

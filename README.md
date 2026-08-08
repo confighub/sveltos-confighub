@@ -1,8 +1,14 @@
 # Sveltos with ConfigHub: govern one change across a fleet
 
-A platform team manages one fleet: a management cluster running Sveltos and
-Argo CD, and workload clusters grouped as pilot, staging, and production.
-ConfigHub keeps every reviewed record and its approval history, OCI carries
+Change one reviewed record and every selected cluster follows it, with an
+approval boundary and a committed receipt at each step. That is the claim
+this repository proves, chapter by chapter, and refuses to overstate.
+
+The fleet looks like this. A platform team manages a management cluster
+running Sveltos and Argo CD, and workload clusters grouped as pilot,
+staging, and production.
+[ConfigHub](https://confighub.com) keeps every reviewed record and its
+approval history, OCI carries
 exact digests, and Sveltos selects clusters by label and reconciles them.
 Each chapter of this repository makes one operational claim and backs it with
 a machine-checked matrix, a receipt contract, and deterministic self-tests.
@@ -44,21 +50,40 @@ delivery machinery end to end on a five-cluster kind fleet with a committed
 receipt and phase timings: Kyverno converged everywhere from portable OCI
 digests, a demo application delivered with per-environment replica counts, a
 values change and a version bump landed on the pilot alone, and injected
-drift repaired. Chapters three, four, and five are fully drafted and proven
+drift repaired. Run it yourself with
+`npm run sveltos-fleet-rehearsal:run`; it needs the live tools below and no
+ConfigHub account.
+
+Chapters three, four, and five are fully drafted and proven
 offline; their live recordings wait on one server defect
 (confighubai/confighub#4975), each is one command once it closes, and every
-observed matrix cell stays honestly empty until then.
+observed matrix cell stays honestly empty until then. That defect tracker is
+not public, so this repository carries its own answer: the probe below
+reports in about two minutes whether the defect still stands. It stood at
+the last probe on 2026-08-08.
 
 ```bash
 # Two minutes answers whether the server fix has landed.
 CUB_CONTEXT=my-policy npm run sveltos-gate:probe
 ```
 
+The governed lanes talk to ConfigHub through the `cub` CLI. Install it with
+`curl -fsSL https://hub.confighub.com/cub/install.sh | bash`, then run
+`cub auth login`. The recorded runs used the maintainers' catalog
+organization, which owns the approval policy space and trigger filter the
+runners check for. In another organization, create that wiring first from
+[the committed policy](config-catalog/policies/catalog-standard.yaml); each
+runner checks its preconditions and stops early with a named reason instead
+of failing after the fleet build.
+
 ## Run the offline proofs
 
-Every check runs without an account, cluster, or network:
+Every check runs without an account, cluster, or network, and the
+repository has zero npm dependencies:
 
 ```bash
+git clone https://github.com/confighub/sveltos-confighub
+cd sveltos-confighub
 npm run verify
 ```
 
