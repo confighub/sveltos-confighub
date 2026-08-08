@@ -1,0 +1,17 @@
+name: verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install YAML parser for the proof helpers
+        run: pip install pyyaml
+      - name: Run every offline verify and self-test lane
+        run: npm run verify

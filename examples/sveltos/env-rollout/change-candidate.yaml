@@ -1,0 +1,24 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosEnvRolloutChange
+metadata:
+  name: kyverno-background-controller-replicas
+spec:
+  description: Raise the Kyverno background controller from one replica to two.
+  chart: kyverno/kyverno
+  chartVersion: "3.8.1"
+  valuesPath: backgroundController.replicas
+  before: 1
+  after: 2
+  waves:
+    - wave: 1
+      environment: pilot
+      profile: clusterprofile-pilot.yaml
+      space: sveltos-kyverno-env-pilot
+    - wave: 2
+      environment: staging
+      profile: clusterprofile-staging.yaml
+      space: sveltos-kyverno-env-staging
+    - wave: 3
+      environment: prod
+      profile: clusterprofile-prod.yaml
+      space: sveltos-kyverno-env-prod

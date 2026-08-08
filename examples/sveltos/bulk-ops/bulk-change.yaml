@@ -1,0 +1,29 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosBulkChangeCandidate
+metadata:
+  name: kyverno-background-controller-fleet-wide
+spec:
+  description: Raise the Kyverno background controller from two replicas to three on every fleet cluster in one reviewed fan-out.
+  chart: kyverno/kyverno
+  chartVersion: "3.8.2"
+  valuesPath: backgroundController.replicas
+  before: 2
+  after: 3
+  fanOut:
+    method: one reviewed candidate applied to every environment record in one pass
+    approvals: each environment record still enforces its own approval gate
+    records:
+      - environment: pilot
+        profile: clusterprofile-pilot.yaml
+        space: sveltos-kyverno-bulk-pilot
+      - environment: staging
+        profile: clusterprofile-staging.yaml
+        space: sveltos-kyverno-bulk-staging
+      - environment: prod
+        profile: clusterprofile-prod.yaml
+        space: sveltos-kyverno-bulk-prod
+  audit:
+    gateQuery: Labels.Proof = 'sveltos-bulk-ops' AND LEN(ApplyGates) > 0
+    gateQueryScope: cub unit list --space "*"
+    driftObject: apps/v1/Deployment/kyverno/kyverno-background-controller
+    claim: zero drift anywhere after the fan-out, with injected drift repaired on every cluster and no record changed out of band

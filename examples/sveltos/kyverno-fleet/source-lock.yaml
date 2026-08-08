@@ -1,0 +1,25 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SourceLock
+metadata:
+  name: sveltos-kyverno-fleet-v1-12-0
+spec:
+  sveltos:
+    version: v1.12.0
+    addonControllerRepository: https://github.com/projectsveltos/addon-controller
+    addonControllerCommit: b528b72dedf369566470709796d23d93fa1827b1
+    manifestRepository: https://github.com/projectsveltos/sveltos
+    manifestCommit: 8f79fcbbc939b3c31549f2b304291ba8bfd90f2d
+    manifestSha256: 7ce065d86662c9cc431c07021d5b1cbe812b00f7ddde57dc465a44b03f5a7280
+    serviceMonitorCrdSha256: 6ced19ffafe2ca818ff5813f5006cb9e34a3e175e5212d87319778635d04d70d
+  sveltosctl:
+    version: v1.12.0
+    commit: 84aa22378d988ccd2114944b3723929fb248758f
+    darwinArm64Sha256: 7a33043ceb0043f6f0e9b52bd9a6b79de8a4dc555d9f6e023a5a0ad5e3ac21f9
+  workload:
+    chart: kyverno/kyverno
+    chartVersion: 3.8.1
+    applicationVersion: v1.18.1
+  testEnvironment:
+    kindVersion: v0.31.0
+    managementKubernetesVersion: v1.35.0
+    workloadKubernetesVersion: v1.35.0

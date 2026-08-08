@@ -1,0 +1,19 @@
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: podinfo-app-pilot
+spec:
+  clusterSelector:
+    matchLabels:
+      environment: pilot
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://stefanprodan.github.io/podinfo
+      repositoryName: podinfo
+      chartName: podinfo/podinfo
+      chartVersion: 6.14.1
+      releaseName: podinfo
+      releaseNamespace: podinfo
+      helmChartAction: Install
+      values: |
+        replicaCount: 1

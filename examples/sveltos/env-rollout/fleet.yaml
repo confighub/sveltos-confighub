@@ -1,0 +1,17 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosEnvRolloutFleet
+metadata:
+  name: kyverno-env-rollout-fleet
+spec:
+  management:
+    cluster: hx-sveltos-env-mgmt
+    creationCommand: cub cluster up
+  workloads:
+    - cluster: hx-sveltos-env-pilot
+      environment: pilot
+    - cluster: hx-sveltos-env-staging
+      environment: staging
+    - cluster: hx-sveltos-env-prod-a
+      environment: prod
+    - cluster: hx-sveltos-env-prod-b
+      environment: prod
