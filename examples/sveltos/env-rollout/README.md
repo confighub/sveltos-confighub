@@ -82,9 +82,9 @@ npm run sveltos-env-rollout-proof:self-test
 ```
 
 The live proof follows the two-wave runner's discipline: a self-contained
-kind fleet, one approval bracket per environment revision, portable OCI
-digests reconciled by Argo CD, Sveltos convergence per environment group, and
-a convergence audit at the end. Fleet proofs run serially against the
+kind fleet, one approval bracket per environment revision, each approved
+revision published as an OCI image that Sveltos fetches itself, Sveltos
+convergence per environment group, and a convergence audit at the end. Fleet proofs run serially against the
 organization, never in parallel. To find out whether the server fix has landed, run the two-minute probe. It
 wires one throwaway Space, creates one probe Unit, watches for the approval
 gate, and cleans up after itself. One passing probe unblocks every drafted
