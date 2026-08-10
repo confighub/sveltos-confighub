@@ -59,3 +59,27 @@ fixable in the addon-controller: a gzip sniff before the tar parse, and
 skipping `._*` and `PaxHeader` entries in the extension filter. Whichever
 side moves, the artifact contract should be written down where both
 projects can point at it.
+
+## Re-probe against the fix build, 2026-08-10
+
+The maintainer built `projectsveltos/addon-controller:v1.13.0-ch` with a
+gzip sniff before the tar parse and an AppleDouble filter in the layer
+reader. The same probe ran again against that image, with the deployment
+confirmed to be running it, and every shape now deploys.
+
+| Artifact shape | Result on the fix build |
+| --- | --- |
+| Single layer of raw YAML bytes | Provisioned |
+| Uncompressed ustar tar of `.yaml` files | Provisioned |
+| Gzipped tar of the same files | Provisioned, where the released build failed |
+| Tar written by macOS bsdtar carrying an AppleDouble `._ns.yaml` entry | Provisioned, where the released build failed |
+
+One caution worth recording. A macOS tar only carries AppleDouble entries
+when the source file has extended attributes, and `tar -tf` hides those
+entries when listing, so an archive can look clean and not be. The first
+attempt at this re-probe pushed an archive with no AppleDouble entry at
+all and passed without exercising the fix. The confirmed result above used
+an archive whose raw bytes contain `._ns.yaml`.
+
+The catalog keeps publishing single raw-YAML layers, because that shape
+works on every build, released or patched.
