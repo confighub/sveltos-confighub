@@ -6,9 +6,16 @@ history in ConfigHub, and let a fleet controller handle cluster selection and
 reconciliation.
 
 ConfigHub stores the reviewed configuration and runs the catalog's checks against it.
-Sveltos runs on a management cluster, selects workload clusters by label, and installs
-the declared add-on. ConfigHub keeps the reviewed record; Sveltos handles cluster
-selection and reconciliation.
+ConfigHub publishes changes as OCI images on its OCI gateway. Sveltos runs on a
+management cluster, fetches the configuration from that gateway, and sends it to the
+clusters it selects by label. ConfigHub keeps the reviewed record; Sveltos handles
+cluster selection and reconciliation.
+
+The runs recorded below used a GitOps controller to carry the OCI artifact to the
+management cluster, because Sveltos could not yet fetch it directly. It can now, and
+the [live probe](../../planning/remote-url-oci-probe.md) records what that path
+accepts. The steps below stay as they were recorded, and the re-recordings will
+follow the direct path.
 
 ## The reviewed configuration
 
