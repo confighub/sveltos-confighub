@@ -3,11 +3,11 @@ kind: SveltosFleetRehearsalLock
 metadata:
   name: fleet-rehearsal-prerequisites
 spec:
-  argoCd:
-    version: v3.4.6
-    manifestUrl: https://raw.githubusercontent.com/argoproj/argo-cd/v3.4.6/manifests/install.yaml
-    manifestSha256: 752b5a2681f2522fc78ea12ba2d23be44a4523cfa5d9a55cf1907909cc23fc5d
-    note: The reference topology from cub cluster up runs the same Argo CD version; the rehearsal installs it directly because it uses no ConfigHub organization.
+  sveltos:
+    version: v1.13.0
+    manifestUrl: https://raw.githubusercontent.com/projectsveltos/sveltos/v1.13.0/manifest/manifest.yaml
+    manifestSha256: 5538558ad428617153f963318f22e70eb32fa949e9e0f07e07f02a0db700e2d7
+    note: The release whose remote fetch path was verified live and recorded in docs/planning/remote-url-oci-probe.md. Sveltos fetches each published wave from the registry itself, so the rehearsal installs no other controller.
   podinfo:
     chartVersion: "6.14.1"
     appVersion: 6.14.1

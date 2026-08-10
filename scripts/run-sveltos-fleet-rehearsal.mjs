@@ -36,18 +36,6 @@ if (!allowedModes.has(mode)) {
 }
 
 const artifactType = "application/vnd.confighub.kubernetes.config.v1";
-const deployableLayerType = "application/vnd.oci.image.layer.v1.tar+gzip";
-const rehearsalRoot = join(repoRoot, "examples", "sveltos", "fleet-rehearsal");
-const lockPath = join(rehearsalRoot, "source-lock.yaml");
-const rolloutRoot = join(repoRoot, "examples", "sveltos", "env-rollout");
-const patchRoot = join(repoRoot, "examples", "sveltos", "cve-patch");
-const sveltosLockPath = join(
-  repoRoot,
-  "examples",
-  "sveltos",
-  "kyverno-fleet",
-  "source-lock.yaml",
-);
 const receiptPath = join(
   repoRoot,
   "runs",
@@ -61,19 +49,26 @@ const summaryPath = join(
   "summary.md",
 );
 const environments = ["pilot", "staging", "prod"];
-const portableRepository = "sveltos-fleet-rehearsal";
+const profilesRepository = "sveltos-fleet-rehearsal/profiles";
+const liveTag = "live";
+const layerFileName = "profiles.yaml";
+const profileLayerType = "application/yaml";
+const profileLayerShape = "single-layer-raw-yaml";
+const remoteFetchInterval = "1m0s";
+const caSecretName = "sveltos-oci-ca";
+const caSecretType = "addons.projectsveltos.io/cluster-profile";
+const bootstrapProfileName = "sveltos-fleet-rehearsal-bootstrap";
+const probeRecord = "docs/planning/remote-url-oci-probe.md";
 const registrationNamespace = "projectsveltos";
 const backgroundDeployment = "kyverno-background-controller";
-const sveltosManifestUrl =
-  "https://raw.githubusercontent.com/projectsveltos/sveltos/v1.12.0/manifest/manifest.yaml";
 const rehearsalClaim =
-  "The delivery machinery shared by the fleet chapters works end to end on this machine: a five-cluster kind fleet built, four clusters registered by environment label, portable OCI digests reconciled by the pinned Argo CD, Kyverno converged on all four clusters, a demo application converged on all four clusters with per-environment replica counts from the same rails, a values change and a chart version bump each landed on the pilot alone while the other clusters held their state, and injected drift was repaired. No governance is claimed.";
+  "Config is published as OCI images, and Sveltos fetches the configuration from the registry and sends it to all managed clusters. That path ran end to end on this machine: a five-cluster kind fleet built, four workload clusters registered by environment label, the management cluster registered as a Sveltos-managed cluster, every wave of fleet profiles published as one raw-YAML OCI artifact to a TLS registry, Sveltos fetched each wave through the bootstrap profile and applied it, Kyverno converged on all four clusters, a demo application converged on all four clusters with per-environment replica counts from the same rails, a values change and a chart version bump each landed on the pilot alone while the other clusters held their state, and injected drift was repaired. No governance is claimed.";
 const rehearsalBoundaryNote =
-  "This rehearsal exercises the delivery machinery the governed chapters share: the kind fleet, Sveltos registration and fan-out, portable OCI through Argo CD, selective convergence, a version bump, and drift repair. No review, approval, or promotion is claimed, and no chapter matrix cell is filled by it.";
+  "This rehearsal exercises the delivery machinery the governed chapters share: the kind fleet, Sveltos registration and fan-out, fleet profiles published as OCI images and fetched by Sveltos itself, selective convergence, a version bump, and drift repair. No review, approval, or promotion is claimed, and no chapter matrix cell is filled by it.";
 const rehearsalDifferences = [
-  "Argo CD is installed from the pinned upstream manifest; the chapters receive it from cub cluster up.",
-  "Argo Applications are applied with kubectl; the chapters deliver them as ConfigHub Units through the cluster Space release.",
-  "Revisions come straight from the reviewed example files; the chapters store, review, and approve them in ConfigHub first.",
+  "The registry is a temporary TLS stand-in for ConfigHub's OCI gateway.",
+  "Profiles come straight from the reviewed example files; the chapters store, review, and approve them in ConfigHub first.",
+  "The bootstrap profile is applied with kubectl as cluster setup.",
 ];
 
 // The self-test swaps these three seams for fake surfaces and a fake clock;
@@ -92,6 +87,10 @@ if (mode === "--run") {
     `${relativeRepo(receiptPath)} is missing; run the rehearsal`,
   );
   const receipt = readYaml(receiptPath);
+  check(
+    !isLegacyReceipt(receipt),
+    "the committed receipt predates the OCI-native design; re-record the rehearsal live before regenerating the summary",
+  );
   verifyReceipt(receipt);
   write(summaryPath, renderSummary(receipt));
   console.log(`wrote ${relativeRepo(summaryPath)}`);
@@ -101,16 +100,31 @@ if (mode === "--run") {
   );
 } else {
   const receipt = readYaml(receiptPath);
-  verifyReceipt(receipt);
-  check(
-    existsSync(summaryPath),
-    `${relativeRepo(summaryPath)} is missing; run the generator`,
-  );
-  check(
-    readFileSync(summaryPath, "utf8") === renderSummary(receipt),
-    `${relativeRepo(summaryPath)} is stale`,
-  );
-  console.log("verified the Sveltos fleet rehearsal receipt");
+  if (isLegacyReceipt(receipt)) {
+    console.log(
+      "the committed fleet rehearsal receipt predates the OCI-native design and awaits a live re-record; its summary is kept as recorded",
+    );
+  } else {
+    verifyReceipt(receipt);
+    check(
+      existsSync(summaryPath),
+      `${relativeRepo(summaryPath)} is missing; run the generator`,
+    );
+    check(
+      readFileSync(summaryPath, "utf8") === renderSummary(receipt),
+      `${relativeRepo(summaryPath)} is stale`,
+    );
+    console.log("verified the Sveltos fleet rehearsal receipt");
+  }
+}
+
+// The first recorded rehearsal delivered the artifacts through a GitOps
+// controller; its receipt carries argoCd prerequisite fields. The verify
+// lane keeps reading that committed receipt until the OCI-native design is
+// re-recorded live, so the old schema is recognized and left alone instead
+// of being verified against the new contract or silently rewritten.
+function isLegacyReceipt(receipt) {
+  return Boolean(receipt?.spec?.prerequisites?.argoCd);
 }
 
 function run() {
@@ -124,8 +138,8 @@ function run() {
     ["helm", ["version"]],
     ["kind", ["version"]],
     ["kubectl", ["version", "--client"]],
+    ["openssl", ["version"]],
     ["oras", ["version"]],
-    ["tar", ["--version"]],
   ]) {
     check(tryCommand(tool, args).ok, `${tool} is required for this rehearsal`);
   }
@@ -175,8 +189,8 @@ function run() {
       `refusing to reuse ${registryName}`,
     );
 
-    const registry = timed("temporary OCI registry ready", () => {
-      const started = startRegistry(registryName);
+    const registry = timed("temporary TLS OCI registry ready", () => {
+      const started = startRegistry(registryName, workRoot);
       registryStarted = true;
       cleanup.registry = "pending";
       return started;
@@ -192,10 +206,6 @@ function run() {
       managementStarted = true;
       cleanup.managementCluster = "pending";
     });
-
-    const argoInstall = timed("Argo CD converged on the management cluster", () =>
-      installArgo({ managementKubeconfig, workRoot, lock: plan.lock }));
-    configureAnonymousOci(managementKubeconfig, registry.clusterHost, workRoot);
 
     timed("four workload clusters ready", () => {
       for (const row of fleetClusters) {
@@ -214,7 +224,7 @@ function run() {
       installSveltos({
         managementKubeconfig,
         workRoot,
-        expectedManifestSha: plan.sveltosManifestSha,
+        sveltos: plan.sveltos,
       }));
 
     const registrations = timed("four workload clusters registered", () =>
@@ -227,37 +237,62 @@ function run() {
           environment: row.environment,
         })));
 
-    const applications = {};
+    const managementRegistration = timed(
+      "management cluster enrolled for remote fetch",
+      () => {
+        applyCaSecret({ managementKubeconfig, workRoot, caFile: registry.caFile });
+        return registerManagementCluster({
+          managementKubeconfig,
+          managementName,
+          workRoot,
+        });
+      },
+    );
+
+    const kyvernoTexts = (pilotDoc) => [
+      pilotDoc ? renderDocuments([pilotDoc]) : plan.profiles.pilot.text,
+      plan.profiles.staging.text,
+      plan.profiles.prod.text,
+    ];
+    const appTexts = environments.map(
+      (environment) => plan.appProfiles[environment].text,
+    );
+    const publishWave = (waveName, profileTexts) => {
+      const { publish, documents } = publishProfileSet({
+        workRoot,
+        waveName,
+        profileTexts,
+        registryHost: registry.host,
+        clusterRegistryHost: registry.clusterHost,
+        caFile: registry.caFile,
+      });
+      return { publish, documents };
+    };
+    const awaitWave = (waveName, publish, documents) => {
+      const remoteDeploy = waitForRemoteDeploy({
+        managementKubeconfig,
+        managementName,
+        profileName: bootstrapProfileName,
+        expectedDigest: publish.manifestDigest,
+        expectedProfiles: documents,
+      });
+      check(
+        remoteDeploy.result === "pass",
+        `Sveltos did not fetch and apply the ${waveName} profile set: ${remoteDeploy.reason ?? "unknown"}`,
+      );
+      return remoteDeploy;
+    };
+
     const baselineWave = timed("baseline delivered to all four clusters", () => {
-      const releases = {};
-      for (const environment of environments) {
-        const portable = publishPortableOci({
-          workRoot,
-          approvedText: plan.profiles[environment].text,
-          registryHost: registry.host,
-          clusterRegistryHost: registry.clusterHost,
-          tag: `${environment}-r1`,
-        });
-        const applicationName = `sveltos-rehearse-${environment}-${runId}`;
-        applyApplication({
-          managementKubeconfig,
-          applicationName,
-          sourceReference: portable.clusterReference,
-          sourceRevision: portable.targetRevision,
-          workRoot,
-        });
-        const argo = waitForApplication({
-          managementKubeconfig,
-          applicationName,
-          expectedRevision: portable.manifestDigest,
-        });
-        check(
-          argo.result === "pass",
-          `${applicationName} did not reconcile the ${environment} baseline: ${argo.reason ?? "unknown"}`,
-        );
-        applications[environment] = applicationName;
-        releases[environment] = { portable, argo };
-      }
+      // The artifact is published before the bootstrap profile exists, so
+      // the very first remote fetch already finds the :live tag.
+      const { publish, documents } = publishWave("baseline", kyvernoTexts(null));
+      applyBootstrapProfile({
+        managementKubeconfig,
+        workRoot,
+        clusterRegistryHost: registry.clusterHost,
+      });
+      const remoteDeploy = awaitWave("baseline", publish, documents);
       const observations = fleetClusters.map((row) => {
         const observation = observeWorkload({
           managementKubeconfig,
@@ -274,38 +309,15 @@ function run() {
         );
         return observationRecord(row, plan.revisions[row.environment].baseline, observation);
       });
-      return { releases, observations };
+      return { publish, remoteDeploy, observations };
     });
 
     const applicationWave = timed("application delivered to all four clusters", () => {
-      const releases = {};
-      for (const environment of environments) {
-        const portable = publishPortableOci({
-          workRoot,
-          approvedText: plan.appProfiles[environment].text,
-          registryHost: registry.host,
-          clusterRegistryHost: registry.clusterHost,
-          tag: `${environment}-app-r1`,
-        });
-        const applicationName = `sveltos-rehearse-app-${environment}-${runId}`;
-        applyApplication({
-          managementKubeconfig,
-          applicationName,
-          sourceReference: portable.clusterReference,
-          sourceRevision: portable.targetRevision,
-          workRoot,
-        });
-        const argo = waitForApplication({
-          managementKubeconfig,
-          applicationName,
-          expectedRevision: portable.manifestDigest,
-        });
-        check(
-          argo.result === "pass",
-          `${applicationName} did not reconcile the ${environment} application: ${argo.reason ?? "unknown"}`,
-        );
-        releases[environment] = { portable, argo };
-      }
+      const { publish, documents } = publishWave("application", [
+        ...kyvernoTexts(null),
+        ...appTexts,
+      ]);
+      const remoteDeploy = awaitWave("application", publish, documents);
       const observations = fleetClusters.map((row) => {
         const observation = observeAppWorkload({
           managementKubeconfig,
@@ -328,33 +340,15 @@ function run() {
           observation,
         };
       });
-      return { releases, observations };
+      return { publish, remoteDeploy, observations };
     });
 
     const valuesWave = timed("values change delivered to the pilot only", () => {
-      const portable = publishPortableOci({
-        workRoot,
-        approvedText: renderDocuments([plan.pilotChangedDoc]),
-        registryHost: registry.host,
-        clusterRegistryHost: registry.clusterHost,
-        tag: "pilot-r2",
-      });
-      applyApplication({
-        managementKubeconfig,
-        applicationName: applications.pilot,
-        sourceReference: portable.clusterReference,
-        sourceRevision: portable.targetRevision,
-        workRoot,
-      });
-      const argo = waitForApplication({
-        managementKubeconfig,
-        applicationName: applications.pilot,
-        expectedRevision: portable.manifestDigest,
-      });
-      check(
-        argo.result === "pass",
-        `the pilot values change did not reconcile: ${argo.reason ?? "unknown"}`,
-      );
+      const { publish, documents } = publishWave("values-change", [
+        ...kyvernoTexts(plan.pilotChangedDoc),
+        ...appTexts,
+      ]);
+      const remoteDeploy = awaitWave("values-change", publish, documents);
       const observations = fleetClusters.map((row) => {
         const changed = row.environment === "pilot";
         const observation = observeWorkload({
@@ -378,33 +372,15 @@ function run() {
           observation,
         );
       });
-      return { portable, argo, observations };
+      return { publish, remoteDeploy, observations };
     });
 
     const versionWave = timed("version bump delivered to the pilot only", () => {
-      const portable = publishPortableOci({
-        workRoot,
-        approvedText: renderDocuments([plan.pilotPatchedDoc]),
-        registryHost: registry.host,
-        clusterRegistryHost: registry.clusterHost,
-        tag: "pilot-r3",
-      });
-      applyApplication({
-        managementKubeconfig,
-        applicationName: applications.pilot,
-        sourceReference: portable.clusterReference,
-        sourceRevision: portable.targetRevision,
-        workRoot,
-      });
-      const argo = waitForApplication({
-        managementKubeconfig,
-        applicationName: applications.pilot,
-        expectedRevision: portable.manifestDigest,
-      });
-      check(
-        argo.result === "pass",
-        `the pilot version bump did not reconcile: ${argo.reason ?? "unknown"}`,
-      );
+      const { publish, documents } = publishWave("version-bump", [
+        ...kyvernoTexts(plan.pilotPatchedDoc),
+        ...appTexts,
+      ]);
+      const remoteDeploy = awaitWave("version-bump", publish, documents);
       const observations = fleetClusters.map((row) => {
         const changed = row.environment === "pilot";
         const observation = observeWorkload({
@@ -430,7 +406,7 @@ function run() {
           observation,
         );
       });
-      return { portable, argo, observations };
+      return { publish, remoteDeploy, observations };
     });
 
     const driftRepair = timed("injected drift repaired on the pilot", () => {
@@ -450,7 +426,7 @@ function run() {
       recordedAt,
       plan,
       managementName,
-      argoInstall,
+      managementRegistration,
       sveltosInstall,
       registrations,
       baselineWave,
@@ -507,21 +483,19 @@ function loadRehearsalPlan(root = repoRoot) {
   const planRolloutRoot = join(root, "examples", "sveltos", "env-rollout");
   const planPatchRoot = join(root, "examples", "sveltos", "cve-patch");
   const planLockPath = join(root, "examples", "sveltos", "fleet-rehearsal", "source-lock.yaml");
-  const planSveltosLock = join(root, "examples", "sveltos", "kyverno-fleet", "source-lock.yaml");
   const fleet = readYaml(join(planRolloutRoot, "fleet.yaml"));
   const change = readYaml(join(planRolloutRoot, "change-candidate.yaml"));
   const patchCandidate = readYaml(join(planPatchRoot, "patch-candidate.yaml"));
   const lock = readYaml(planLockPath);
-  const sveltosManifestSha = readYaml(planSveltosLock).spec?.sveltos?.manifestSha256;
-  check(sveltosManifestSha, "the Sveltos manifest lock is missing");
+  // The rehearsal pins its own Sveltos release, because it runs the remote
+  // fetch path the recorded chapters have not been re-recorded on yet.
+  const sveltos = lock.spec?.sveltos ?? {};
   check(
     lock.kind === "SveltosFleetRehearsalLock"
-      && /^[0-9a-f]{64}$/.test(String(lock.spec?.argoCd?.manifestSha256))
-      && String(lock.spec?.argoCd?.manifestUrl ?? "").includes(
-        String(lock.spec?.argoCd?.version ?? " "),
-      )
+      && /^[0-9a-f]{64}$/.test(String(sveltos.manifestSha256))
+      && String(sveltos.manifestUrl ?? "").includes(String(sveltos.version ?? " "))
       && lock.spec?.boundary?.governanceClaim === false,
-    "the rehearsal lock lost its Argo pin or its boundary",
+    "the rehearsal lock lost its Sveltos pin or its boundary",
   );
 
   const workloads = fleet.spec?.workloads ?? [];
@@ -650,7 +624,7 @@ function loadRehearsalPlan(root = repoRoot) {
     appReplicas,
     appRevisions,
     appChartVersion: String(podinfoPin.chartVersion),
-    sveltosManifestSha,
+    sveltos,
     baselineChartVersion,
     patchedChartVersion,
     baselineBackgroundReplicas,
@@ -658,127 +632,285 @@ function loadRehearsalPlan(root = repoRoot) {
   };
 }
 
-function installArgo({ managementKubeconfig, workRoot, lock }) {
-  const manifestPath = join(workRoot, "argo-install.yaml");
-  command("curl", ["-fsSL", lock.spec.argoCd.manifestUrl, "-o", manifestPath], {
-    timeout: 180_000,
-  });
-  const manifestText = readFileSync(manifestPath, "utf8");
-  check(
-    sha256(manifestText) === lock.spec.argoCd.manifestSha256,
-    "the downloaded Argo CD manifest differs from the rehearsal lock",
+// The management cluster is itself registered with Sveltos, so one bootstrap
+// profile can hand it every wave of fleet profiles from the registry. The
+// registration mirrors the workload pattern: a service account on the target,
+// a short-lived token, and a kubeconfig Secret the controller reads.
+function registerManagementCluster({ managementKubeconfig, managementName, workRoot }) {
+  const accessPath = join(workRoot, "management-sveltos-access.yaml");
+  writeFileSync(accessPath, `apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sveltos-management-self
+  namespace: ${registrationNamespace}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sveltos-management-self
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: sveltos-management-self
+    namespace: ${registrationNamespace}
+`, { mode: 0o600 });
+  clusterCommand(managementKubeconfig, ["apply", "-f", accessPath]);
+  const token = clusterCommand(managementKubeconfig, [
+    "-n", registrationNamespace,
+    "create", "token", "sveltos-management-self", "--duration=2h",
+  ]).output.trim();
+  check(token.length > 40, "Kubernetes returned no management registration token");
+  const config = JSON.parse(
+    clusterCommand(managementKubeconfig, ["config", "view", "--raw", "-o", "json"]).output,
   );
-  clusterCommand(managementKubeconfig, ["create", "namespace", "argocd"]);
-  // Server-side apply is required: the ApplicationSet CRD exceeds the
-  // 262KB last-applied-configuration annotation cap of client-side apply.
-  clusterCommand(managementKubeconfig, [
-    "apply", "--server-side", "--force-conflicts", "-n", "argocd", "-f", manifestPath,
-  ], { timeout: 420_000 });
-  clusterCommand(managementKubeconfig, [
-    "-n", "argocd",
-    "wait", "--for=condition=Available", "deployment", "--all",
-    "--timeout=420s",
-  ], { timeout: 480_000 });
-  clusterCommand(managementKubeconfig, [
-    "-n", "argocd",
-    "rollout", "status", "statefulset/argocd-application-controller",
-    "--timeout=420s",
-  ], { timeout: 480_000 });
+  const authority = config.clusters?.[0]?.cluster?.["certificate-authority-data"];
+  check(authority, "the management kubeconfig contains no certificate authority");
+  const selfKubeconfig = `apiVersion: v1
+kind: Config
+clusters:
+  - name: management
+    cluster:
+      server: https://${managementName}-control-plane:6443
+      certificate-authority-data: ${authority}
+users:
+  - name: sveltos-management-self
+    user:
+      token: ${token}
+contexts:
+  - name: management
+    context:
+      cluster: management
+      user: sveltos-management-self
+current-context: management
+`;
+  const registrationPath = join(workRoot, "management-sveltos-registration.yaml");
+  writeFileSync(registrationPath, `apiVersion: v1
+kind: Secret
+metadata:
+  name: management-sveltos-kubeconfig
+  namespace: ${registrationNamespace}
+type: Opaque
+data:
+  kubeconfig: ${Buffer.from(selfKubeconfig).toString("base64")}
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: management
+  namespace: ${registrationNamespace}
+  labels:
+    role: management
+spec: {}
+`, { mode: 0o600 });
+  clusterCommand(managementKubeconfig, ["apply", "-f", registrationPath]);
+  const observed = waitForRegistration(managementKubeconfig, "management");
+  check(
+    observed.ready,
+    `Sveltos did not register the management cluster: ${observed.reason}`,
+  );
   return {
-    version: lock.spec.argoCd.version,
-    manifestUrl: lock.spec.argoCd.manifestUrl,
-    manifestSha256: lock.spec.argoCd.manifestSha256,
-    installationMethod:
-      "pinned upstream manifest applied directly; the governed chapters receive Argo CD from cub cluster up instead",
+    method: "programmatic SveltosCluster registration of the management cluster",
+    namespace: registrationNamespace,
+    cluster: "management",
+    labels: { role: "management" },
+    credential: {
+      type: "short-lived Kubernetes service-account token",
+      duration: "2h",
+      storedInRepository: false,
+      removedWithClusters: true,
+    },
+    ready: true,
+    kubernetesVersion: observed.kubernetesVersion,
   };
 }
 
-function applyApplication({
-  managementKubeconfig,
-  applicationName,
-  sourceReference,
-  sourceRevision,
-  workRoot,
-}) {
+// The registry certificate is private to this run, so the controller needs
+// the CA. Sveltos refuses an Opaque Secret here; the recorded probe names
+// the required type, so the manifest builder refuses any other one.
+function caSecretManifest(caFile) {
   check(
-    /^(pilot|staging|prod)-(r[123]|app-r1)$/.test(sourceRevision),
-    `unsupported application source revision ${sourceRevision}`,
+    caSecretType === "addons.projectsveltos.io/cluster-profile",
+    `the CA Secret must carry the Sveltos cluster-profile type; see ${probeRecord}`,
   );
-  const applicationPath = join(workRoot, `${applicationName}-${sourceRevision}.yaml`);
-  writeFileSync(applicationPath, `apiVersion: argoproj.io/v1alpha1
-kind: Application
+  return `apiVersion: v1
+kind: Secret
 metadata:
-  name: ${applicationName}
-  namespace: argocd
-spec:
-  project: default
-  source:
-    repoURL: ${sourceReference}
-    targetRevision: ${sourceRevision}
-    path: .
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: default
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
-    syncOptions:
-      - ServerSideApply=true
-`, { mode: 0o600 });
-  // The governed chapters deliver this Application as a ConfigHub Unit
-  // through the cluster Space release; the rehearsal applies it directly.
-  clusterCommand(managementKubeconfig, ["apply", "-f", applicationPath]);
-  clusterCommand(managementKubeconfig, [
-    "annotate", "application", applicationName, "-n", "argocd",
-    "argocd.argoproj.io/refresh=hard", "--overwrite",
-  ]);
+  name: ${caSecretName}
+  namespace: ${registrationNamespace}
+type: ${caSecretType}
+data:
+  caFile: ${Buffer.from(caFile).toString("base64")}
+`;
 }
 
-function waitForApplication({ managementKubeconfig, applicationName, expectedRevision }) {
-  let last = { sync: "", health: "", revision: "", comparisonError: "" };
-  for (let attempt = 0; attempt < 72; attempt += 1) {
-    const result = clusterTry(managementKubeconfig, [
-      "-n", "argocd", "get", "application", applicationName, "-o", "json",
+function applyCaSecret({ managementKubeconfig, workRoot, caFile }) {
+  const secretPath = join(workRoot, "sveltos-oci-ca-secret.yaml");
+  writeFileSync(secretPath, caSecretManifest(caFile), { mode: 0o600 });
+  clusterCommand(managementKubeconfig, ["apply", "-f", secretPath]);
+}
+
+// One bootstrap profile, applied once as cluster setup. Every later wave
+// republishes the same tag, and Sveltos fetches it on its own interval.
+function bootstrapProfileManifest(clusterRegistryHost) {
+  return `apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: ${bootstrapProfileName}
+spec:
+  clusterSelector:
+    matchLabels:
+      role: management
+  policyRefs:
+    - deploymentType: Remote
+      remoteURL:
+        url: oci://${clusterRegistryHost}/${profilesRepository}:${liveTag}
+        interval: ${remoteFetchInterval}
+        secretRef:
+          name: ${caSecretName}
+          namespace: ${registrationNamespace}
+`;
+}
+
+function applyBootstrapProfile({ managementKubeconfig, workRoot, clusterRegistryHost }) {
+  const profilePath = join(workRoot, "bootstrap-clusterprofile.yaml");
+  writeFileSync(profilePath, bootstrapProfileManifest(clusterRegistryHost), { mode: 0o600 });
+  clusterCommand(managementKubeconfig, ["apply", "-f", profilePath]);
+}
+
+// The layer contract comes from the recorded probe: a single raw-YAML layer.
+// A gzipped layer or a tar layer would be accepted by the registry and then
+// misread by the controller, so the runner refuses to publish either.
+function assertRawYamlLayer(bytes) {
+  check(
+    !(bytes.length > 1 && bytes[0] === 0x1f && bytes[1] === 0x8b),
+    `refusing to publish a gzipped layer; the fetcher reads raw YAML, see ${probeRecord}`,
+  );
+  check(
+    !(bytes.length > 262 && bytes.subarray(257, 262).toString("latin1") === "ustar"),
+    `refusing to publish a tar layer; this rehearsal publishes raw YAML, see ${probeRecord}`,
+  );
+  const text = bytes.toString("utf8");
+  check(
+    /^\s*(apiVersion|kind):/m.test(text),
+    "the published layer does not contain Kubernetes documents",
+  );
+}
+
+function publishProfileSet({
+  workRoot,
+  waveName,
+  profileTexts,
+  registryHost,
+  clusterRegistryHost,
+  caFile,
+}) {
+  const documents = profileTexts.flatMap((text) => parseDocs(text));
+  check(documents.length > 0, `the ${waveName} wave publishes no profiles`);
+  const payload = `${documents.map((document) => toYaml(document).trim()).join("\n---\n")}\n`;
+  const bytes = Buffer.from(payload, "utf8");
+  assertRawYamlLayer(bytes);
+  const waveRoot = join(workRoot, `wave-${waveName}`);
+  mkdirSync(waveRoot, { recursive: true });
+  const layerPath = join(waveRoot, layerFileName);
+  writeFileSync(layerPath, payload);
+  const caPath = join(workRoot, "registry-ca.pem");
+  writeFileSync(caPath, caFile);
+  const pushed = command("oras", [
+    "push",
+    "--ca-file", caPath,
+    `${registryHost}/${profilesRepository}:${liveTag}`,
+    `${layerFileName}:${profileLayerType}`,
+  ], { cwd: waveRoot, timeout: 180_000 });
+  const manifestDigest = pushed.output.match(/Digest:\s+(sha256:[0-9a-f]{64})/)?.[1] ?? "";
+  check(
+    /^sha256:[0-9a-f]{64}$/.test(manifestDigest),
+    `oras did not report a manifest digest for the ${waveName} wave`,
+  );
+  return {
+    documents,
+    publish: {
+      wave: waveName,
+      reference: `oci://${clusterRegistryHost}/${profilesRepository}:${liveTag}`,
+      manifestDigest,
+      layerShape: profileLayerShape,
+      layerMediaType: profileLayerType,
+      profileCount: documents.length,
+      payloadSha256: sha256(payload),
+    },
+  };
+}
+
+// Convergence is proved by the workload observations; this only confirms the
+// management cluster actually fetched and applied the wave it was given.
+function waitForRemoteDeploy({
+  managementKubeconfig,
+  managementName,
+  profileName,
+  expectedDigest,
+  expectedProfiles,
+  attempts = 240,
+}) {
+  const expectedNames = new Set(
+    (expectedProfiles ?? []).map((document) => document?.metadata?.name).filter(Boolean),
+  );
+  let last = { status: "missing", reason: "no ClusterSummary observed" };
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const summaries = clusterTry(managementKubeconfig, [
+      "get", "clustersummaries", "-A", "-o", "json",
     ]);
-    if (result.ok) {
-      const application = JSON.parse(result.output);
-      last = {
-        sync: String(application.status?.sync?.status ?? ""),
-        health: String(application.status?.health?.status ?? ""),
-        revision: normalizeDigest(application.status?.sync?.revision),
-        comparisonError: String(
-          (application.status?.conditions ?? [])
-            .find((condition) => condition.type === "ComparisonError")
-            ?.message
-          ?? "",
-        ),
-      };
-      if (
-        last.sync === "Synced"
-        && last.health === "Healthy"
-        && last.revision === expectedRevision
-      ) {
-        return {
-          result: "pass",
-          sync: last.sync,
-          health: last.health,
-          revision: last.revision,
-          expectedRevision,
-          digestMatchesPortableOci: true,
+    if (summaries.ok) {
+      const items = JSON.parse(summaries.output).items ?? [];
+      const summary = items.find((item) =>
+        item.metadata?.labels?.["projectsveltos.io/cluster-profile-name"] === profileName);
+      const feature = (summary?.status?.featureSummaries ?? [])
+        .find((row) => row.featureID === "Resources");
+      if (feature) {
+        last = {
+          status: feature.status ?? "missing",
+          reason: feature.failureMessage ?? "none",
         };
+        check(
+          feature.status !== "Failed",
+          `the bootstrap profile failed to apply the fetched profiles: ${feature.failureMessage ?? "unknown"}`,
+        );
       }
-      if (attempt >= 3 && last.comparisonError) {
-        return { result: "blocked", reason: sanitizeError(last.comparisonError) };
+      const applied = clusterTry(managementKubeconfig, [
+        "get", "clusterprofiles", "-o", "json",
+      ]);
+      if (applied.ok && last.status === "Provisioned") {
+        const names = new Set(
+          (JSON.parse(applied.output).items ?? [])
+            .map((item) => item.metadata?.name)
+            .filter(Boolean),
+        );
+        const missing = [...expectedNames].filter((name) => !names.has(name));
+        if (!missing.length) {
+          return {
+            result: "pass",
+            profile: profileName,
+            cluster: managementName,
+            fetchedDigest: expectedDigest,
+            appliedProfiles: [...expectedNames].sort(),
+            status: last.status,
+          };
+        }
+        last = { status: last.status, reason: `missing profiles: ${missing.join(", ")}` };
       }
     }
     sleep(5000);
   }
   return {
-    result: "blocked",
-    reason: `sync=${last.sync || "missing"}; health=${last.health || "missing"}; revision=${last.revision || "missing"}; expected=${expectedRevision}; error=${last.comparisonError || "none"}`,
+    result: "fail",
+    profile: profileName,
+    cluster: managementName,
+    fetchedDigest: expectedDigest,
+    reason: `status=${last.status}; detail=${last.reason}`,
   };
 }
+
 
 function observationRecord(row, expectedRevisionId, observation) {
   return {
@@ -1012,14 +1144,14 @@ function runDriftRepair({ workloadKubeconfig, expectedReplicas }) {
   };
 }
 
-function installSveltos({ managementKubeconfig, workRoot, expectedManifestSha }) {
+function installSveltos({ managementKubeconfig, workRoot, sveltos }) {
   const manifestPath = join(workRoot, "sveltos-manifest.yaml");
-  command("curl", ["-fsSL", sveltosManifestUrl, "-o", manifestPath], {
+  command("curl", ["-fsSL", sveltos.manifestUrl, "-o", manifestPath], {
     timeout: 180_000,
   });
   const manifestText = readFileSync(manifestPath, "utf8");
   check(
-    sha256(manifestText) === expectedManifestSha,
+    sha256(manifestText) === sveltos.manifestSha256,
     "the downloaded Sveltos manifest differs from the source lock",
   );
   const documents = parseDocs(manifestText);
@@ -1061,9 +1193,9 @@ function installSveltos({ managementKubeconfig, workRoot, expectedManifestSha })
     "--timeout=420s",
   ], { timeout: 480_000 });
   return {
-    source: sveltosManifestUrl,
-    version: "v1.12.0",
-    manifestSha256: expectedManifestSha,
+    source: sveltos.manifestUrl,
+    version: sveltos.version,
+    manifestSha256: sveltos.manifestSha256,
     crdCount: crds.length,
     appliedObjectCount: crds.length + resources.length,
     omittedOptionalServiceMonitorCount: serviceMonitors.length,
@@ -1229,37 +1361,35 @@ function waitForRegistration(managementKubeconfig, workloadName) {
   return { ready: false, reason: sanitizeError(reason) };
 }
 
-function configureAnonymousOci(managementKubeconfig, registryHost, workRoot) {
-  const secretPath = join(workRoot, "anonymous-oci.yaml");
-  writeFileSync(secretPath, `apiVersion: v1
-kind: Secret
-metadata:
-  name: helm-expt-anonymous-oci
-  namespace: argocd
-  labels:
-    argocd.argoproj.io/secret-type: repo-creds
-type: Opaque
-stringData:
-  url: oci://${registryHost}
-  type: oci
-  enableOCI: "true"
-  insecureOCIForceHttp: "true"
-`, { mode: 0o600 });
-  clusterCommand(managementKubeconfig, ["apply", "-f", secretPath]);
-}
-
-function startRegistry(name) {
+function startRegistry(name, workRoot) {
+  const certRoot = join(workRoot, "registry-certs");
+  mkdirSync(certRoot, { recursive: true });
+  const certPath = join(certRoot, "tls.crt");
+  const keyPath = join(certRoot, "tls.key");
+  // The controller pulls over HTTPS only, so the stand-in registry needs a
+  // certificate and the management cluster needs its CA.
+  command("openssl", [
+    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+    "-keyout", keyPath, "-out", certPath,
+    "-subj", "/CN=host.docker.internal",
+    "-addext", "subjectAltName=DNS:host.docker.internal,IP:127.0.0.1",
+  ], { timeout: 120_000 });
   const started = tryCommand("docker", [
-    "run", "-d", "--rm", "--name", name, "-p", "127.0.0.1::5000", "registry:2",
+    "run", "-d", "--rm", "--name", name,
+    "-v", `${certRoot}:/certs:ro`,
+    "-e", "REGISTRY_HTTP_TLS_CERTIFICATE=/certs/tls.crt",
+    "-e", "REGISTRY_HTTP_TLS_KEY=/certs/tls.key",
+    "-p", "127.0.0.1::5000", "registry:2",
   ], { timeout: 120_000 });
   check(started.ok, `could not start the temporary OCI registry: ${started.error}`);
+  const caFile = readFileSync(certPath, "utf8");
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const port = tryCommand("docker", ["port", name, "5000/tcp"]);
     const match = port.output.match(/127\.0\.0\.1:(\d+)/);
     if (match) {
       const host = `127.0.0.1:${match[1]}`;
-      if (tryCommand("curl", ["-fsS", `http://${host}/v2/`]).ok) {
-        return { host, clusterHost: `host.docker.internal:${match[1]}` };
+      if (tryCommand("curl", ["-fsS", "--cacert", certPath, `https://${host}/v2/`]).ok) {
+        return { host, clusterHost: `host.docker.internal:${match[1]}`, caFile };
       }
     }
     sleep(1000);
@@ -1268,70 +1398,11 @@ function startRegistry(name) {
   throw new Error("temporary OCI registry did not publish a host port");
 }
 
-function publishPortableOci({
-  workRoot,
-  approvedText,
-  registryHost,
-  clusterRegistryHost,
-  tag,
-}) {
-  check(
-    /^(pilot|staging|prod)-(r[123]|app-r1)$/.test(tag),
-    `unsupported OCI tag ${tag}`,
-  );
-  const outputRoot = join(workRoot, `portable-output-${tag}`);
-  const pullRoot = join(workRoot, `portable-output-${tag}-pulled`);
-  const outputFile = join(outputRoot, "clusterprofile.yaml");
-  const bundleFile = join(outputRoot, "bundle.tar.gz");
-  mkdirSync(outputRoot, { recursive: true });
-  writeFileSync(outputFile, approvedText);
-  command("tar", ["-czf", bundleFile, "clusterprofile.yaml"], { cwd: outputRoot });
-  const localReference = `${registryHost}/${portableRepository}:${tag}`;
-  command("oras", [
-    "push", "--plain-http",
-    "--artifact-type", artifactType,
-    "--format", "json",
-    localReference,
-    `bundle.tar.gz:${deployableLayerType}`,
-  ], { cwd: outputRoot, timeout: 180_000 });
-  const descriptor = JSON.parse(command("oras", [
-    "manifest", "fetch", "--plain-http", "--descriptor", localReference,
-  ]).output);
-  const manifestDigest = normalizeDigest(descriptor.digest);
-  check(manifestDigest, "portable rehearsal OCI has no manifest digest");
-  command("oras", [
-    "pull", "--plain-http", "--output", pullRoot,
-    `${registryHost}/${portableRepository}@${manifestDigest}`,
-  ], { timeout: 120_000 });
-  const pulledBundle = join(pullRoot, "bundle.tar.gz");
-  check(existsSync(pulledBundle), "pulled portable OCI is missing bundle.tar.gz");
-  command("tar", ["-xzf", pulledBundle, "-C", pullRoot]);
-  const pulledFile = join(pullRoot, "clusterprofile.yaml");
-  check(existsSync(pulledFile), "pulled portable OCI is missing the profile");
-  const pulledText = readFileSync(pulledFile, "utf8");
-  check(
-    canonicalDocs(parseDocs(pulledText)) === canonicalDocs(parseDocs(approvedText)),
-    "pulled portable OCI differs from the packaged content",
-  );
-  return {
-    reference: `oci://${localReference}`,
-    clusterReference: `oci://${clusterRegistryHost}/${portableRepository}`,
-    targetRevision: tag,
-    manifestDigest,
-    objectCount: 1,
-    packagedDataSha256: sha256(approvedText),
-    pulledDataSha256: sha256(pulledText),
-    objectsMatchPackagedData: true,
-    anonymousPull: true,
-    registryLifetime: "temporary",
-  };
-}
-
 function buildReceipt({
   recordedAt,
   plan,
   managementName,
-  argoInstall,
+  managementRegistration,
   sveltosInstall,
   registrations,
   baselineWave,
@@ -1375,17 +1446,35 @@ function buildReceipt({
           artifact: plan.lock.spec.podinfo.artifact,
         },
         rehearsalLock: "examples/sveltos/fleet-rehearsal/source-lock.yaml",
-        sveltosLock: relativeRepo(sveltosLockPath),
+        layerContract: probeRecord,
         baselineChartVersion: plan.baselineChartVersion,
         patchedChartVersion: plan.patchedChartVersion,
         baselineBackgroundReplicas: plan.baselineBackgroundReplicas,
         changedBackgroundReplicas: plan.changedBackgroundReplicas,
       },
       revisions: { ...plan.revisions, app: plan.appRevisions },
-      prerequisites: { argoCd: argoInstall, sveltos: sveltosInstall },
+      prerequisites: { sveltos: sveltosInstall },
+      remoteFetch: {
+        bootstrapProfile: bootstrapProfileName,
+        reference: `oci://<registry>/${profilesRepository}:${liveTag}`,
+        tag: liveTag,
+        interval: remoteFetchInterval,
+        layerShape: profileLayerShape,
+        layerMediaType: profileLayerType,
+        secretType: caSecretType,
+        registryTls: true,
+        fetchedBy: "the Sveltos addon controller on the management cluster",
+        digests: {
+          baseline: baselineWave.publish.manifestDigest,
+          application: applicationWave.publish.manifestDigest,
+          valuesChange: valuesWave.publish.manifestDigest,
+          versionBump: versionWave.publish.manifestDigest,
+        },
+      },
       fleet: {
         managementCluster: managementName,
         creationCommand: "kind create cluster",
+        managementRegistration,
         registrations,
       },
       waves: {
@@ -1399,7 +1488,8 @@ function buildReceipt({
       cleanup,
       limits: [
         "No ConfigHub organization, review, approval, or release was involved; this is not a governance proof.",
-        "The portable OCI used a temporary anonymous registry; this is not a permanent public package.",
+        "The profile artifacts used a temporary TLS registry standing in for the ConfigHub OCI gateway; they are not permanent public packages.",
+        "The layer contract is the one recorded by the remote fetch probe: a single raw-YAML layer. Gzipped and tar layers are refused before publication.",
         "The rehearsal used five local kind clusters on one machine. It measures this machine, not a production fleet.",
         "The chapter matrices are untouched; only the governed lanes may fill their observed cells.",
       ],
@@ -1450,13 +1540,34 @@ function verifyReceipt(receipt) {
     "the rehearsal pilot revisions no longer match the reviewed example files",
   );
   check(
-    receipt.spec?.prerequisites?.argoCd?.manifestSha256
-      === plan.lock.spec.argoCd.manifestSha256
-      && receipt.spec.prerequisites.argoCd.version
-      === plan.lock.spec.argoCd.version
-      && receipt.spec.prerequisites.sveltos?.manifestSha256
-      === plan.sveltosManifestSha,
+    !/argo/i.test(serialized),
+    "this rehearsal delivers through the Sveltos remote fetch path; a receipt naming a GitOps controller predates that design",
+  );
+  check(
+    receipt.spec?.prerequisites?.sveltos?.manifestSha256
+      === plan.sveltos.manifestSha256
+      && receipt.spec.prerequisites.sveltos.version === plan.sveltos.version,
     "the rehearsal prerequisite pins changed",
+  );
+  const remoteFetch = receipt.spec?.remoteFetch ?? {};
+  check(
+    remoteFetch.bootstrapProfile === bootstrapProfileName
+      && remoteFetch.tag === liveTag
+      && remoteFetch.interval === remoteFetchInterval
+      && remoteFetch.layerShape === profileLayerShape
+      && remoteFetch.secretType === caSecretType
+      && remoteFetch.registryTls === true,
+    "the rehearsal remote fetch contract changed",
+  );
+  check(
+    ["baseline", "application", "valuesChange", "versionBump"].every((wave) =>
+      /^sha256:[0-9a-f]{64}$/.test(String(remoteFetch.digests?.[wave] ?? ""))),
+    "every wave must record the exact OCI manifest digest Sveltos fetched",
+  );
+  check(
+    receipt.spec?.fleet?.managementRegistration?.labels?.role === "management"
+      && receipt.spec.fleet.managementRegistration.ready === true,
+    "the management cluster must be registered so it can fetch the profile waves",
   );
   const registrations = receipt.spec?.fleet?.registrations ?? [];
   check(
@@ -1513,20 +1624,17 @@ function verifyReceipt(receipt) {
           && row.observation.replicas.available
           === plan.appReplicas[row.environment],
       )
-      && environments.every((environment) => {
-        const release = applicationWave.releases?.[environment];
-        return release?.argo?.result === "pass"
-          && release.argo.revision === release.portable.manifestDigest;
-      })
-      && new Set(environments.map((environment) =>
-        applicationWave.releases[environment].portable.manifestDigest)).size === 3,
+      && applicationWave.remoteDeploy?.result === "pass"
+      && applicationWave.remoteDeploy.fetchedDigest
+      === applicationWave.publish?.manifestDigest,
     "fleet rehearsal application wave changed",
   );
   const checkSelective = (wave, expectedPilotChart, expectedPilotReplicas, waveName) => {
     check(
       (wave?.observations ?? []).length === 4
-        && wave.argo?.result === "pass"
-        && wave.argo.revision === wave.portable.manifestDigest
+        && wave.remoteDeploy?.result === "pass"
+        && wave.remoteDeploy.fetchedDigest === wave.publish?.manifestDigest
+        && wave.publish?.layerShape === profileLayerShape
         && wave.observations.every((row) => {
           const pilot = row.environment === "pilot";
           const expectedChart = pilot ? expectedPilotChart : plan.baselineChartVersion;
@@ -1554,11 +1662,12 @@ function verifyReceipt(receipt) {
   );
   check(
     new Set([
-      waves.baseline.releases.pilot.portable.manifestDigest,
-      waves.valuesChange.portable.manifestDigest,
-      waves.versionBump.portable.manifestDigest,
-    ]).size === 3,
-    "the rehearsal waves did not produce three distinct pilot digests",
+      waves.baseline.publish.manifestDigest,
+      waves.application.publish.manifestDigest,
+      waves.valuesChange.publish.manifestDigest,
+      waves.versionBump.publish.manifestDigest,
+    ]).size === 4,
+    "each rehearsal wave must publish a distinct OCI manifest digest",
   );
   check(
     receipt.spec?.driftRepair?.drift?.result === "pass"
@@ -1604,18 +1713,22 @@ This rehearsal exists so the governed chapters do not meet their cluster
 machinery for the first time on patch day. It built the full reference fleet
 and drove the shared delivery path end to end with no ConfigHub involved.
 
-Boundary: no review, approval, or promotion is claimed. Argo CD came from the
-pinned upstream manifest instead of cub cluster up, Applications were applied
-with kubectl instead of delivered as ConfigHub Units, and the chapter
-matrices are untouched. When this receipt was recorded
+Boundary: no review, approval, or promotion is claimed. The registry stands
+in for the ConfigHub OCI gateway, the profiles come straight from the
+reviewed example files instead of an approved ConfigHub revision, and the
+chapter matrices are untouched. When this receipt was recorded
 (${receipt.spec.recordedAt.slice(0, 10)}), the governed lanes were still
 blocked by confighubai/confighub#4975.
+
+The delivery path: each wave of fleet profiles was published as one
+raw-YAML OCI image, and Sveltos ${receipt.spec.prerequisites.sveltos.version}
+on the management cluster fetched it from the registry and sent it to every
+managed cluster.
 
 What ran: a five-cluster kind fleet (one management cluster, four workload
 clusters registered by environment label), Kyverno
 ${receipt.spec.source.baselineChartVersion} converged on all four clusters
-from portable OCI digests reconciled by Argo CD
-${receipt.spec.prerequisites.argoCd.version}, a values change landed on the
+from the fetched profile set, a values change landed on the
 pilot alone, a chart version bump to
 ${receipt.spec.source.patchedChartVersion} landed on the pilot alone with the
 values intact, the other three clusters held their state through both, and
@@ -1634,7 +1747,7 @@ ${timingRows}
 | Application clusters converged | ${receipt.spec.waves.application.observations.filter((row) => row.observation.result === "pass").length}/4, replicas per environment |
 | Selective values change | pilot only |
 | Selective version bump | pilot only, values intact |
-| Distinct pilot digests across waves | 3 |
+| Distinct wave digests fetched | 4 |
 | Drift repaired | ${receipt.spec.driftRepair.drift.result} |
 | Cleanup | ${Object.values(receipt.spec.cleanup).every((value) => value === "pass") ? "Pass" : "Fail"} |
 
@@ -1830,13 +1943,13 @@ function selfTest() {
   try {
     let clockMs = 0;
     const registry = createFakeOciRegistry();
-    const canned = { argoBytes: "self-test-argo-manifest" };
+    const canned = { manifestBytes: "self-test-sveltos-manifest" };
     commandRunner = (file, args, options = {}) => {
       if (file === "oras") return registry.handle(args, options);
       if (file === "tar") return realRunner(file, args, options);
       if (file === "curl") {
         const outputPath = args[args.indexOf("-o") + 1];
-        writeFileSync(outputPath, canned.argoBytes);
+        writeFileSync(outputPath, canned.manifestBytes);
         return { ok: true, status: 0, output: "", error: "" };
       }
       return {
@@ -1858,79 +1971,93 @@ function selfTest() {
       "the rehearsal plan lost its revision ladder",
     );
 
-    // The portable OCI round trip with the rehearsal tag set.
+    // The publication path, against the contract the live probe recorded.
     const fakeRegistry = {
       host: "registry.self-test.invalid:5000",
       clusterHost: "cluster.self-test.invalid:5000",
+      caFile: "-----BEGIN CERTIFICATE-----\nself-test\n-----END CERTIFICATE-----\n",
     };
-    const portable = publishPortableOci({
-      workRoot,
-      approvedText: plan.profiles.pilot.text,
+    const publishArgs = (waveName, profileTexts) => ({
+      workRoot: join(workRoot, waveName),
+      waveName,
+      profileTexts,
       registryHost: fakeRegistry.host,
       clusterRegistryHost: fakeRegistry.clusterHost,
-      tag: "pilot-r1",
+      caFile: fakeRegistry.caFile,
     });
+    const baselineTexts = environments.map((environment) => plan.profiles[environment].text);
+    const published = publishProfileSet(publishArgs("baseline", baselineTexts));
     check(
-      portable.objectsMatchPackagedData === true
-        && portable.manifestDigest.startsWith("sha256:"),
-      "the rehearsal portable round trip failed",
+      published.publish.layerShape === profileLayerShape
+        && published.publish.layerMediaType === profileLayerType
+        && published.publish.profileCount === environments.length
+        && /^sha256:[0-9a-f]{64}$/.test(published.publish.manifestDigest)
+        && published.publish.reference.startsWith("oci://")
+        && published.publish.reference.endsWith(`:${liveTag}`),
+      "the profile set publication lost its raw-YAML single-layer contract",
     );
-    expectFailure(
-      () => publishPortableOci({
-        workRoot,
-        approvedText: plan.profiles.pilot.text,
-        registryHost: fakeRegistry.host,
-        clusterRegistryHost: fakeRegistry.clusterHost,
-        tag: "pilot-r4",
-      }),
-      /unsupported OCI tag/,
-      "tag ladder refusal",
+    check(
+      published.documents.length === environments.length
+        && published.documents.every((document) => document.kind === "ClusterProfile"),
+      "the published profile set lost its ClusterProfile documents",
     );
-    registry.state.dropBundleOnPull = true;
-    expectFailure(
-      () => publishPortableOci({
-        workRoot: join(workRoot, "drop"),
-        approvedText: plan.profiles.pilot.text,
-        registryHost: fakeRegistry.host,
-        clusterRegistryHost: fakeRegistry.clusterHost,
-        tag: "pilot-r1",
-      }),
-      /missing bundle\.tar\.gz/,
-      "missing pulled bundle refusal",
+    // Every wave republishes the same tag, so a later wave must change the digest.
+    const republished = publishProfileSet(publishArgs("values-change", [
+      renderDocuments([plan.pilotChangedDoc]),
+      plan.profiles.staging.text,
+      plan.profiles.prod.text,
+    ]));
+    check(
+      republished.publish.manifestDigest !== published.publish.manifestDigest,
+      "republishing a changed profile set must change the fetched digest",
     );
-    registry.state.dropBundleOnPull = false;
-    const tamperedRoot = join(workRoot, "tampered");
-    mkdirSync(tamperedRoot, { recursive: true });
-    writeFileSync(
-      join(tamperedRoot, "clusterprofile.yaml"),
-      plan.profiles.pilot.text.replace("replicas: 3", "replicas: 1"),
-    );
-    command("tar", ["-czf", join(tamperedRoot, "bundle.tar.gz"), "clusterprofile.yaml"], {
-      cwd: tamperedRoot,
-    });
-    registry.state.substituteBundle = readFileSync(join(tamperedRoot, "bundle.tar.gz"));
-    expectFailure(
-      () => publishPortableOci({
-        workRoot: join(workRoot, "swap"),
-        approvedText: plan.profiles.pilot.text,
-        registryHost: fakeRegistry.host,
-        clusterRegistryHost: fakeRegistry.clusterHost,
-        tag: "pilot-r1",
-      }),
-      /differs from the packaged content/,
-      "tampered pulled payload refusal",
-    );
-    registry.state.substituteBundle = null;
 
-    // The Argo pin check against the fake download surface.
+    // The two layer shapes the live probe proved the fetcher cannot read.
     expectFailure(
-      () => installArgo({
+      () => assertRawYamlLayer(Buffer.from([0x1f, 0x8b, 0x08, 0x00, 0x00])),
+      /refusing to publish a gzipped layer/,
+      "gzip layer refusal",
+    );
+    const tarHeader = Buffer.alloc(512);
+    tarHeader.write("profiles.yaml");
+    tarHeader.write("ustar", 257, "latin1");
+    expectFailure(
+      () => assertRawYamlLayer(tarHeader),
+      /refusing to publish a tar layer/,
+      "tar layer refusal",
+    );
+    expectFailure(
+      () => assertRawYamlLayer(Buffer.from("not kubernetes content\n")),
+      /does not contain Kubernetes documents/,
+      "non-Kubernetes payload refusal",
+    );
+
+    // The auth Secret type the controller requires, and the bootstrap profile.
+    const caSecret = caSecretManifest(fakeRegistry.caFile);
+    check(
+      caSecret.includes(`type: ${caSecretType}`)
+        && !caSecret.includes("type: Opaque")
+        && caSecret.includes("caFile:"),
+      "the CA Secret manifest lost the type the Sveltos fetcher requires",
+    );
+    const bootstrap = bootstrapProfileManifest(fakeRegistry.clusterHost);
+    check(
+      bootstrap.includes(`url: oci://${fakeRegistry.clusterHost}/${profilesRepository}:${liveTag}`)
+        && bootstrap.includes(`interval: ${remoteFetchInterval}`)
+        && bootstrap.includes("deploymentType: Remote")
+        && bootstrap.includes("role: management"),
+      "the bootstrap profile lost its remote fetch contract",
+    );
+
+    // The Sveltos pin check against the fake download surface.
+    expectFailure(
+      () => installSveltos({
         managementKubeconfig: join(workRoot, "fake.kubeconfig"),
         workRoot,
-        lock: plan.lock,
+        sveltos: plan.sveltos,
       }),
-      /differs from the rehearsal lock/,
-      "argo pin refusal",
+      /differs from the source lock/,
+      "sveltos pin refusal",
     );
 
     // The receipt contract over a synthesized rehearsal.
@@ -1938,16 +2065,24 @@ function selfTest() {
       recordedAt: "self-test",
       plan,
       managementName: "hx-sveltos-rehearse-mgmt-selftest",
-      argoInstall: {
-        version: plan.lock.spec.argoCd.version,
-        manifestUrl: plan.lock.spec.argoCd.manifestUrl,
-        manifestSha256: plan.lock.spec.argoCd.manifestSha256,
-        installationMethod: "self-test synthesized record",
+      managementRegistration: {
+        method: "programmatic SveltosCluster registration of the management cluster",
+        namespace: registrationNamespace,
+        cluster: "management",
+        labels: { role: "management" },
+        credential: {
+          type: "short-lived Kubernetes service-account token",
+          duration: "2h",
+          storedInRepository: false,
+          removedWithClusters: true,
+        },
+        ready: true,
+        kubernetesVersion: "v1.35.0",
       },
       sveltosInstall: {
-        source: sveltosManifestUrl,
-        version: "v1.12.0",
-        manifestSha256: plan.sveltosManifestSha,
+        source: plan.sveltos.manifestUrl,
+        version: plan.sveltos.version,
+        manifestSha256: plan.sveltos.manifestSha256,
         crdCount: 1,
         appliedObjectCount: 3,
         omittedOptionalServiceMonitorCount: 0,
@@ -1985,11 +2120,11 @@ function selfTest() {
         },
       },
       timings: [
-        { phase: "temporary OCI registry ready", seconds: 1 },
+        { phase: "temporary TLS OCI registry ready", seconds: 2 },
         { phase: "management cluster ready", seconds: 30 },
-        { phase: "Argo CD converged on the management cluster", seconds: 60 },
         { phase: "four workload clusters ready", seconds: 120 },
         { phase: "Sveltos controllers converged", seconds: 60 },
+        { phase: "management cluster enrolled for remote fetch", seconds: 10 },
         { phase: "baseline delivered to all four clusters", seconds: 180 },
       ],
       cleanup: {
@@ -2003,8 +2138,9 @@ function selfTest() {
     const summary = renderSummary(receipt);
     check(
       summary.includes("no ConfigHub involved")
-        && summary.includes("Total measured"),
-      "the rendered rehearsal summary lost its boundary or its timings",
+        && summary.includes("Total measured")
+        && summary.includes("fetched it from the registry"),
+      "the rendered rehearsal summary lost its boundary, its timings, or its delivery path",
     );
 
     const tampers = [
@@ -2014,19 +2150,21 @@ function selfTest() {
       ["claim rewrite", (c) => { c.status.claim = "The fleet change was reviewed, approved, and promoted."; }, /boundary was weakened/],
       ["differences reworded", (c) => { c.spec.boundary.differencesFromGovernedLanes = [...c.spec.boundary.differencesFromGovernedLanes.slice(1), "Nothing differs."]; }, /boundary was weakened/],
       ["governance shape", (c) => { c.spec.notes = { beforeApproval: "blocked" }; }, /must not resemble a governance receipt/],
+      ["carrier reintroduced", (c) => { c.spec.remoteFetch.fetchedBy = "Argo CD on the management cluster"; }, /predates that design/],
       ["source hash", (c) => { c.spec.source.profiles.pilot.rawSha256 = "0".repeat(64); }, /pilot source record changed/],
       ["revision drift", (c) => { c.spec.revisions.pilot.versionBumped = "r3-000000000000"; }, /pilot revisions no longer match/],
-      ["argo pin", (c) => { c.spec.prerequisites.argoCd.manifestSha256 = "0".repeat(64); }, /prerequisite pins changed/],
+      ["sveltos pin", (c) => { c.spec.prerequisites.sveltos.manifestSha256 = "0".repeat(64); }, /prerequisite pins changed/],
+      ["fetch interval", (c) => { c.spec.remoteFetch.interval = "24h0m0s"; }, /remote fetch contract changed/],
+      ["secret type", (c) => { c.spec.remoteFetch.secretType = "Opaque"; }, /remote fetch contract changed/],
+      ["layer shape", (c) => { c.spec.remoteFetch.layerShape = "gzipped-tar"; }, /remote fetch contract changed/],
+      ["plaintext registry", (c) => { c.spec.remoteFetch.registryTls = false; }, /remote fetch contract changed/],
+      ["missing wave digest", (c) => { c.spec.remoteFetch.digests.versionBump = "unknown"; }, /exact OCI manifest digest/],
+      ["management unregistered", (c) => { c.spec.fleet.managementRegistration.ready = false; }, /management cluster must be registered/],
       ["registrations", (c) => { c.spec.fleet.registrations[3].labels.environment = "staging"; }, /registration record changed/],
       ["baseline wave", (c) => { c.spec.waves.baseline.observations[0].observation.backgroundReplicas.desired = 9; }, /baseline wave changed/],
       ["app source hash", (c) => { c.spec.source.appProfiles.pilot.rawSha256 = "0".repeat(64); }, /pilot application source record changed/],
       ["app replica math", (c) => { c.spec.waves.application.observations.find((row) => row.environment === "staging").observation.replicas.desired = 9; }, /application wave changed/],
-      ["app digest collapse", (c) => {
-        c.spec.waves.application.releases.staging.portable.manifestDigest =
-          c.spec.waves.application.releases.pilot.portable.manifestDigest;
-        c.spec.waves.application.releases.staging.argo.revision =
-          c.spec.waves.application.releases.pilot.portable.manifestDigest;
-      }, /application wave changed/],
+      ["app fetch mismatch", (c) => { c.spec.waves.application.remoteDeploy.fetchedDigest = `sha256:${"a".repeat(64)}`; }, /application wave changed/],
       ["selective values", (c) => {
         const stagingRow = c.spec.waves.valuesChange.observations.find((row) => row.environment === "staging");
         stagingRow.observation.backgroundReplicas.desired = c.spec.source.changedBackgroundReplicas;
@@ -2036,11 +2174,11 @@ function selfTest() {
         prodRow.observation.helmRelease.chart = `kyverno-${c.spec.source.patchedChartVersion}`;
       }, /version-bump wave changed/],
       ["digest ladder", (c) => {
-        c.spec.waves.versionBump.portable.manifestDigest =
-          c.spec.waves.valuesChange.portable.manifestDigest;
-        c.spec.waves.versionBump.argo.revision =
-          c.spec.waves.valuesChange.portable.manifestDigest;
-      }, /three distinct pilot digests/],
+        c.spec.waves.versionBump.publish.manifestDigest =
+          c.spec.waves.valuesChange.publish.manifestDigest;
+        c.spec.waves.versionBump.remoteDeploy.fetchedDigest =
+          c.spec.waves.valuesChange.publish.manifestDigest;
+      }, /distinct OCI manifest digest/],
       ["drift", (c) => { c.spec.driftRepair.drift.result = "fail"; }, /drift repair changed/],
       ["timings", (c) => { c.spec.timings = []; }, /timings changed/],
       ["limits", (c) => { c.spec.limits = c.spec.limits.filter((limit) => !limit.includes("not a governance proof")); }, /lost the no-governance boundary/],
@@ -2056,7 +2194,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos fleet rehearsal self-test passed: the revision ladder, the application pin and replica bindings, the portable round trip with its tag and tamper refusals, the Argo pin refusal, the pinned boundary contract, and the tamper battery",
+      "sveltos fleet rehearsal self-test passed: the revision ladder, the raw-YAML publication contract with its gzip and tar refusals, the Secret type and bootstrap profile the fetcher requires, the Sveltos pin refusal, the application pin and replica bindings, the pinned boundary contract, and the tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -2066,33 +2204,42 @@ function selfTest() {
   }
 }
 
-function synthesizeAppWave(plan) {
-  const releases = {};
-  for (const environment of environments) {
-    const digest = `sha256:${sha256(`self-test-app-${environment}`)}`;
-    releases[environment] = {
-      portable: {
-        reference: `oci://registry.self-test.invalid:5000/${portableRepository}:${environment}-app-r1`,
-        clusterReference: `oci://cluster.self-test.invalid:5000/${portableRepository}`,
-        targetRevision: `${environment}-app-r1`,
-        manifestDigest: digest,
-        objectCount: 1,
-        objectsMatchPackagedData: true,
-        anonymousPull: true,
-        registryLifetime: "temporary",
-      },
-      argo: {
-        result: "pass",
-        sync: "Synced",
-        health: "Healthy",
-        revision: digest,
-        expectedRevision: digest,
-        digestMatchesPortableOci: true,
-      },
-    };
-  }
+// The synthesized waves mirror what the live lane records: one published
+// profile set per wave, the management cluster's fetch of it, and the
+// per-cluster observations that prove convergence.
+function synthesizePublish(waveName, profileCount) {
+  const digest = `sha256:${sha256(`self-test-${waveName}`)}`;
   return {
-    releases,
+    wave: waveName,
+    reference: `oci://cluster.self-test.invalid:5000/${profilesRepository}:${liveTag}`,
+    manifestDigest: digest,
+    layerShape: profileLayerShape,
+    layerMediaType: profileLayerType,
+    profileCount,
+    payloadSha256: sha256(`self-test-payload-${waveName}`),
+  };
+}
+
+function synthesizeRemoteDeploy(publish, profileNames) {
+  return {
+    result: "pass",
+    profile: bootstrapProfileName,
+    cluster: "hx-sveltos-rehearse-mgmt-selftest",
+    fetchedDigest: publish.manifestDigest,
+    appliedProfiles: [...profileNames].sort(),
+    status: "Provisioned",
+  };
+}
+
+function synthesizeAppWave(plan) {
+  const publish = synthesizePublish("application", environments.length * 2);
+  const profileNames = environments.flatMap((environment) => [
+    `kyverno-env-${environment}`,
+    `podinfo-app-${environment}`,
+  ]);
+  return {
+    publish,
+    remoteDeploy: synthesizeRemoteDeploy(publish, profileNames),
     observations: plan.fleet.spec.workloads.map((workload) => ({
       cluster: `${workload.cluster}-selftest`,
       logicalCluster: workload.cluster,
@@ -2118,82 +2265,51 @@ function synthesizeAppWave(plan) {
 }
 
 function synthesizeWave(plan, waveName) {
-  const digestSeed = `self-test-${waveName}`;
-  const portable = {
-    reference: `oci://registry.self-test.invalid:5000/${portableRepository}:pilot-r1`,
-    clusterReference: `oci://cluster.self-test.invalid:5000/${portableRepository}`,
-    targetRevision: waveName === "baseline"
-      ? "pilot-r1"
-      : waveName === "valuesChange" ? "pilot-r2" : "pilot-r3",
-    manifestDigest: `sha256:${sha256(digestSeed)}`,
-    objectCount: 1,
-    objectsMatchPackagedData: true,
-    anonymousPull: true,
-    registryLifetime: "temporary",
+  const publish = synthesizePublish(waveName, environments.length);
+  const profileNames = environments.map((environment) => `kyverno-env-${environment}`);
+  const pilotChanged = waveName !== "baseline";
+  const pilotChart = waveName === "versionBump"
+    ? plan.patchedChartVersion
+    : plan.baselineChartVersion;
+  const pilotReplicas = pilotChanged
+    ? plan.changedBackgroundReplicas
+    : plan.baselineBackgroundReplicas;
+  const expectedRevision = (environment) => {
+    if (environment !== "pilot") return plan.revisions[environment].baseline;
+    if (waveName === "valuesChange") return plan.revisions.pilot.valuesChanged;
+    if (waveName === "versionBump") return plan.revisions.pilot.versionBumped;
+    return plan.revisions.pilot.baseline;
   };
-  const argo = {
-    result: "pass",
-    sync: "Synced",
-    health: "Healthy",
-    revision: portable.manifestDigest,
-    expectedRevision: portable.manifestDigest,
-    digestMatchesPortableOci: true,
-  };
-  const observations = plan.fleet.spec.workloads.map((workload) => {
-    const pilot = workload.environment === "pilot";
-    const changedValues = waveName !== "baseline" && pilot;
-    const bumped = waveName === "versionBump" && pilot;
-    return {
-      cluster: `${workload.cluster}-selftest`,
-      logicalCluster: workload.cluster,
-      environment: workload.environment,
-      expectedRevisionId: bumped
-        ? plan.revisions.pilot.versionBumped
-        : changedValues
-          ? plan.revisions.pilot.valuesChanged
-          : plan.revisions[workload.environment].baseline,
-      observation: {
-        result: "pass",
-        clusterSummary: "projectsveltos/self-test-summary",
-        helmFeatureStatus: "Provisioned",
-        helmRelease: {
-          name: "kyverno",
-          namespace: "kyverno",
-          chart: `kyverno-${bumped ? plan.patchedChartVersion : plan.baselineChartVersion}`,
-          status: "deployed",
-        },
-        backgroundReplicas: {
-          desired: changedValues
-            ? plan.changedBackgroundReplicas
-            : plan.baselineBackgroundReplicas,
-          available: changedValues
-            ? plan.changedBackgroundReplicas
-            : plan.baselineBackgroundReplicas,
-        },
-        deployments: [],
-      },
-    };
-  });
-  if (waveName === "baseline") {
-    const releases = {};
-    for (const environment of environments) {
-      releases[environment] = {
-        portable: {
-          ...portable,
-          targetRevision: `${environment}-r1`,
-          manifestDigest: `sha256:${sha256(`${digestSeed}-${environment}`)}`,
-        },
-        argo: {
-          ...argo,
-          revision: `sha256:${sha256(`${digestSeed}-${environment}`)}`,
-          expectedRevision: `sha256:${sha256(`${digestSeed}-${environment}`)}`,
+  return {
+    publish,
+    remoteDeploy: synthesizeRemoteDeploy(publish, profileNames),
+    observations: plan.fleet.spec.workloads.map((workload) => {
+      const pilot = workload.environment === "pilot";
+      return {
+        cluster: `${workload.cluster}-selftest`,
+        logicalCluster: workload.cluster,
+        environment: workload.environment,
+        expectedRevisionId: expectedRevision(workload.environment),
+        observation: {
+          result: "pass",
+          clusterSummary: "projectsveltos/self-test-summary",
+          helmFeatureStatus: "Provisioned",
+          helmRelease: {
+            name: "kyverno",
+            namespace: "kyverno",
+            chart: `kyverno-${pilot ? pilotChart : plan.baselineChartVersion}`,
+            status: "deployed",
+          },
+          backgroundReplicas: {
+            desired: pilot ? pilotReplicas : plan.baselineBackgroundReplicas,
+            available: pilot ? pilotReplicas : plan.baselineBackgroundReplicas,
+          },
         },
       };
-    }
-    return { releases, observations };
-  }
-  return { portable, argo, observations };
+    }),
+  };
 }
+
 
 function createFakeOciRegistry() {
   const tags = new Map();
@@ -2202,7 +2318,7 @@ function createFakeOciRegistry() {
   const ok = (output) => ({ ok: true, status: 0, output, error: "" });
   const refuse = (error) => ({ ok: false, status: 1, output: "", error });
   const positionalsOf = (args) => {
-    const valueFlags = new Set(["--artifact-type", "--format", "--output"]);
+    const valueFlags = new Set(["--artifact-type", "--ca-file", "--format", "--output"]);
     const positionals = [];
     for (let index = 0; index < args.length; index += 1) {
       const token = args[index];
@@ -2224,7 +2340,7 @@ function createFakeOciRegistry() {
       const digest = `sha256:${sha256(bytes)}`;
       tags.set(reference, digest);
       blobs.set(digest, Buffer.from(bytes));
-      return ok(JSON.stringify({ reference, digest }));
+      return ok(`Pushed [registry] ${reference}\nDigest: ${digest}`);
     }
     if (positionals[0] === "manifest" && positionals[1] === "fetch") {
       const reference = positionals[2];

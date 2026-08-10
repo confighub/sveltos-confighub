@@ -1,10 +1,13 @@
 # The Sveltos fleet chapters
 
-This page ties the five Sveltos fleet chapters into one story. A platform team
-manages one fleet: a management cluster running Sveltos and Argo CD, and four
-workload clusters grouped as pilot, staging, and two production clusters.
-ConfigHub keeps every reviewed record and its approval history; OCI carries
-exact digests; Sveltos selects clusters by label and reconciles them. Each
+This page ties the five Sveltos fleet chapters into one story. Config comes
+from ConfigHub, which publishes changes as OCI images on its OCI gateway.
+Sveltos fetches the configuration from that gateway and sends it to all
+Sveltos-managed clusters. A platform team manages one fleet: a management
+cluster running Sveltos, and four workload clusters grouped as pilot,
+staging, and two production clusters. ConfigHub keeps every reviewed record
+and its approval history; OCI carries exact digests; Sveltos selects
+clusters by label and reconciles them. Each
 chapter makes one operational claim and backs it with a machine-checked
 matrix, a receipt contract, and deterministic self-tests.
 
@@ -91,11 +94,14 @@ npm run sveltos-bulk-ops-proof:self-test
 
 The delivery machinery the chapters share can be rehearsed today with no
 account at all: the [fleet rehearsal](../../../examples/sveltos/fleet-rehearsal/README.md)
-builds the five-cluster kind fleet, converges Kyverno everywhere through
-portable OCI and Argo CD, delivers a demo application to all four clusters
-with per-environment replica counts, lands a values change and a version
-bump on the pilot alone, and repairs injected drift, under a receipt that
-explicitly claims no governance.
+builds the five-cluster kind fleet, converges Kyverno everywhere from OCI
+digests fetched by Sveltos itself, delivers a demo application to all four
+clusters with per-environment replica counts, lands a values change and a
+version bump on the pilot alone, and repairs injected drift, under a
+receipt that explicitly claims no governance. An earlier recording used a
+GitOps controller as the OCI carrier; the
+[live remoteURL probe](../../planning/remote-url-oci-probe.md) verified the
+direct fetch path this design now uses.
 
 To find out whether the server fix has landed, one probe answers for every
 lane: `CUB_CONTEXT=my-policy npm run sveltos-gate:probe` wires a throwaway

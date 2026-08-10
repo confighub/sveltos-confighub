@@ -4,12 +4,16 @@ Change one reviewed record and every selected cluster follows it, with an
 approval boundary and a committed receipt at each step. That is the claim
 this repository proves, chapter by chapter, and refuses to overstate.
 
-The fleet looks like this. A platform team manages a management cluster
-running Sveltos and Argo CD, and workload clusters grouped as pilot,
-staging, and production.
-[ConfigHub](https://confighub.com) keeps every reviewed record and its
-approval history, OCI carries
-exact digests, and Sveltos selects clusters by label and reconciles them.
+The delivery path is short. Config comes from
+[ConfigHub](https://confighub.com), which publishes changes as OCI images
+on its OCI gateway. Sveltos fetches the configuration from that gateway and
+sends it to all Sveltos-managed clusters. A platform team manages a
+management cluster running Sveltos, and workload clusters grouped as
+pilot, staging, and production. ConfigHub keeps every reviewed record and
+its approval history, OCI carries exact digests, and Sveltos selects
+clusters by label and reconciles them. The
+[live probe](docs/planning/remote-url-oci-probe.md) verified the direct
+fetch path against released Sveltos.
 Each chapter of this repository makes one operational claim and backs it with
 a machine-checked matrix, a receipt contract, and deterministic self-tests.
 
