@@ -2219,7 +2219,12 @@ function runRealCommand(file, args, options = {}) {
 
 function sanitizeError(value) {
   return String(value ?? "")
-    .replace(/(?i:password|token|secret)\s*[:=]\s*\S+/g, "$1=<redacted>")
+    // Inline flag groups are non-capturing, so the $1 this replacement uses was
+    // always empty and the key name was dropped along with the value. They are
+    // also newer than the Node this runs on in CI, where the expression throws
+    // and takes the whole redaction with it. A capturing group with the i flag
+    // does what the line always meant.
+    .replace(/\b(password|token|secret)\s*[:=]\s*\S+/gi, "$1=<redacted>")
     .replace(/[A-Za-z0-9_-]{40,}/g, "<redacted-long-value>")
     .replace(/\s+/g, " ")
     .trim()
