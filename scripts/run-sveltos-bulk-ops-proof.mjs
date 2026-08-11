@@ -40,7 +40,11 @@ const approvalFilterRef = "platform/helm-catalog-prod-gates";
 const approvalGate = "platform/require-approval/vet-approvedby";
 const catalogOciTargetRef =
   "bitnami-redis-27-0-0-default-pilot-live-20260705/oci-target";
-const blockerRef = "confighubai/confighub#4975";
+// The live lanes wait on this runner moving to the delivery path the
+// rehearsal recorded, where Sveltos fetches each published wave itself.
+// The approval gate attaches about a second after a Unit is created; the
+// report that said otherwise was our own misreading, now withdrawn.
+const pendingReason = "the runner still carries the superseded delivery path";
 const policyPath = join(
   repoRoot,
   "config-catalog",
@@ -92,7 +96,7 @@ if (mode === "--run") {
 } else if (mode === "--generate") {
   check(
     existsSync(receiptPath),
-    `${relativeRepo(receiptPath)} is missing; the live lane is blocked by ${blockerRef}`,
+    `${relativeRepo(receiptPath)} is missing; no live run has been recorded, because ${pendingReason}`,
   );
   const receipt = readYaml(receiptPath);
   verifyReceipt(receipt);
@@ -100,7 +104,7 @@ if (mode === "--run") {
   console.log(`wrote ${relativeRepo(summaryPath)}`);
 } else if (!existsSync(receiptPath)) {
   console.log(
-    `the Sveltos bulk operations proof has no live receipt yet; the live lane stays blocked by ${blockerRef} and the drafted runner refuses at its gate preflight until the server fix lands`,
+    `the Sveltos bulk operations proof has no live receipt yet; no live run has been recorded yet, because ${pendingReason}`,
   );
 } else {
   const receipt = readYaml(receiptPath);
@@ -213,7 +217,7 @@ function run() {
   let receipt;
 
   // The approval gate is probed before any cluster or registry work, so the
-  // blocked server (confighubai/confighub#4975) costs seconds, not the
+  // Space whose gate never attaches costs seconds, not the
   // seven-minute fleet build.
   assertApprovalGateObservable(policyContext, runId, topology, catalogTarget);
   cleanup.probeSpace = "pass";
@@ -611,7 +615,7 @@ function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
     }
     check(
       gatePresent(),
-      `the approval gate never appeared on the probe Unit ${probeSpace}/${policyUnit}; the live lane stays blocked by ${blockerRef}`,
+      `the approval gate never appeared on the probe Unit ${probeSpace}/${policyUnit}; check the Space wiring before building the fleet`,
     );
   } finally {
     // The probe Space has no argo-apps sibling, so a direct recursive delete
@@ -1512,11 +1516,16 @@ function approveHeadRevision(context, space, unit, stageName, expectedRevision) 
 }
 
 function approvalObservation(context, space, unit) {
-  const info = cubJson(context, [
+  // Read the whole Unit. `--select ApplyGates,ApprovedBy` does not project
+  // those fields; it answers with an unrelated object, so a parser reading
+  // them off the top level always saw an ungated Unit. That misreading is
+  // what confighubai/confighub#4975 reported before it was withdrawn: the
+  // gate attaches about a second after the Unit is created.
+  const unitRecord = cubJson(context, [
     "unit", "get", "--space", space, unit,
-    "--select", "ApplyGates,ApprovedBy",
     "-o", "json",
   ]);
+  const info = unitRecord?.Unit ?? unitRecord;
   const gateKeys = Object.keys(info?.ApplyGates ?? {});
   const approvals = info?.ApprovedBy;
   const recorded = Array.isArray(approvals)
@@ -2458,7 +2467,7 @@ function selfTest() {
     const topology = readApprovalTopology(policyContext);
     const catalogTarget = { TargetID: hub.catalogTargetId, ProviderType: "OCI" };
 
-    // The gate preflight is the drafted #4975 blocker: it must pass when the
+    // The gate preflight is the gate preflight: it must pass when the
     // gate materializes and refuse fast, naming the issue, when it never does.
     assertApprovalGateObservable(policyContext, "20260807000000", topology, catalogTarget);
     check(
@@ -2468,7 +2477,7 @@ function selfTest() {
     hub.state.neverPopulateGates = true;
     expectFailure(
       () => assertApprovalGateObservable(policyContext, "20260807000001", topology, catalogTarget),
-      /the approval gate never appeared on the probe Unit .*; the live lane stays blocked by confighubai\/confighub#4975/,
+      /the approval gate never appeared on the probe Unit .*; check the Space wiring before building the fleet/,
       "gate preflight refusal",
     );
     hub.state.neverPopulateGates = false;
@@ -2691,7 +2700,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos bulk ops runner self-test passed: gate preflight pass and #4975 refusal, one fan-out pass with six approval brackets, the set-aware gate query with a rogue-gate detection, change-once byte identity across records, and the tamper battery",
+      "sveltos bulk ops runner self-test passed: gate preflight pass and its refusal, one fan-out pass with six approval brackets, the set-aware gate query with a rogue-gate detection, change-once byte identity across records, and the tamper battery",
     );
   } finally {
     commandRunner = realRunner;

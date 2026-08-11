@@ -48,34 +48,32 @@ Chapters one and two are recorded live. Chapters three, four, and five are
 fully drafted and proven offline: their governance logic, their receipts, and
 their refusal behavior all run against fake ConfigHub and OCI surfaces in the
 repository gate, in seconds, with no account or cluster. Their live runs have
-not happened, every observed matrix cell is honestly empty, and each drafted
-runner refuses to start while the server defect below stands.
+not happened and every observed matrix cell is honestly empty.
 
-## Why one server issue blocks every live run
+## What the chapters still wait on
 
 The claim these chapters sell is not that configuration can be pushed to
 clusters. Anyone can push. The claim is that nothing reaches any cluster
 except an exactly approved revision, and the only evidence for that is
 watching the approval boundary from both sides. Before approval, the record
-must visibly show "blocked, waiting for approval" with no approval on file:
-that observation proves the change was actually held. After someone approves
-that exact revision, the block lifts and the approval is on record: that
-proves the bytes that shipped are the bytes that were approved.
+must visibly show that it is held with no approval on file. After someone
+approves that exact revision, the block lifts and the approval is on record,
+which proves the bytes that shipped are the bytes that were approved.
 
-On the current server the first half is broken. A freshly created record in a
-Space wired with the standard approval policy never shows the block marker at
-all, even though the policy is attached correctly. The pipeline can never
-witness the "held for review" state, so it refuses to record a proof that
-skips it, because that state is the whole point. There is no side door
-either: the older CLI had a command that provoked a rejection we could record
-as evidence, but it was removed, so reading the markers is the only way left
-to observe the boundary. The defect is tracked in confighubai/confighub#4975.
+That boundary works. The approval gate attaches to a record about a second
+after it is created. An earlier report here said the gate never appeared;
+that was a misreading in this repository's own observation code, which asked
+the server for a projection it does not return, and it has been withdrawn.
 
-Every drafted runner therefore starts with a gate preflight: it creates a
-throwaway record, waits briefly for the block marker, and refuses with the
-issue number if the marker never appears. The refusal costs seconds instead
-of the seven-minute fleet build. The day the server fix lands, each chapter
-records with one command, listed in its README.
+What remains is ours. These three runners still carry the delivery path the
+fleet rehearsal replaced, where a GitOps controller moved the artifact
+instead of Sveltos fetching it from the gateway. They record once they are
+rebuilt on the recorded path, each with one command, listed in its README.
+
+Every drafted runner starts with a gate preflight: it creates a throwaway
+record, waits for the approval gate to attach, and refuses in seconds if it
+never does, instead of failing after the seven-minute fleet build.
+
 
 ## Run the offline proofs yourself
 
@@ -103,10 +101,10 @@ GitOps controller as the OCI carrier; the
 [live remoteURL probe](../../planning/remote-url-oci-probe.md) verified the
 direct fetch path this design now uses.
 
-To find out whether the server fix has landed, one probe answers for every
-lane: `CUB_CONTEXT=my-policy npm run sveltos-gate:probe` wires a throwaway
-record, watches for the block marker, cleans up, and reports either the
-refusal with the issue number or that the lanes are unblocked. The patched
+One probe answers for every lane whether approval gates attach in your own
+organization: `CUB_CONTEXT=my-policy npm run sveltos-gate:probe` wires a
+throwaway record, watches for the gate, cleans up, and reports what it saw.
+The patched
 chart's digest and values fit can be checked any day with
 `npm run sveltos-cve-patch-proof:verify-chart`, with no account or cluster.
 

@@ -1718,7 +1718,7 @@ in for the ConfigHub OCI gateway, the profiles come straight from the
 reviewed example files instead of an approved ConfigHub revision, and the
 chapter matrices are untouched. When this receipt was recorded
 (${receipt.spec.recordedAt.slice(0, 10)}), the governed lanes were still
-blocked by confighubai/confighub#4975.
+not recorded live yet.
 
 The delivery path: each wave of fleet profiles was published as one
 raw-YAML OCI image, and Sveltos ${receipt.spec.prerequisites.sveltos.version}

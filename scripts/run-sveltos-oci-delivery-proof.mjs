@@ -1506,11 +1506,16 @@ function approveHeadRevision(
 // approval after. This matches the exact-head approval doctrine used by the
 // Kubara reconciler.
 function approvalObservation(context, space, unit) {
-  const info = cubJson(context, [
+  // Read the whole Unit. `--select ApplyGates,ApprovedBy` does not project
+  // those fields; it answers with an unrelated object, so a parser reading
+  // them off the top level always saw an ungated Unit. That misreading is
+  // what confighubai/confighub#4975 reported before it was withdrawn: the
+  // gate attaches about a second after the Unit is created.
+  const unitRecord = cubJson(context, [
     "unit", "get", "--space", space, unit,
-    "--select", "ApplyGates,ApprovedBy",
     "-o", "json",
   ]);
+  const info = unitRecord?.Unit ?? unitRecord;
   const gateKeys = Object.keys(info?.ApplyGates ?? {});
   const approvals = info?.ApprovedBy;
   const approvalCount = Array.isArray(approvals)
@@ -2699,7 +2704,7 @@ function selfTest() {
       "the selector change did not produce a new OCI digest",
     );
 
-    // The live-server defect in confighubai/confighub#4975 must stay a
+    // A Space whose approval gate never attaches must stay a
     // refusal: a Unit whose gate never materializes fails closed.
     hub.state.neverPopulateGates = true;
     const stalled = "self-test-stalled-space";

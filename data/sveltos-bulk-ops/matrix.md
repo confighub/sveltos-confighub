@@ -9,35 +9,35 @@ gates, no record may have changed out of band, and drift injected on every
 cluster must be repaired.
 
 No live run has been recorded yet. The approval boundary is blocked by
-confighubai/confighub#4975, so every observed cell below stays empty until the live proof
+no live run is recorded yet, so every observed cell below stays empty until the live proof
 earns it. The expected columns come from the reviewed example files.
 
 ## Baseline, before the fan-out
 
 | Cluster | Environment | Expected revision | Background replicas | Drift check | Observed | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | `r1-e199257804ae` | 2 | none |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-staging | staging | `r1-fb24308c6fab` | 2 | none |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-prod-a | prod | `r1-703f3399eaf7` | 2 | none |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-prod-b | prod | `r1-703f3399eaf7` | 2 | none |  | awaiting-live-run (confighubai/confighub#4975) |
+| hx-sveltos-env-pilot | pilot | `r1-e199257804ae` | 2 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-staging | staging | `r1-fb24308c6fab` | 2 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-prod-a | prod | `r1-703f3399eaf7` | 2 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-prod-b | prod | `r1-703f3399eaf7` | 2 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
 
 ## After the fan-out, one pass over every record
 
 | Cluster | Environment | Expected revision | Background replicas | Drift check | Observed | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | `r2-d6c85e486a84` | 3 | none |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-staging | staging | `r2-aeb22cf0c2eb` | 3 | none |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-prod-a | prod | `r2-246a9ab834a5` | 3 | none |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-prod-b | prod | `r2-246a9ab834a5` | 3 | none |  | awaiting-live-run (confighubai/confighub#4975) |
+| hx-sveltos-env-pilot | pilot | `r2-d6c85e486a84` | 3 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-staging | staging | `r2-aeb22cf0c2eb` | 3 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-prod-a | prod | `r2-246a9ab834a5` | 3 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-prod-b | prod | `r2-246a9ab834a5` | 3 | none |  | awaiting-live-run (awaiting-oci-native-rerun) |
 
 ## Zero-drift audit; injected drift repaired on every cluster
 
 | Cluster | Environment | Expected revision | Background replicas | Drift check | Observed | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | `r2-d6c85e486a84` | 3 | injected-and-restored |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-staging | staging | `r2-aeb22cf0c2eb` | 3 | injected-and-restored |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-prod-a | prod | `r2-246a9ab834a5` | 3 | injected-and-restored |  | awaiting-live-run (confighubai/confighub#4975) |
-| hx-sveltos-env-prod-b | prod | `r2-246a9ab834a5` | 3 | injected-and-restored |  | awaiting-live-run (confighubai/confighub#4975) |
+| hx-sveltos-env-pilot | pilot | `r2-d6c85e486a84` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-staging | staging | `r2-aeb22cf0c2eb` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-prod-a | prod | `r2-246a9ab834a5` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-oci-native-rerun) |
+| hx-sveltos-env-prod-b | prod | `r2-246a9ab834a5` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-oci-native-rerun) |
 
 ## Sources
 

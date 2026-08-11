@@ -50,8 +50,9 @@ repair results.
 
 No live run has been recorded. On the current server the approval gate never
 appears in a Unit's `ApplyGates` from the Space trigger-filter wiring, so the
-approval boundary cannot be observed live. That defect is tracked in
-confighubai/confighub#4975. Every observed cell in the matrix stays honestly
+approval boundary cannot be observed live. These runners still carry the delivery path the fleet rehearsal replaced,
+where a GitOps controller moved the artifact instead of Sveltos fetching
+it. No live run is recorded until they are rebuilt on the recorded path. Every observed cell in the matrix stays honestly
 empty until the live proof runs.
 
 The live runner is drafted in `scripts/run-sveltos-bulk-ops-proof.mjs` and
@@ -76,7 +77,7 @@ npm run sveltos-bulk-ops:self-test
 npm run sveltos-bulk-ops-proof:self-test
 ```
 
-Once confighubai/confighub#4975 is resolved, the run is one command:
+Once the runner carries the recorded delivery path, the run is one command:
 
 ```bash
 HELM_EXPT_ALLOW_LIVE_SVELTOS_BULK_OPS=1 \

@@ -2,8 +2,8 @@
 
 The governed fleet chapters should not meet their cluster machinery for the
 first time on patch day. This rehearsal runs the delivery path they share,
-today, with no ConfigHub account, so the day confighubai/confighub#4975
-closes the only untested piece is the approval boundary itself.
+today, with no ConfigHub account, so when the chapters record the only
+untested piece is the approval boundary itself.
 
 ## What it runs
 

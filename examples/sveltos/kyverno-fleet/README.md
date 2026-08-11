@@ -127,12 +127,10 @@ wiring first from
 the runner verifies its preconditions and stops early with a named reason
 instead of failing after the fleet build.
 
-Known limit: on current hub.confighub.com the approval gate does not appear in
-the Unit's `ApplyGates` from the Space trigger-filter wiring, so the run stops
-at the approval-boundary observation. That behavior is tracked in
-confighubai/confighub#4975, a tracker that is not public;
-`npm run sveltos-gate:probe` answers the same question from outside. The run
-is expected to pass once the defect is resolved.
+The approval gate attaches about a second after a Unit is created.
+`npm run sveltos-gate:probe` confirms that in your own organization before a
+run, and refuses in seconds if the wiring is wrong instead of failing after
+the fleet build.
 When cleaning up scratch Spaces by hand, delete each management Space before
 its `-argo-apps` sibling, or the Target is stranded by a dangling reference
 (confighubai/confighub#4980).

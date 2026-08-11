@@ -51,23 +51,22 @@ verify chain enforces that continuity mechanically.
 Chapters one and two are recorded live. The
 [fleet rehearsal](examples/sveltos/fleet-rehearsal/README.md) proves the
 delivery machinery end to end on a five-cluster kind fleet with a committed
-receipt and phase timings: Kyverno converged everywhere from portable OCI
-digests, a demo application delivered with per-environment replica counts, a
+receipt and phase timings: Kyverno converged everywhere from OCI digests
+Sveltos fetched itself, a demo application delivered with per-environment replica counts, a
 values change and a version bump landed on the pilot alone, and injected
 drift repaired. Run it yourself with
 `npm run sveltos-fleet-rehearsal:run`; it needs the live tools below and no
 ConfigHub account.
 
-Chapters three, four, and five are fully drafted and proven
-offline; their live recordings wait on one server defect
-(confighubai/confighub#4975), each is one command once it closes, and every
-observed matrix cell stays honestly empty until then. That defect tracker is
-not public, so this repository carries its own answer: the probe below
-reports in about two minutes whether the defect still stands. It stood at
-the last probe on 2026-08-08.
+Chapters three, four, and five are fully drafted and proven offline. Their
+runners still carry the delivery path this rehearsal replaced, so their live
+recordings wait on that rework rather than on anything external, and every
+observed matrix cell stays honestly empty until then. The probe below
+confirms in about two minutes that approval gates attach as expected in your
+own organization.
 
 ```bash
-# Two minutes answers whether the server fix has landed.
+# Two minutes confirms approval gates attach in your organization.
 CUB_CONTEXT=my-policy npm run sveltos-gate:probe
 ```
 

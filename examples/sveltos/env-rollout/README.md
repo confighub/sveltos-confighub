@@ -40,8 +40,9 @@ run earns them.
 
 No live run has been recorded. On the current server the approval gate never
 appears in a Unit's `ApplyGates` from the Space trigger-filter wiring, so the
-approval boundary cannot be observed live. That defect is tracked in
-confighubai/confighub#4975. The offline surfaces below are deterministic and
+approval boundary cannot be observed live. These runners still carry the delivery path the fleet rehearsal replaced,
+where a GitOps controller moved the artifact instead of Sveltos fetching
+it. No live run is recorded until they are rebuilt on the recorded path. The offline surfaces below are deterministic and
 verified in the repository gate; every observed cell in the matrix stays
 honestly empty until the live proof runs.
 
@@ -94,8 +95,7 @@ fleet lane.
 CUB_CONTEXT=my-policy npm run sveltos-gate:probe
 ```
 
-Once confighubai/confighub#4975 is resolved,
-the run is one command:
+Once the runner carries the recorded delivery path, the run is one command:
 
 ```bash
 HELM_EXPT_ALLOW_LIVE_SVELTOS_ENV_ROLLOUT=1 \
