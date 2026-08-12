@@ -40,6 +40,10 @@ const exampleFiles = [
   "examples/sveltos/cve-patch/clusterprofile-pilot.yaml",
   "examples/sveltos/cve-patch/patch-candidate.yaml",
 ];
+// The committed live receipt fills the observed columns, so the fixture
+// compile has to see it too or a recorded matrix is compared against an
+// unrecorded one.
+const liveReceiptFile = "runs/sveltos-bulk-ops-proof/receipt.yaml";
 const outputFiles = [
   "data/sveltos-bulk-ops/matrix.csv",
   "data/sveltos-bulk-ops/matrix.md",
@@ -469,10 +473,12 @@ function stableJson(value) {
 function selfTest() {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "helm-expt-sveltos-bulk-ops-self-test-"));
   try {
-    for (const file of exampleFiles) {
+    for (const file of [...exampleFiles, liveReceiptFile]) {
+      const source = join(repoRoot, file);
+      if (!existsSync(source)) continue;
       const destination = join(fixtureRoot, file);
       mkdirSync(dirname(destination), { recursive: true });
-      cpSync(join(repoRoot, file), destination);
+      cpSync(source, destination);
     }
     const first = buildOutputs(compileBulk(fixtureRoot));
     const second = buildOutputs(compileBulk(fixtureRoot));
@@ -492,13 +498,26 @@ function selfTest() {
       csv.trim().split("\n").length === 13,
       "the matrix must hold twelve cluster rows across three checkpoints",
     );
+    // Before the live run every row must stay honestly empty. After it, every
+    // row must carry an observation, because a recorded run that leaves cells
+    // blank is the same dishonesty pointing the other way.
+    if (existsSync(join(repoRoot, liveReceiptFile))) {
+      check(
+        csv.split("observed-pass").length === 13 && !csv.includes(proofStatus),
+        "every matrix row must carry its observation once the live run is recorded",
+      );
+    } else {
+      check(
+        csv.split(proofStatus).length === 13,
+        "every matrix row must stay honestly awaiting the live run",
+      );
+    }
+    // Four clusters expect drift repair. Once the run is recorded each of them
+    // also reports it, so the token appears in the observed column too.
     check(
-      csv.split(proofStatus).length === 13,
-      "every matrix row must stay honestly awaiting the live run",
-    );
-    check(
-      csv.split("injected-and-restored").length === 5,
-      "the audit checkpoint must expect drift repair on all four clusters",
+      csv.split("injected-and-restored").length
+        === (existsSync(join(repoRoot, liveReceiptFile)) ? 9 : 5),
+      "the audit checkpoint must expect drift repair on all four clusters, and report it once recorded",
     );
     const html = first["data/sveltos-bulk-ops/matrix.html"];
     check(
