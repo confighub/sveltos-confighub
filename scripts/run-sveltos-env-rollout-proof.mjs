@@ -86,6 +86,8 @@ const keepArtifactsVariable = "HELM_EXPT_KEEP_SVELTOS_ARTIFACTS";
 // anything further down the file is initialized.
 const convergenceWaitAttempts = 150;
 const holdingCheckAttempts = 3;
+const publishGateAttempts = 30;
+const publishGatePollMs = 2_000;
 const registrationNamespace = "projectsveltos";
 const backgroundDeployment = "kyverno-background-controller";
 const managementClusterRecord = "management";
@@ -2534,11 +2536,40 @@ function allowedDryRun(context, space, unit) {
   };
 }
 
+// The server evaluates apply gates asynchronously, so a publish can arrive
+// while a gate trigger is still queued. The server says so in those words, and
+// re-queues the trigger. That is a race and not a refusal, so the publish waits
+// for a bounded budget and then fails with the gate the server named. A gate
+// that genuinely refuses reports something else and still stops the run here.
+function pendingApplyGate(message) {
+  return message.includes("outstanding ApplyGates")
+    && message.includes("re-queued for evaluation");
+}
+
 function publishRelease(context, space) {
-  const response = cubJson(
-    context,
-    ["release", "publish", space, "-o", "json"],
-    { timeout: 300_000 },
+  let lastPending = "";
+  let response;
+  for (let attempt = 0; attempt < publishGateAttempts; attempt += 1) {
+    try {
+      response = cubJson(
+        context,
+        ["release", "publish", space, "-o", "json"],
+        { timeout: 300_000 },
+      );
+      break;
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      if (!pendingApplyGate(message)) throw error;
+      lastPending = message;
+      response = undefined;
+      sleep(publishGatePollMs);
+    }
+  }
+  check(
+    response,
+    `${space} still had outstanding apply gates after ${
+      Math.round((publishGateAttempts * publishGatePollMs) / 1000)
+    }s; ${lastPending}`,
   );
   const release = response.Release ?? response.release ?? response;
   const manifestDigest = normalizeDigest(
@@ -4055,6 +4086,27 @@ function selfTest() {
     cluster.state.failureMode = null;
     cluster.tick();
 
+    // A publish can land while the server is still evaluating an apply gate.
+    // The server says the triggers were re-queued, and only that message may
+    // be waited out. A gate that refuses must still stop the run, so the two
+    // messages are told apart here rather than by a substring that matches
+    // both.
+    check(
+      pendingApplyGate(
+        "Failed: HTTP 422 for req tWgw: outstanding ApplyGates; triggers"
+          + " re-queued for evaluation Metadata: Apply Gates:"
+          + " platform/vet-schemas/vet-schemas",
+      ),
+      "the re-queued apply-gate message was not recognised as transient",
+    );
+    check(
+      !pendingApplyGate(
+        "Failed: HTTP 422 for req tWgw: outstanding ApplyGates Metadata:"
+          + " Apply Gates: platform/vet-schemas/vet-schemas",
+      ),
+      "a refusing apply gate was mistaken for a transient re-queue",
+    );
+
     const receipt = buildReceipt({
       recordedAt: "self-test",
       plan,
@@ -4226,7 +4278,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets delivered through the gateway to a fake management cluster, the gzip fetch refusal, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets delivered through the gateway to a fake management cluster, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;

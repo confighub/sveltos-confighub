@@ -16,10 +16,10 @@ matrix, a receipt contract, and deterministic self-tests.
 1. **[Kyverno across the fleet](../../../examples/sveltos/kyverno-fleet/README.md)**
    installs admission policy through a reviewed record with an approval gate,
    because policy is the clearest case for review before a change reaches
-   every cluster. Recorded live.
+   every cluster. Recorded live on the earlier delivery path.
 2. **The canary, in the same example**: the reviewed profile selected only the
    pilot cluster, and one approved selector change added the second cluster at
-   a new OCI digest. Recorded live in the
+   a new OCI digest. Recorded live on the earlier delivery path in the
    [two-wave proof](../../../data/sveltos-oci-delivery-proof/summary.md).
 3. **[Environment rollout](../../../examples/sveltos/env-rollout/README.md)**
    promotes one reviewed values change pilot to staging to production, with
@@ -46,8 +46,9 @@ four's, and the repository gate enforces that continuity mechanically.
 
 ## What is proven today and what is not
 
-All five chapters are recorded live. Every observed matrix cell comes from a
-committed receipt, and the same governance logic also runs offline against
+All five chapters are recorded live, chapters one and two on the earlier
+delivery path and the rest on the gateway. Every observed matrix cell comes
+from a committed receipt, and the same governance logic also runs offline against
 fake ConfigHub and cluster surfaces in the repository gate, in seconds, with
 no account or cluster.
 
@@ -66,8 +67,12 @@ after it is created. An earlier report here said the gate never appeared;
 that was a misreading in this repository's own observation code, which asked
 the server for a projection it does not return, and it has been withdrawn.
 
-Every chapter now fetches each approved release from the gateway, and each
-one is recorded. What remains is not a run but a release: the gateway serves
+Chapters three, four, and five fetch each approved release from the gateway,
+and each one is recorded. Chapters one and two are recorded on the earlier
+delivery path, which carried the OCI through a GitOps controller and a
+temporary registry, and their receipt says so; their governance claim stands
+as recorded and their delivery half awaits a gateway re-record. What remains
+otherwise is not a run but a release: the gateway serves
 gzipped layers, so these recordings used an addon controller build that
 decompresses them, and each receipt names the image it used. When that fix
 ships in a Sveltos release, the chapters re-record against it.

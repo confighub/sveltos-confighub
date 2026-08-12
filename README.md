@@ -84,7 +84,10 @@ against the three environment records it governed.
 Chapters one and two are recorded in the
 [two-wave proof](data/sveltos-oci-delivery-proof/summary.md): ConfigHub held
 a pilot profile until its exact revision was approved, and one approved
-selector change added the second cluster at a new digest.
+selector change added the second cluster at a new digest. That recording
+predates the gateway and carried its OCI through a GitOps controller and a
+temporary registry, which its receipt states. The governance half stands as
+recorded, and the delivery half awaits a gateway re-record.
 
 The [fleet rehearsal](examples/sveltos/fleet-rehearsal/README.md) proves the
 delivery machinery on a five-cluster fleet with no ConfigHub account at all,
@@ -94,10 +97,10 @@ and records its phase timings.
 
 1. **[Kyverno across the fleet](examples/sveltos/kyverno-fleet/README.md)**
    installs admission policy through a reviewed record with an approval
-   gate. Recorded live.
+   gate. Recorded live on the earlier delivery path.
 2. **The canary**, in the same example: the reviewed profile selected only
    the pilot cluster, and one approved selector change added the second
-   cluster at a new OCI digest. Recorded live.
+   cluster at a new OCI digest. Recorded live on the earlier delivery path.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
    one reviewed values change pilot to staging to production, with one
    governed record per cluster. The earlier three-record run is recorded; the
