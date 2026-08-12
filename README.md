@@ -58,6 +58,18 @@ enough to be the point of the repository.
 
 ## See the result first
 
+Chapter four is fleet patch day with evidence: the patched chart's
+provenance was checked against the reviewed digest before anything was
+stored, the bump moved through all three environments, and a
+[coverage audit](data/sveltos-cve-patch/matrix.md) named every cluster and
+confirmed each runs the patched version.
+
+Chapter five wrote one reviewed edit into every record in a single pass and
+closed with a [zero-drift audit](data/sveltos-bulk-ops/matrix.md). Its
+receipt records the shape of that fan-out honestly: one reviewed edit, three
+record updates, three approvals, and three release publishes, because each
+Space publishes its own release.
+
 Chapter three moved one reviewed values change from pilot to staging to
 production. Every wave has its own approval bracket, and the
 [per-cluster matrix](data/sveltos-env-rollout/matrix.md) shows which cluster
@@ -88,14 +100,14 @@ and records its phase timings.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
    that proves no cluster was missed. No vulnerability scanning is claimed.
-   Drafted and proven offline.
+   Recorded live.
 5. **[Bulk operations](examples/sveltos/bulk-ops/README.md)**: one reviewed
-   edit fans out to every record in one pass, closed by a zero-drift audit.
-   Drafted and proven offline.
+   edit written to every record in one pass, closed by a zero-drift audit.
+   Recorded live.
 
-Chapters four and five are not recorded yet. Both runners now carry the
-gateway path chapter three recorded, and each waits only on a live run. Every
-observed cell in their matrices stays empty until that run happens.
+All five chapters are recorded. Every observed cell in every matrix comes
+from a committed receipt, and each receipt records the addon controller
+image its run used.
 
 ## How to run it
 
