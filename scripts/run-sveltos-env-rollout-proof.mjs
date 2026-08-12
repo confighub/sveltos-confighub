@@ -347,6 +347,7 @@ function run() {
         space: spaceFor[plan.management.cluster],
         expectedDocs: managementVariant.documents,
         revisionId: managementVariant.revisionId,
+        publishesRelease: false,
       },
     ];
     const baselineSet = reviewSet({
@@ -1262,7 +1263,15 @@ function reviewSet({ policyContext, stageName, query, members }) {
     // The published release is not read back here. What the gateway served is
     // proved downstream, where the object that arrived on the management
     // cluster is compared field by field against the approved revision.
-    const release = publishRelease(policyContext, member.space);
+    //
+    // The management record is the exception, and it is the record that opens
+    // the gateway path. Its bootstrap profiles are what let the management
+    // cluster fetch at all, so its first revision cannot arrive through the
+    // gateway and is applied with kubectl instead. It is stored, gated, and
+    // approved exactly like every other record; it is simply not published.
+    const release = member.publishesRelease === false
+      ? null
+      : publishRelease(policyContext, member.space);
     records[member.cluster] = {
       cluster: member.cluster,
       space: member.space,
@@ -2071,14 +2080,28 @@ function verifyVariants(receipt, plan) {
           && record.approval.contentHashUnchanged === true,
         `the ${variant.cluster} ${record.stage} approval record changed`,
       );
-      check(
-        normalizeDigest(record.release?.manifestDigest)
-          === record.release.manifestDigest
-          && record.release.space === variant.space
-          && record.release.reference === variant.gatewayReference
-          && record.release.tag === releaseTag,
-        `the ${variant.cluster} ${record.stage} release record changed`,
-      );
+      // Only the management record may carry no release, and it must say so
+      // rather than simply be missing one, so a workload record that failed to
+      // publish can never pass as an out-of-band record.
+      if (variant.role === "management") {
+        check(
+          record.release === null,
+          `the ${variant.cluster} ${record.stage} record must not publish a release`,
+        );
+      } else {
+        check(
+          record.release,
+          `the ${variant.cluster} ${record.stage} record published no release`,
+        );
+        check(
+          normalizeDigest(record.release?.manifestDigest)
+            === record.release.manifestDigest
+            && record.release.space === variant.space
+            && record.release.reference === variant.gatewayReference
+            && record.release.tag === releaseTag,
+          `the ${variant.cluster} ${record.stage} release record changed`,
+        );
+      }
     }
   }
   for (const row of plan.clusters) {
@@ -3947,6 +3970,7 @@ function selfTest() {
           space: spaceFor[plan.management.cluster],
           expectedDocs: managementVariant.documents,
           revisionId: managementVariant.revisionId,
+          publishesRelease: false,
         },
       ],
     });
@@ -4278,7 +4302,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets delivered through the gateway to a fake management cluster, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
