@@ -14,6 +14,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  applyDepartures,
+  canonicalValue,
+  isScalarMap,
+  parentPath,
+  assertUpstreamLineage as assertLineageFromMutations,
+  canonicalDocs,
+  fieldsCollide,
+  identity,
+  normalizeDigest,
+  pendingApplyGate,
+  readPath,
+  sameSet,
+  spaceName,
+  storedData,
+  writeDocuments,
+  writePath,
+  writeStoredDocuments,
+} from "./lib/per-cluster-fleet.mjs";
+import {
   check,
   parseDocs,
   readYaml,
@@ -92,18 +111,6 @@ const publishGateAttempts = 30;
 const publishGatePollMs = 2_000;
 // Declared here with the other constants because the mode dispatch runs before
 // anything further down the file is initialized.
-const yamlWriter = `
-import json, sys, yaml
-
-def represent_str(dumper, data):
-    style = "|" if "\\n" in data else None
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
-
-yaml.add_representer(str, represent_str)
-documents = json.load(sys.stdin)
-with open(sys.argv[1], "w") as handle:
-    handle.write(yaml.dump_all(documents, default_flow_style=False, sort_keys=False))
-`;
 const registrationNamespace = "projectsveltos";
 const backgroundDeployment = "kyverno-background-controller";
 const managementClusterRecord = "management";
@@ -844,13 +851,6 @@ function loadRolloutPlan(root = repoRoot) {
 // A variant is the base with its declared departures written over it. Every
 // departure names a field of the profile, which is the granularity ConfigHub
 // merges at when a later base change flows down.
-function applyDepartures(baseDoc, departures) {
-  const doc = structuredClone(baseDoc);
-  for (const [path, value] of Object.entries(departures)) {
-    writePath(doc, path, value, true);
-  }
-  return doc;
-}
 
 function withChangedValue(doc, valuesPath, next) {
   const changed = structuredClone(doc);
@@ -869,28 +869,8 @@ function valuesOf(doc) {
 // The second case is the measured one: a recorded ConfigHub run showed a
 // variant whose departure sat on a map the base also wrote to receive none of
 // the base's changes while its upstream pointer advanced, and nothing said so.
-function fieldsCollide(left, right, doc) {
-  if (left === right) return true;
-  if (left.startsWith(`${right}.`) || right.startsWith(`${left}.`)) return true;
-  const leftParent = parentPath(left);
-  const rightParent = parentPath(right);
-  if (!leftParent || leftParent !== rightParent) return false;
-  return isScalarMap(readPath(doc, leftParent));
-}
 
-function parentPath(path) {
-  const index = path.lastIndexOf(".");
-  return index < 0 ? "" : path.slice(0, index);
-}
 
-function isScalarMap(node) {
-  return Boolean(node)
-    && typeof node === "object"
-    && !Array.isArray(node)
-    && Object.values(node).every(
-      (value) => value === null || typeof value !== "object",
-    );
-}
 
 // The chart names one deployment per controller, so the reviewed replica counts
 // are checkable on the cluster without reading the chart.
@@ -955,9 +935,6 @@ function resolveAddonControllerImage(sveltos) {
 
 // OCI repository names are lowercase, so a Space that will be served through
 // the gateway has to be lowercase to be addressable at all.
-function spaceName(candidate) {
-  return String(candidate).toLowerCase();
-}
 
 function assertPublishableSpaceName(space) {
   check(
@@ -2449,13 +2426,6 @@ ${receipt.spec.limits.map((limit) => `- ${limit}`).join("\n")}
 // Documents that are applied to a cluster with kubectl are written as JSON,
 // which is valid YAML and makes every scalar quoted, so a check for a pinned
 // image cannot be satisfied by a longer tag that merely starts the same way.
-function writeDocuments(path, documents) {
-  writeFileSync(
-    path,
-    `${documents.map((document) =>
-      JSON.stringify(document, null, 2)).join("\n---\n")}\n`,
-  );
-}
 
 // Documents that ConfigHub stores are a different matter. ConfigHub tracks a
 // variant against its base by aligning the resources in the two stored
@@ -2467,20 +2437,6 @@ function writeDocuments(path, documents) {
 // understood. Everything this runner stores is therefore written as YAML, the
 // shape the base itself is stored from, with multi-line strings as block
 // scalars so a values blob reads the way it does in the example files.
-function writeStoredDocuments(path, documents) {
-  const written = spawnSync("python3", ["-c", yamlWriter, path], {
-    input: JSON.stringify(documents),
-    encoding: "utf8",
-  });
-  check(
-    written.status === 0,
-    `could not write ${path} as YAML: ${written.stderr ?? written.error}`,
-  );
-  check(
-    !readFileSync(path, "utf8").trimStart().startsWith("{"),
-    `${path} was written as JSON, which severs a variant's upstream lineage`,
-  );
-}
 
 function createPolicySpace(context, space) {
   assertPublishableSpaceName(space);
@@ -2615,10 +2571,6 @@ function allowedDryRun(context, space, unit) {
 // re-queues the trigger. That is a race and not a refusal, so the publish waits
 // for a bounded budget and then fails with the gate the server named. A gate
 // that genuinely refuses reports something else and still stops the run here.
-function pendingApplyGate(message) {
-  return message.includes("outstanding ApplyGates")
-    && message.includes("re-queued for evaluation");
-}
 
 function publishRelease(context, space) {
   let lastPending = "";
@@ -3312,10 +3264,6 @@ function getByRef(context, entity, ref) {
   return cubJson(context, [entity, "get", "--space", space, slug, "-o", "json"]);
 }
 
-function storedData(unit) {
-  check(unit.Data, `${unit.SpaceSlug}/${unit.Slug} has no stored data`);
-  return Buffer.from(unit.Data, "base64").toString("utf8");
-}
 
 function approvalCount(value) {
   if (Array.isArray(value)) return value.length;
@@ -3323,34 +3271,7 @@ function approvalCount(value) {
   return value ? 1 : 0;
 }
 
-function canonicalDocs(documents) {
-  return JSON.stringify(
-    documents
-      .map((document) => ({
-        identity: identity(document),
-        document: canonicalValue(document),
-      }))
-      .sort((left, right) => left.identity.localeCompare(right.identity)),
-  );
-}
 
-function canonicalValue(value) {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.keys(value)
-      .filter((key) =>
-        !key.startsWith("$comment$")
-        && key !== "status"
-        && key !== "managedFields"
-        && key !== "creationTimestamp"
-        && key !== "generation"
-        && key !== "resourceVersion"
-        && key !== "uid")
-      .sort()
-      .map((key) => [key, canonicalValue(value[key])]),
-  );
-}
 
 function sourceFieldsMatchLive(source, live) {
   const canonicalSource = canonicalValue(source);
@@ -3394,50 +3315,12 @@ function assertUpstreamLineage(context, space, cluster) {
   );
 }
 
-function identity(document) {
-  return [
-    document.apiVersion ?? "",
-    document.kind ?? "",
-    document.metadata?.namespace ?? "",
-    document.metadata?.name ?? "",
-  ].join("|");
-}
 
-function sameSet(left, right) {
-  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
-}
 
-function normalizeDigest(value) {
-  const match = String(value ?? "").match(/sha256:[a-f0-9]{64}/i);
-  return match ? match[0].toLowerCase() : "";
-}
 
-function readPath(value, path) {
-  let current = value;
-  for (const key of path.split(".")) {
-    if (!current || typeof current !== "object") return undefined;
-    current = current[key];
-  }
-  return current;
-}
 
 // A departure may add a field the base never carried, so the writer can create
 // the map on the way down when the caller asks for it.
-function writePath(value, path, next, createMissing = false) {
-  const keys = path.split(".");
-  let current = value;
-  for (const key of keys.slice(0, -1)) {
-    if (createMissing && !(current[key] && typeof current[key] === "object")) {
-      current[key] = {};
-    }
-    check(
-      current[key] && typeof current[key] === "object",
-      `values path ${path} does not exist in the baseline values`,
-    );
-    current = current[key];
-  }
-  current[keys.at(-1)] = next;
-}
 
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;

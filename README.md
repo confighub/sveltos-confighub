@@ -50,7 +50,10 @@ enough to be the point of the repository.
   matching cluster gets the add-on, which is what lets it scale to large
   fleets. This repository narrows that on purpose. Every cluster has its own
   governed record, including the management cluster, and no record addresses
-  two clusters. A record covering two clusters cannot be approved for one and
+  two clusters. Chapter three is built and recorded that way. Chapters four
+  and five still govern one record per environment, so their production
+  record covers two clusters, and they are being reworked to match; their
+  matrices and receipts say which shape each one recorded. A record covering two clusters cannot be approved for one and
   held for the other, cannot be rolled back for one alone, and cannot say
   which of them runs which revision today. The selector still exists but
   matches exactly one cluster, so it addresses rather than fans out, and every
