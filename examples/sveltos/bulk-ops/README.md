@@ -1,27 +1,62 @@
 # Sveltos bulk operations
 
-This is chapter five of the Sveltos fleet example, and the last one in the
-brief: the change-it-once claim. One reviewed edit fans out to every
-environment record in one pass, every cluster converges, and a zero-drift
-audit proves it everywhere.
+One reviewed edit raises the Kyverno background controller across the whole
+fleet in a single pass, and every environment record still clears its own
+approval gate before any cluster sees the change. This is chapter five, the
+change-it-once claim, and it closes with an audit that looks for drift
+everywhere and finds none.
 
-## The design
+[Sveltos](https://projectsveltos.io) selects the clusters and installs the
+add-on; ConfigHub holds the reviewed record, gates it, and publishes the
+approved revision as an OCI image that Sveltos fetches. The runner pins
+Sveltos v1.13.0 and expects the addon controller build that decompresses
+gzipped layers, which the ConfigHub gateway serves.
 
-The chapter reuses the reference fleet from chapters three and four: one
-management cluster and four workload clusters grouped as pilot, staging, and
-two production clusters, defined in the
-[shared fleet design](../env-rollout/fleet.yaml).
+## Why this chapter exists
 
-The baseline continues chapter four's outcome. Each environment keeps its own
-governed `ClusterProfile` at Kyverno chart 3.8.2 carrying the values the
-earlier chapters promoted, and the repository gate enforces that continuity.
+Changing one setting everywhere is where fleets quietly diverge. A cluster is
+missed, a record is edited by hand afterwards, or one environment is left
+behind a gate nobody looked at. The claim here is not that the change reached
+every cluster. It is that the same reviewed bytes are in every record, that
+no record slipped through unapproved, and that a cluster which drifts is
+pulled back.
 
-The [bulk change candidate](bulk-change.yaml) raises
-`backgroundController.replicas` from 2 to 3 on every fleet cluster. Unlike
-chapter three there are no waves: the fan-out writes the same reviewed
-content into all three records in one pass with one change description. Each
-record still enforces its own approval gate; the bulk part is authoring the
-change once and fanning it out once, not skipping review.
+## See the result
+
+The [matrix](../../../data/sveltos-bulk-ops/matrix.md) shows every cluster at
+three checkpoints: the baseline, the state after the fan-out, and the
+zero-drift audit with its repair results. The receipt will live at
+`runs/sveltos-bulk-ops-proof/receipt.yaml`.
+
+Neither is recorded yet. The runner delivers through the ConfigHub OCI
+gateway, the way chapter three was recorded, and no live run of this chapter
+has been recorded on that path. Every observed cell in the matrix stays
+honestly empty until one is.
+
+## How it works
+
+Each environment keeps its own governed `ClusterProfile` in its own ConfigHub
+Space with an approval gate. The
+[bulk change candidate](bulk-change.yaml) raises
+`backgroundController.replicas` from 2 to 3, and one pass writes those same
+reviewed bytes into all three records under one change description. Nothing
+is promoted in waves.
+
+Each record then clears its own bracket: the gate arms with no approval on
+file, the exact head revision is approved, the gate clears with that approval
+recorded, and the Space publishes a release. One bootstrap `ClusterProfile`
+per environment points Sveltos at that Space on the gateway
+(`oci://oci.hub.confighub.com/space/<space>:latest`), and Sveltos fetches the
+release itself and sends the reviewed profile to the clusters carrying that
+environment label.
+
+The fan-out is one authored edit and one pass. It is also three approvals and
+three publishes, because each Space publishes its own release and each
+bootstrap profile reads its own Space. The receipt records those counts rather
+than rounding them down to one operation.
+
+The bootstrap profiles never change. Publishing a release moves the tag, and
+Sveltos follows it on its interval.
 
 ## The zero-drift audit
 
@@ -33,36 +68,29 @@ The chapter closes with the prove-it-everywhere audit, in four parts.
 2. Every record is re-read: its revision and content hash must be exactly
    what was approved, so nothing changed out of band.
 3. The stored change must be byte-identical across the three records.
-4. Drift is injected on every cluster (the background controller is scaled
-   down by hand) and Sveltos must repair all four.
+4. Drift is injected on every cluster, by scaling the background controller
+   down by hand, and Sveltos must repair all four.
+
+## The design
+
+The chapter reuses the reference fleet from chapters three and four: one
+management cluster and four workload clusters grouped as pilot, staging, and
+two production clusters, defined in the
+[shared fleet design](../env-rollout/fleet.yaml).
+
+The baseline continues chapter four's outcome. Each environment record sits at
+Kyverno chart 3.8.2 carrying the values the earlier chapters promoted, and the
+repository gate enforces that continuity.
 
 ## The matrix
 
-The per-cluster matrix shows every cluster at three checkpoints: the
-baseline, the state after the fan-out, and the zero-drift audit with its
-repair results.
+The matrix follows the same discipline as the earlier chapters: expected
+evidence comes from the reviewed files, observed evidence only ever comes from
+a live run, and empty cells stay empty until a run earns them.
 
 - [matrix.csv](../../../data/sveltos-bulk-ops/matrix.csv)
 - [matrix.md](../../../data/sveltos-bulk-ops/matrix.md)
 - [matrix.html](../../../data/sveltos-bulk-ops/matrix.html)
-
-## Current status
-
-No live run has been recorded. On the current server the approval gate never
-appears in a Unit's `ApplyGates` from the Space trigger-filter wiring, so the
-approval boundary cannot be observed live. These runners still carry the delivery path the fleet rehearsal replaced,
-where a GitOps controller moved the artifact instead of Sveltos fetching
-it. No live run is recorded until they are rebuilt on the recorded path. Every observed cell in the matrix stays honestly
-empty until the live proof runs.
-
-The live runner is drafted in `scripts/run-sveltos-bulk-ops-proof.mjs` and
-stays behind that blocker on purpose. Before it builds anything it probes the
-approval gate on a throwaway Space and Unit; while the defect stands, the
-probe refuses in seconds and names the issue. Its self-test proves the whole
-governance walk offline, including the set-aware gate query with a rogue
-armed gate detected and the change-once byte identity across records. Once
-the receipt is recorded, the matrix generator fills the observed columns
-from it.
 
 ## Repeat and verify
 
@@ -71,19 +99,29 @@ from it.
 # continuity and fan-out refusals, and the receipt-fill path.
 npm run sveltos-bulk-ops:self-test
 
-# Deterministic self-test of the drafted live runner: the gate preflight,
-# one fan-out pass with six approval brackets, the set-aware gate query,
-# and the tamper battery, against fake ConfigHub and OCI surfaces.
+# Deterministic self-test of the live runner: the Sveltos pin, the addon
+# controller image override, the lowercase Space and Secret type refusals the
+# gateway imposes, the gate preflight, one fan-out pass with six approval
+# brackets delivered through a fake gateway, the set-aware gate query with a
+# rogue armed gate detected, and the tamper battery.
 npm run sveltos-bulk-ops-proof:self-test
 ```
 
-Once the runner carries the recorded delivery path, the run is one command:
+Confirm the approval wiring first. The probe wires one throwaway Space,
+creates one probe Unit, watches for the approval gate, and cleans up after
+itself:
+
+```bash
+CUB_CONTEXT=my-policy npm run sveltos-gate:probe
+```
+
+Then record the run. One authenticated context is enough, because no cluster
+Spaces are created:
 
 ```bash
 HELM_EXPT_ALLOW_LIVE_SVELTOS_BULK_OPS=1 \
-HELM_EXPT_ALLOW_SCRATCH_ORG=1 \
 CUB_CONTEXT=my-policy \
-SVELTOS_CLUSTER_CONTEXT=my-scratch \
+SVELTOS_ADDON_CONTROLLER_IMAGE=docker.io/projectsveltos/addon-controller:v1.13.0-ch \
 npm run sveltos-bulk-ops-proof:run
 
 # Then refresh the summary and the observed matrix columns.
@@ -91,4 +129,6 @@ npm run sveltos-bulk-ops-proof:generate
 npm run sveltos-bulk-ops:generate
 ```
 
-Fleet proofs run serially against the organization, never in parallel.
+The run builds its own kind fleet, installs the pinned Sveltos, and removes
+every cluster and Space it created. Fleet proofs run serially against the
+organization, never in parallel.
