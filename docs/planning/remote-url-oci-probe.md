@@ -83,3 +83,45 @@ an archive whose raw bytes contain `._ns.yaml`.
 
 The catalog keeps publishing single raw-YAML layers, because that shape
 works on every build, released or patched.
+
+## The gateway path, proven end to end, 2026-08-12
+
+The architecture statement says config comes from ConfigHub, which publishes
+changes as OCI images on its OCI gateway, and Sveltos fetches from that
+gateway. That whole sentence now has a measurement behind it.
+
+A Space was wired the way the chapters wire one, with the approval filter and
+a release target. One reviewed Unit was created, the approval gate attached
+about a second later, the exact revision was approved, and
+`cub release publish` published the Space. A single kind cluster running
+Sveltos then fetched that release directly:
+
+```yaml
+policyRefs:
+  - deploymentType: Remote
+    remoteURL:
+      url: oci://oci.hub.confighub.com/space/<space>:latest
+      interval: 1m0s
+      secretRef:
+        name: confighub-gateway
+        namespace: projectsveltos
+```
+
+The Secret carries the `cub` bearer token under the `token` key and the
+Sveltos cluster-profile type. Thirty seconds later the ClusterSummary read
+`Provisioned` and the reviewed `ClusterProfile` was on the cluster. No
+temporary registry, no re-push, and no other controller took part.
+
+Two constraints fell out of the run and both matter to anyone repeating it.
+
+The gateway serves each release as one
+`application/vnd.oci.image.layer.v1.tar+gzip` layer, so the fetcher has to
+gunzip. The same profile against the released build failed with the gzip
+bytes decoded as YAML, and succeeded against the build carrying the gzip
+fix. Reading a ConfigHub release from the gateway therefore needs an
+addon controller with that fix.
+
+OCI repository names are lowercase, so a Space whose name carries uppercase
+characters cannot be addressed through the gateway at all. The gateway also
+answers `Space has no release target` for a Space that was never given one,
+which is a clearer signal than a plain not-found.
