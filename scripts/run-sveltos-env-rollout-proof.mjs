@@ -2,7 +2,9 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -42,9 +44,9 @@ const catalogOciTargetRef =
   "bitnami-redis-27-0-0-default-pilot-live-20260705/oci-target";
 // The approval gate attaches about a second after a Unit is created; the
 // report that said otherwise was our own misreading, now withdrawn. The
-// runner carries the gateway path the probe proved, and no live run has been
-// recorded on it yet.
-const pendingReason = "the gateway rework has not been recorded live yet";
+// runner now governs one variant per cluster, and no live run has been
+// recorded on that shape yet.
+const pendingReason = "the per-cluster variant rework has not been recorded live yet";
 const policyPath = join(
   repoRoot,
   "config-catalog",
@@ -60,6 +62,7 @@ const configHubOciHost = "oci.hub.confighub.com";
 const probeRecord = "docs/planning/remote-url-oci-probe.md";
 const exampleRoot = join(repoRoot, "examples", "sveltos", "env-rollout");
 const changePath = join(exampleRoot, "change-candidate.yaml");
+const variantsPath = join(exampleRoot, "variants.yaml");
 const sourceLockPath = join(exampleRoot, "source-lock.yaml");
 const receiptPath = join(
   repoRoot,
@@ -70,6 +73,15 @@ const receiptPath = join(
 const summaryPath = join(repoRoot, "data", "sveltos-env-rollout", "summary.md");
 const environments = ["pilot", "staging", "prod"];
 const policyUnit = "clusterprofile";
+const proofLabel = "sveltos-env-rollout";
+// Every record in a run carries these labels, and a wave selects its members
+// with one query over them. The set scope is the one chapter five already uses.
+const setScope = 'cub unit list --space "*"';
+const baseRecordLabel = "base";
+const variantRecordLabel = "variant";
+// An operator who wants to look at the clusters and the Spaces after a run sets
+// this. The default still removes everything the run created.
+const keepArtifactsVariable = "HELM_EXPT_KEEP_SVELTOS_ARTIFACTS";
 // Declared with the other constants because the mode dispatch runs before
 // anything further down the file is initialized.
 const convergenceWaitAttempts = 150;
@@ -102,6 +114,10 @@ if (mode === "--run") {
     `${relativeRepo(receiptPath)} is missing; no live run has been recorded, because ${pendingReason}`,
   );
   const receipt = readYaml(receiptPath);
+  check(
+    !supersededReceipt(receipt),
+    `${relativeRepo(receiptPath)} predates the per-cluster variant design; record the run live before regenerating the summary`,
+  );
   verifyReceipt(receipt);
   write(summaryPath, renderSummary(receipt));
   console.log(`wrote ${relativeRepo(summaryPath)}`);
@@ -111,16 +127,31 @@ if (mode === "--run") {
   );
 } else {
   const receipt = readYaml(receiptPath);
-  verifyReceipt(receipt);
-  check(
-    existsSync(summaryPath),
-    `${relativeRepo(summaryPath)} is missing; run the generator`,
-  );
-  check(
-    readFileSync(summaryPath, "utf8") === renderSummary(receipt),
-    `${relativeRepo(summaryPath)} is stale`,
-  );
-  console.log("verified the Sveltos environment rollout proof");
+  if (supersededReceipt(receipt)) {
+    console.log(
+      "the committed Sveltos environment rollout receipt records three environment records and predates the per-cluster variant design; it awaits a live re-record, and its summary is kept as recorded",
+    );
+  } else {
+    verifyReceipt(receipt);
+    check(
+      existsSync(summaryPath),
+      `${relativeRepo(summaryPath)} is missing; run the generator`,
+    );
+    check(
+      readFileSync(summaryPath, "utf8") === renderSummary(receipt),
+      `${relativeRepo(summaryPath)} is stale`,
+    );
+    console.log("verified the Sveltos environment rollout proof");
+  }
+}
+
+// The recorded run governed one record per environment, so its receipt keys
+// everything by environment and carries no variant list. The verify lane keeps
+// reading it until the per-cluster design is recorded live, so the old shape is
+// recognized and left alone instead of being checked against a contract it
+// predates or silently rewritten.
+function supersededReceipt(receipt) {
+  return !Array.isArray(receipt?.spec?.variants);
 }
 
 function run() {
@@ -164,27 +195,36 @@ function run() {
 
   const recordedAt = new Date().toISOString();
   const runId = safeRunId(process.env.HELM_EXPT_PROOF_RUN_ID || recordedAt);
+  const keepArtifacts = keepArtifactsRequested();
   const managementName = `hx-sveltos-envmgmt-${runId}`;
   const workRoot = mkdtempSync(join(tmpdir(), "helm-expt-sveltos-env-rollout-"));
   const managementKubeconfig = join(workRoot, "management.kubeconfig");
-  const fleetClusters = plan.fleet.spec.workloads.map((workload) => ({
-    cluster: `${workload.cluster}-${runId}`,
-    logicalCluster: workload.cluster,
-    environment: workload.environment,
-    kubeconfig: join(workRoot, `${workload.cluster}.kubeconfig`),
+  const fleetClusters = plan.clusters.map((row) => ({
+    cluster: `${row.cluster}-${runId}`,
+    logicalCluster: row.cluster,
+    environment: row.environment,
+    wave: row.wave,
+    kubeconfig: join(workRoot, `${row.cluster}.kubeconfig`),
   }));
-  const spaceFor = Object.fromEntries(
-    environments.map((environment) => [
-      environment,
-      spaceName(`hx-sveltos-env-${environment}-${runId}`),
-    ]),
-  );
+  const baseSpace = spaceName(`hx-sveltos-env-base-${runId}`);
+  // One Space per cluster, the management cluster included, so the record that
+  // says what a cluster runs is addressable on its own.
+  const spaceFor = Object.fromEntries([
+    ...plan.clusters.map((row) => [row.cluster, spaceName(`${row.cluster}-${runId}`)]),
+    [plan.management.cluster, spaceName(`${plan.management.cluster}-${runId}`)],
+  ]);
+  const policySpaces = [baseSpace, ...Object.values(spaceFor)];
   const cleanup = {
-    probeSpace: "pending",
-    managementCluster: "not-created",
-    workloadClusters: "not-created",
-    policySpaces: "not-created",
-    localFiles: "pending",
+    mode: keepArtifacts ? "kept" : "removed",
+    keptDeliberately: keepArtifacts,
+    results: {
+      probeSpace: "pending",
+      managementCluster: "not-created",
+      workloadClusters: "not-created",
+      policySpaces: "not-created",
+      localFiles: "pending",
+    },
+    kept: [],
   };
   let managementStarted = false;
   const workloadsStarted = new Set();
@@ -195,15 +235,12 @@ function run() {
   // gate never attaches costs seconds, not the seven-minute fleet build the
   // two-wave runner paid per attempt.
   assertApprovalGateObservable(policyContext, runId, topology, catalogTarget);
-  cleanup.probeSpace = "pass";
+  cleanup.results.probeSpace = "pass";
   phase("gate preflight passed; the approval gate is observable");
 
   try {
-    for (const environment of environments) {
-      check(
-        !spacePresent(policyContext, spaceFor[environment]),
-        `refusing to reuse ${spaceFor[environment]}`,
-      );
+    for (const space of policySpaces) {
+      check(!spacePresent(policyContext, space), `refusing to reuse ${space}`);
     }
     for (const row of [managementName, ...fleetClusters.map((item) => item.cluster)]) {
       check(!clusterPresent(row), `refusing to reuse the kind cluster ${row}`);
@@ -211,14 +248,14 @@ function run() {
 
     createCluster(managementName, managementKubeconfig);
     managementStarted = true;
-    cleanup.managementCluster = "pending";
+    cleanup.results.managementCluster = "pending";
     phase("management cluster ready");
 
     for (const row of fleetClusters) {
       createCluster(row.cluster, row.kubeconfig);
       workloadsStarted.add(row.cluster);
     }
-    cleanup.workloadClusters = "pending";
+    cleanup.results.workloadClusters = "pending";
     phase("four workload clusters ready");
 
     const sveltosInstall = installSveltos({
@@ -235,9 +272,10 @@ function run() {
         workloadName: row.cluster,
         workloadKubeconfig: row.kubeconfig,
         workRoot,
+        logicalCluster: row.logicalCluster,
         environment: row.environment,
       }));
-    phase("four workload clusters registered by environment label");
+    phase("four workload clusters registered, each with its own addressing label");
 
     const gatewayCredential = applyGatewayTokenSecret({
       policyContext,
@@ -251,23 +289,105 @@ function run() {
     });
     phase("the management cluster can fetch its own profiles from the gateway");
 
-    const environmentRecords = {};
-    cleanup.policySpaces = "pending";
-    for (const environment of environments) {
-      environmentRecords[environment] = establishEnvironment({
+    cleanup.results.policySpaces = "pending";
+    const baseRecord = establishBase({
+      policyContext,
+      space: baseSpace,
+      plan,
+      topology,
+      catalogTarget,
+      runId,
+      policySpacesCreated,
+    });
+    phase("the base record holds the content every cluster shares");
+
+    const variantRecords = {};
+    for (const row of plan.clusters) {
+      variantRecords[row.cluster] = establishVariant({
         policyContext,
-        managementKubeconfig,
-        managementName,
-        environment,
-        space: spaceFor[environment],
-        plan,
+        space: spaceFor[row.cluster],
+        baseSpace,
+        cluster: row,
         topology,
         catalogTarget,
+        runId,
         workRoot,
         policySpacesCreated,
       });
-      phase(`${environment} baseline approved, published, and fetched from the gateway`);
     }
+    phase("four per-cluster variants cloned from the base, each carrying its own departures");
+
+    const managementVariant = establishManagement({
+      policyContext,
+      space: spaceFor[plan.management.cluster],
+      plan,
+      topology,
+      catalogTarget,
+      runId,
+      workRoot,
+      policySpacesCreated,
+      workloadSpaces: plan.clusters.map((row) => ({
+        cluster: row.cluster,
+        space: spaceFor[row.cluster],
+      })),
+    });
+    phase("the management record holds one bootstrap profile per workload Space");
+
+    const baselineMembers = [
+      ...plan.clusters.map((row) => ({
+        cluster: row.cluster,
+        space: spaceFor[row.cluster],
+        expectedDocs: [row.baselineDoc],
+        revisionId: row.revisions.baseline,
+      })),
+      {
+        cluster: plan.management.cluster,
+        space: spaceFor[plan.management.cluster],
+        expectedDocs: managementVariant.documents,
+        revisionId: managementVariant.revisionId,
+      },
+    ];
+    const baselineSet = reviewSet({
+      policyContext,
+      stageName: "baseline",
+      query: baselineQuery(plan, runId),
+      members: baselineMembers,
+    });
+    for (const row of plan.clusters) {
+      variantRecords[row.cluster].baseline = baselineSet.records[row.cluster];
+    }
+    managementVariant.baseline = baselineSet.records[plan.management.cluster];
+    phase("one set operation approved every record this run created, one approval each");
+
+    const bootstrap = applyBootstrapProfiles({
+      managementKubeconfig,
+      workRoot,
+      profiles: managementVariant.bootstrapProfiles,
+    });
+    phase("the management record was applied out of band, which is what opens the gateway path");
+
+    for (const row of plan.clusters) {
+      const record = variantRecords[row.cluster];
+      const delivery = waitForRemoteDeploy({
+        managementKubeconfig,
+        managementName,
+        cluster: row.cluster,
+        profileName: row.profileName,
+        expectedDoc: row.baselineDoc,
+        release: record.baseline.release,
+      });
+      check(
+        delivery.result === "pass",
+        `Sveltos did not fetch the ${row.cluster} baseline from the gateway: ${delivery.reason ?? "unknown"}`,
+      );
+      assertLiveProfileMatches({
+        managementKubeconfig,
+        profileName: row.profileName,
+        expectedDoc: row.baselineDoc,
+      });
+      record.baseline.delivery = delivery;
+    }
+    phase("every per-cluster baseline arrived from the gateway");
 
     const checkpoints = [
       recordCheckpoint({
@@ -280,18 +400,26 @@ function run() {
     ];
     phase("baseline checkpoint observed on all four clusters");
 
-    for (const wave of plan.change.spec.waves) {
-      const environment = wave.environment;
-      environmentRecords[environment].changed = promoteEnvironment({
+    const baseChange = changeBaseRecord({
+      policyContext,
+      space: baseSpace,
+      plan,
+      workRoot,
+    });
+    phase("the reviewed change landed once on the base record");
+
+    const waveRecords = [];
+    for (const wave of plan.waves) {
+      waveRecords.push(promoteWave({
         policyContext,
         managementKubeconfig,
         managementName,
-        environment,
-        space: spaceFor[environment],
-        record: environmentRecords[environment],
+        wave,
         plan,
-        workRoot,
-      });
+        spaceFor,
+        runId,
+        variantRecords,
+      }));
       checkpoints.push(recordCheckpoint({
         id: `after-wave-${wave.wave}`,
         completedWaves: wave.wave,
@@ -299,7 +427,7 @@ function run() {
         fleetClusters,
         managementKubeconfig,
       }));
-      phase(`wave ${wave.wave} (${environment}) promoted and observed`);
+      phase(`wave ${wave.wave} (${wave.environment}) promoted as one set operation over ${wave.clusters.length} variant(s) and observed`);
     }
 
     const convergenceAudit = auditConvergence({
@@ -323,60 +451,126 @@ function run() {
       sveltosInstall,
       gatewayCredential,
       registrations,
-      environmentRecords,
+      baseRecord,
+      baseChange,
+      baselineSet,
+      variantRecords,
+      managementVariant,
+      bootstrap,
+      waveRecords,
       checkpoints,
       convergenceAudit,
       cleanup,
     });
   } finally {
-    phase("cleaning up temporary resources");
-    if (managementStarted || clusterPresent(managementName)) {
-      tryCommand("kind", ["delete", "cluster", "--name", managementName], {
-        timeout: 180_000,
-      });
-    }
-    cleanup.managementCluster = clusterPresent(managementName) ? "fail" : "pass";
-
-    for (const row of fleetClusters) {
-      if (workloadsStarted.has(row.cluster) || clusterPresent(row.cluster)) {
-        tryCommand("kind", ["delete", "cluster", "--name", row.cluster], {
+    if (keepArtifacts) {
+      phase("keeping the clusters and the Spaces, because the keep-alive flag is set");
+      cleanup.results.managementCluster = "kept";
+      cleanup.results.workloadClusters = "kept";
+      cleanup.results.policySpaces = "kept";
+      cleanup.kept = [
+        ...[managementName, ...fleetClusters.map((row) => row.cluster)]
+          .filter((name) => clusterPresent(name))
+          .map((name) => ({
+            kind: "kind cluster",
+            name,
+            removeWith: `kind delete cluster --name ${name}`,
+          })),
+        ...policySpaces
+          .filter((space) =>
+            policySpacesCreated.has(space) || spacePresent(policyContext, space))
+          .map((space) => ({
+            kind: "ConfigHub Space",
+            name: space,
+            removeWith: `cub space delete ${space} --recursive-force`,
+          })),
+      ];
+    } else {
+      phase("cleaning up temporary resources");
+      if (managementStarted || clusterPresent(managementName)) {
+        tryCommand("kind", ["delete", "cluster", "--name", managementName], {
           timeout: 180_000,
         });
       }
-    }
-    cleanup.workloadClusters = fleetClusters.some((row) =>
-      clusterPresent(row.cluster))
-      ? "fail"
-      : "pass";
+      cleanup.results.managementCluster = clusterPresent(managementName)
+        ? "fail"
+        : "pass";
 
-    for (const environment of environments) {
-      const space = spaceFor[environment];
-      if (policySpacesCreated.has(space) || spacePresent(policyContext, space)) {
-        cubTry(policyContext, [
-          "space", "delete", space, "--recursive-force", "--quiet",
-        ], { timeout: 240_000 });
+      for (const row of fleetClusters) {
+        if (workloadsStarted.has(row.cluster) || clusterPresent(row.cluster)) {
+          tryCommand("kind", ["delete", "cluster", "--name", row.cluster], {
+            timeout: 180_000,
+          });
+        }
       }
-    }
-    cleanup.policySpaces = environments.some((environment) =>
-      spacePresent(policyContext, spaceFor[environment]))
-      ? "fail"
-      : "pass";
+      cleanup.results.workloadClusters = fleetClusters.some((row) =>
+        clusterPresent(row.cluster))
+        ? "fail"
+        : "pass";
 
+      for (const space of policySpaces) {
+        if (policySpacesCreated.has(space) || spacePresent(policyContext, space)) {
+          cubTry(policyContext, [
+            "space", "delete", space, "--recursive-force", "--quiet",
+          ], { timeout: 240_000 });
+        }
+      }
+      cleanup.results.policySpaces = policySpaces.some((space) =>
+        spacePresent(policyContext, space))
+        ? "fail"
+        : "pass";
+    }
+
+    // The scratch tree holds kubeconfigs and a token, so it goes either way.
     rmSync(workRoot, { recursive: true, force: true });
-    cleanup.localFiles = existsSync(workRoot) ? "fail" : "pass";
+    cleanup.results.localFiles = existsSync(workRoot) ? "fail" : "pass";
   }
 
   check(receipt, "the Sveltos environment rollout proof did not complete");
   check(
-    Object.values(cleanup).every((value) => value === "pass"),
+    cleanupSucceeded(cleanup),
     `Sveltos environment rollout cleanup failed: ${JSON.stringify(cleanup)}`,
   );
   writeYaml(receiptPath, receipt);
   write(summaryPath, renderSummary(receipt));
   verifyReceipt(receipt);
+  if (keepArtifacts) reportKeptArtifacts(cleanup);
   console.log(
     `wrote ${relativeRepo(receiptPath)} and ${relativeRepo(summaryPath)}`,
   );
+}
+
+function keepArtifactsRequested() {
+  return process.env[keepArtifactsVariable]?.trim() === "1";
+}
+
+// Cleanup passes when everything was removed, and it also passes when the
+// operator asked to keep the clusters and the Spaces. What it never accepts is
+// a removal that was attempted and failed.
+function cleanupSucceeded(cleanup) {
+  const results = Object.values(cleanup?.results ?? {});
+  if (results.length === 0) return false;
+  if (cleanup.mode === "kept") {
+    return cleanup.keptDeliberately === true
+      && results.every((value) => value === "pass" || value === "kept")
+      && (cleanup.kept ?? []).length > 0;
+  }
+  return cleanup.mode === "removed"
+    && cleanup.keptDeliberately === false
+    && results.every((value) => value === "pass");
+}
+
+function reportKeptArtifacts(cleanup) {
+  console.log(
+    `[sveltos-env-rollout] ${keepArtifactsVariable}=1 was set, so these were left behind:`,
+  );
+  for (const row of cleanup.kept) {
+    console.log(`[sveltos-env-rollout]   ${row.kind} ${row.name}`);
+  }
+  console.log("[sveltos-env-rollout] remove them with:");
+  for (const row of cleanup.kept) {
+    console.log(`[sveltos-env-rollout]   ${row.removeWith}`);
+  }
 }
 
 // The two-minute check that this organization still wires approval gates:
@@ -410,17 +604,21 @@ function probeGate() {
 
 // One reviewed plan drives the runner, the matrix generator, and the
 // self-test: the revision identities computed here must match
-// scripts/generate-sveltos-env-rollout.mjs exactly.
+// scripts/generate-sveltos-env-rollout.mjs exactly. The plan reads one base
+// profile and one variants record, and derives every per-cluster document from
+// them, so a departure is a declared departure rather than a hand-written copy.
 function loadRolloutPlan(root = repoRoot) {
   const planRoot = join(root, "examples", "sveltos", "env-rollout");
   const fleet = readYaml(join(planRoot, "fleet.yaml"));
   const change = readYaml(join(planRoot, "change-candidate.yaml"));
+  const variants = readYaml(join(planRoot, "variants.yaml"));
   const workloads = fleet.spec?.workloads ?? [];
   check(
     fleet.kind === "SveltosEnvRolloutFleet"
       && workloads.length === 4
-      && new Set(workloads.map((row) => row.cluster)).size === 4,
-    "the fleet record lost its four uniquely named workload clusters",
+      && new Set(workloads.map((row) => row.cluster)).size === 4
+      && Boolean(fleet.spec?.management?.cluster),
+    "the fleet record lost its management cluster or its four uniquely named workload clusters",
   );
   for (const environment of environments) {
     const expected = environment === "prod" ? 2 : 1;
@@ -430,78 +628,277 @@ function loadRolloutPlan(root = repoRoot) {
       `the fleet must place ${expected} cluster(s) in ${environment}`,
     );
   }
-  const waves = change.spec?.waves ?? [];
+  const declaredWaves = change.spec?.waves ?? [];
   check(
     change.kind === "SveltosEnvRolloutChange"
       && change.spec.before !== change.spec.after
-      && waves.map((row) => row.environment).join(",") === environments.join(",")
-      && waves.map((row) => row.wave).join(",") === "1,2,3",
-    "the change waves must cover pilot, staging, and prod in order",
+      && change.spec.editedRecord === "base"
+      && declaredWaves.map((row) => row.environment).join(",")
+      === environments.join(",")
+      && declaredWaves.map((row) => row.wave).join(",") === "1,2,3",
+    "the change waves must cover pilot, staging, and prod in order, and the change must edit the base record",
+  );
+  const selection = change.spec?.selection ?? {};
+  check(
+    selection.scope === setScope
+      && String(selection.whereTemplate ?? "").includes("{run}")
+      && String(selection.whereTemplate).includes("{environment}")
+      && String(selection.baselineWhereTemplate ?? "").includes("{run}"),
+    "the change candidate lost the reviewed set query each wave selects with",
   );
 
-  const profiles = {};
-  for (const wave of waves) {
-    const profilePath = join(planRoot, wave.profile);
-    const text = readFileSync(profilePath, "utf8");
-    const docs = parseDocs(text);
-    check(docs.length === 1, `${wave.profile} must contain one object`);
-    const doc = docs[0];
-    check(
-      doc.kind === "ClusterProfile"
-        && doc.metadata?.name === `kyverno-env-${wave.environment}`
-        && doc.spec?.clusterSelector?.matchLabels?.environment
-        === wave.environment
-        && Object.keys(doc.spec.clusterSelector.matchLabels).length === 1,
-      `${wave.profile} identity or selector changed`,
-    );
-    check(
-      doc.spec?.helmCharts?.length === 1
-        && doc.spec.helmCharts[0].chartName === change.spec.chart
-        && String(doc.spec.helmCharts[0].chartVersion)
-        === String(change.spec.chartVersion),
-      `${wave.profile} chart pin changed`,
-    );
-    profiles[wave.environment] = {
-      doc,
-      text,
-      path: profilePath,
-      repoPath: `examples/sveltos/env-rollout/${wave.profile}`,
-    };
-  }
-  const baselineValues = profiles.pilot.doc.spec.helmCharts[0].values;
+  const basePath = join(planRoot, variants.spec?.base?.profile ?? "");
+  const baseText = readFileSync(basePath, "utf8");
+  const baseDocs = parseDocs(baseText);
   check(
-    environments.every(
-      (environment) =>
-        profiles[environment].doc.spec.helmCharts[0].values === baselineValues,
-    ),
-    "the three environment profiles no longer share one baseline values document",
+    variants.kind === "SveltosEnvRolloutVariants"
+      && variants.spec?.base?.unit === policyUnit
+      && variants.spec.base.reachesCluster === false
+      && baseDocs.length === 1,
+    "the variants record lost its base declaration",
   );
-  const parsedValues = parseDocs(baselineValues)[0];
+  const baseDoc = baseDocs[0];
+  const baseSelector = baseDoc.spec?.clusterSelector?.matchLabels ?? {};
   check(
-    readPath(parsedValues, change.spec.valuesPath) === change.spec.before,
-    "the change candidate before-value does not match the baseline values",
+    baseDoc.kind === "ClusterProfile"
+      && typeof baseDoc.metadata?.name === "string"
+      && Object.keys(baseSelector).join(",") === "cluster"
+      && !workloads.some((row) => row.cluster === baseSelector.cluster),
+    "the base profile must carry a cluster selector that addresses no registered cluster",
   );
-  const changedValuesObject = structuredClone(parsedValues);
-  writePath(changedValuesObject, change.spec.valuesPath, change.spec.after);
-  const changedValues = `${toYaml(changedValuesObject)}\n`;
+  check(
+    baseDoc.spec?.syncMode === "ContinuousWithDriftDetection"
+      && baseDoc.spec?.helmCharts?.length === 1
+      && baseDoc.spec.helmCharts[0].chartName === change.spec.chart
+      && String(baseDoc.spec.helmCharts[0].chartVersion)
+      === String(change.spec.chartVersion),
+    "the base profile chart pin or drift mode changed",
+  );
+  const baseValues = parseDocs(baseDoc.spec.helmCharts[0].values)[0];
+  check(
+    readPath(baseValues, change.spec.valuesPath) === change.spec.before,
+    "the change candidate before-value does not match the base values",
+  );
+  // The chart values ride in one string field of the profile, so a change to
+  // any value rewrites that whole field. That is the field a departure must
+  // stay clear of.
+  const changeField = "spec.helmCharts.0.values";
 
-  const revisions = {};
-  const changedDocs = {};
-  for (const environment of environments) {
-    const baselineDoc = profiles[environment].doc;
-    const changedDoc = structuredClone(baselineDoc);
-    changedDoc.spec.helmCharts[0].values = changedValues;
-    changedDocs[environment] = changedDoc;
-    revisions[environment] = {
+  const declaredVariants = variants.spec?.workloads ?? [];
+  check(
+    declaredVariants.length === workloads.length
+      && declaredVariants.every((row, index) =>
+        row.cluster === workloads[index].cluster
+        && row.environment === workloads[index].environment),
+    "the variants record must declare one variant per fleet cluster, in fleet order",
+  );
+  const management = variants.spec?.management ?? {};
+  check(
+    management.cluster === fleet.spec.management.cluster
+      && management.appliedOutOfBandWith === "kubectl"
+      && String(management.reason ?? "").length > 0,
+    "the variants record lost the management bootstrap boundary",
+  );
+  const declaredSpaces = [
+    variants.spec.base.space,
+    ...declaredVariants.map((row) => row.space),
+    management.space,
+  ];
+  check(
+    declaredSpaces.every((space) =>
+      typeof space === "string" && space === space.toLowerCase())
+      && new Set(declaredSpaces).size === declaredSpaces.length,
+    "every declared Space must be lowercase and belong to one record",
+  );
+
+  const waveOf = Object.fromEntries(
+    declaredWaves.map((row) => [row.environment, row.wave]),
+  );
+  const clusters = declaredVariants.map((row) => {
+    const departures = row.departures ?? {};
+    const departurePaths = Object.keys(departures).sort();
+    const addressing = ["metadata.name", "spec.clusterSelector.matchLabels.cluster"];
+    check(
+      departures["spec.clusterSelector.matchLabels.cluster"] === row.cluster
+        && typeof departures["metadata.name"] === "string"
+        && departurePaths.some((path) => !addressing.includes(path)),
+      `${row.cluster} must depart on its own selector, its own name, and at least one field beyond addressing`,
+    );
+    // A change to the base and a departure that write the same field, or
+    // different keys of the same map of scalars, merge with the departure
+    // winning and nothing said about it. The plan refuses that shape rather
+    // than letting a promotion report success it did not achieve.
+    for (const path of departurePaths) {
+      check(
+        !fieldsCollide(path, changeField, baseDoc),
+        `${row.cluster} departs on ${path}, which the reviewed change also writes; a departure wins that merge silently, so this promotion is refused`,
+      );
+    }
+    const baselineDoc = applyDepartures(baseDoc, departures);
+    const changedDoc = withChangedValue(
+      baselineDoc,
+      change.spec.valuesPath,
+      change.spec.after,
+    );
+    const revisions = {
       baseline: `r1-${sha256(stableJson(baselineDoc)).slice(0, 12)}`,
       changed: `r2-${sha256(stableJson(changedDoc)).slice(0, 12)}`,
     };
     check(
-      revisions[environment].baseline !== revisions[environment].changed,
+      revisions.baseline !== revisions.changed,
       "the reviewed change produced no new revision identity",
     );
+    return {
+      cluster: row.cluster,
+      environment: row.environment,
+      wave: waveOf[row.environment],
+      space: row.space,
+      profileName: departures["metadata.name"],
+      departures,
+      departurePaths,
+      inheritedFields: [changeField],
+      baselineDoc,
+      changedDoc,
+      revisions,
+      expectedReplicas: {
+        baseline: expectedDeploymentReplicas(valuesOf(baselineDoc)),
+        changed: expectedDeploymentReplicas(valuesOf(changedDoc)),
+      },
+    };
+  });
+  check(
+    new Set(clusters.map((row) => row.profileName)).size === clusters.length,
+    "every per-cluster profile must carry its own name",
+  );
+
+  const waves = declaredWaves.map((wave) => {
+    const members = clusters
+      .filter((row) => row.environment === wave.environment)
+      .map((row) => row.cluster);
+    check(
+      sameSet(wave.clusters ?? [], members),
+      `wave ${wave.wave} must name exactly the ${wave.environment} clusters`,
+    );
+    return { wave: wave.wave, environment: wave.environment, clusters: members };
+  });
+  check(
+    waves.flatMap((wave) => wave.clusters).length === clusters.length,
+    "the waves must cover every cluster exactly once",
+  );
+
+  const changedBaseDoc = withChangedValue(
+    baseDoc,
+    change.spec.valuesPath,
+    change.spec.after,
+  );
+  return {
+    fleet,
+    change,
+    variants,
+    selection,
+    changeField,
+    waves,
+    clusters,
+    management: {
+      cluster: management.cluster,
+      space: management.space,
+      holds: management.holds,
+      appliedOutOfBandWith: management.appliedOutOfBandWith,
+      reason: management.reason,
+    },
+    base: {
+      doc: baseDoc,
+      text: baseText,
+      path: basePath,
+      repoPath: relativeRepo(basePath),
+      space: variants.spec.base.space,
+      unit: policyUnit,
+      changedDoc: changedBaseDoc,
+      revisions: {
+        baseline: `b1-${sha256(stableJson(baseDoc)).slice(0, 12)}`,
+        changed: `b2-${sha256(stableJson(changedBaseDoc)).slice(0, 12)}`,
+      },
+    },
+  };
+}
+
+// A variant is the base with its declared departures written over it. Every
+// departure names a field of the profile, which is the granularity ConfigHub
+// merges at when a later base change flows down.
+function applyDepartures(baseDoc, departures) {
+  const doc = structuredClone(baseDoc);
+  for (const [path, value] of Object.entries(departures)) {
+    writePath(doc, path, value, true);
   }
-  return { fleet, change, waves, profiles, changedValues, changedDocs, revisions };
+  return doc;
+}
+
+function withChangedValue(doc, valuesPath, next) {
+  const changed = structuredClone(doc);
+  const values = valuesOf(doc);
+  writePath(values, valuesPath, next);
+  changed.spec.helmCharts[0].values = `${toYaml(values)}\n`;
+  return changed;
+}
+
+function valuesOf(doc) {
+  return parseDocs(doc.spec.helmCharts[0].values)[0];
+}
+
+// Two writes collide when they name the same field or when one contains the
+// other, and also when they write different keys of the same map of scalars.
+// The second case is the measured one: a recorded ConfigHub run showed a
+// variant whose departure sat on a map the base also wrote to receive none of
+// the base's changes while its upstream pointer advanced, and nothing said so.
+function fieldsCollide(left, right, doc) {
+  if (left === right) return true;
+  if (left.startsWith(`${right}.`) || right.startsWith(`${left}.`)) return true;
+  const leftParent = parentPath(left);
+  const rightParent = parentPath(right);
+  if (!leftParent || leftParent !== rightParent) return false;
+  return isScalarMap(readPath(doc, leftParent));
+}
+
+function parentPath(path) {
+  const index = path.lastIndexOf(".");
+  return index < 0 ? "" : path.slice(0, index);
+}
+
+function isScalarMap(node) {
+  return Boolean(node)
+    && typeof node === "object"
+    && !Array.isArray(node)
+    && Object.values(node).every(
+      (value) => value === null || typeof value !== "object",
+    );
+}
+
+// The chart names one deployment per controller, so the reviewed replica counts
+// are checkable on the cluster without reading the chart.
+function expectedDeploymentReplicas(values) {
+  const result = {};
+  for (const [key, value] of Object.entries(values ?? {})) {
+    if (value && typeof value === "object" && Number.isInteger(value.replicas)) {
+      result[deploymentNameFor(key)] = value.replicas;
+    }
+  }
+  return result;
+}
+
+function deploymentNameFor(valuesKey) {
+  return `kyverno-${valuesKey.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase()}`;
+}
+
+// Each wave selects its members with the reviewed query rather than naming
+// Spaces one at a time, so promotion is one operation over a named set.
+function waveQuery(plan, runId, environment) {
+  return String(plan.selection.whereTemplate)
+    .replaceAll("{run}", runId)
+    .replaceAll("{environment}", environment);
+}
+
+function baselineQuery(plan, runId) {
+  return String(plan.selection.baselineWhereTemplate).replaceAll("{run}", runId);
 }
 
 // Chapter three pins its own Sveltos release, because it runs the gateway
@@ -566,7 +963,7 @@ function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
     assertPolicySpace(context, probeSpace, topology.triggerIds, catalogTarget.TargetID);
     cub(context, [
       "unit", "create", "--space", probeSpace, policyUnit,
-      join(exampleRoot, "clusterprofile-pilot.yaml"),
+      join(exampleRoot, "clusterprofile-base.yaml"),
       "--change-desc", "Probe the approval gate before building the fleet",
       "--quiet",
     ]);
@@ -593,15 +990,66 @@ function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
   }
 }
 
-function establishEnvironment({
+// The base record holds what every cluster shares. It is given no target and
+// its Space is never published, so nothing reaches a cluster from it: every
+// revision that reaches a cluster is approved on the variant that owns it.
+function establishBase({
   policyContext,
-  managementKubeconfig,
-  managementName,
-  environment,
   space,
   plan,
   topology,
   catalogTarget,
+  runId,
+  policySpacesCreated,
+}) {
+  createPolicySpace(policyContext, space);
+  policySpacesCreated.add(space);
+  assertPolicySpace(
+    policyContext,
+    space,
+    topology.triggerIds,
+    catalogTarget.TargetID,
+  );
+  cub(policyContext, [
+    "unit", "create", "--space", space, policyUnit, plan.base.path,
+    "--label", "App=sveltos-kyverno-env-rollout",
+    "--label", `Proof=${proofLabel}`,
+    "--label", `Run=${runId}`,
+    "--label", `Record=${baseRecordLabel}`,
+    "--change-desc", "Store the reviewed base ClusterProfile every cluster shares",
+    "--quiet",
+  ]);
+  const stored = cubJson(policyContext, [
+    "unit", "get", "--space", space, policyUnit, "-o", "json",
+  ]).Unit;
+  check(
+    canonicalDocs(parseDocs(storedData(stored))) === canonicalDocs([plan.base.doc]),
+    "ConfigHub stored a different base ClusterProfile",
+  );
+  return {
+    space,
+    unit: policyUnit,
+    revisionId: plan.base.revisions.baseline,
+    revision: Number(stored.HeadRevisionNum),
+    contentHash: stored.ContentHash,
+    target: "none",
+    published: false,
+    reachesCluster: false,
+    note: "The base carries no target and its Space is never published, so it reaches no cluster on its own.",
+  };
+}
+
+// A variant is a clone of the base unit, linked to it, with this cluster's
+// departures written over it. The link is what lets a later base change flow
+// down while the departures stay.
+function establishVariant({
+  policyContext,
+  space,
+  baseSpace,
+  cluster,
+  topology,
+  catalogTarget,
+  runId,
   workRoot,
   policySpacesCreated,
 }) {
@@ -615,175 +1063,424 @@ function establishEnvironment({
   );
   cub(policyContext, [
     "unit", "create", "--space", space, policyUnit,
-    plan.profiles[environment].path,
+    "--upstream-space", baseSpace,
+    "--upstream-unit", policyUnit,
     "--target", catalogOciTargetRef,
     "--label", "App=sveltos-kyverno-env-rollout",
-    "--label", `Environment=${environment}`,
-    "--label", "Proof=sveltos-env-rollout",
-    "--change-desc", `Store the reviewed ${environment} ClusterProfile`,
+    "--label", `Cluster=${cluster.cluster}`,
+    "--label", `Environment=${cluster.environment}`,
+    "--label", `Wave=${cluster.wave}`,
+    "--label", `Proof=${proofLabel}`,
+    "--label", `Run=${runId}`,
+    "--label", `Record=${variantRecordLabel}`,
+    "--change-desc", `Clone the base record for ${cluster.cluster}`,
     "--quiet",
   ]);
-  const baseline = reviewHeadRevision({
-    policyContext,
-    space,
-    stageName: `${environment} baseline`,
-    expectedDocs: [plan.profiles[environment].doc],
-    revisionId: plan.revisions[environment].baseline,
-  });
-  // The release is published before the bootstrap profile exists, so the first
-  // fetch already finds the tag the gateway serves.
-  const bootstrap = applyBootstrapProfile({
-    managementKubeconfig,
-    workRoot,
-    environment,
-    space,
-  });
-  const delivery = waitForRemoteDeploy({
-    managementKubeconfig,
-    managementName,
-    environment,
-    expectedDoc: plan.profiles[environment].doc,
-    release: baseline.release,
-  });
+  const cloned = cubJson(policyContext, [
+    "unit", "get", "--space", space, policyUnit, "-o", "json",
+  ]).Unit;
+  const upstreamUnit = String(cloned.UpstreamUnitID ?? "");
   check(
-    delivery.result === "pass",
-    `Sveltos did not fetch the ${environment} baseline from the gateway: ${delivery.reason ?? "unknown"}`,
+    upstreamUnit.length > 0,
+    `${space}/${policyUnit} records no upstream unit, so it is a copy rather than a variant`,
   );
-  assertLiveProfileMatches({
-    managementKubeconfig,
-    environment,
-    expectedDoc: plan.profiles[environment].doc,
-  });
-  return { space, bootstrap, baseline: { ...baseline, delivery } };
-}
-
-function promoteEnvironment({
-  policyContext,
-  managementKubeconfig,
-  managementName,
-  environment,
-  space,
-  record,
-  plan,
-  workRoot,
-}) {
-  const changedPath = join(workRoot, `clusterprofile-${environment}-changed.yaml`);
-  writeDocuments(changedPath, [plan.changedDocs[environment]]);
-  const update = cubTry(policyContext, [
-    "unit", "update", "--space", space, policyUnit, changedPath,
+  const departedPath = join(workRoot, `clusterprofile-${cluster.cluster}.yaml`);
+  writeDocuments(departedPath, [cluster.baselineDoc]);
+  cub(policyContext, [
+    "unit", "update", "--space", space, policyUnit, departedPath,
     "--change-desc",
-    `Promote ${plan.change.spec.valuesPath} from ${plan.change.spec.before} to ${plan.change.spec.after} in ${environment}`,
-    "-o", "json",
+    `Depart from the base for ${cluster.cluster}: ${cluster.departurePaths.join(", ")}`,
+    "--quiet",
   ]);
-  if (!update.ok) {
-    const current = cubJson(policyContext, [
-      "unit", "get", "--space", space, policyUnit, "-o", "json",
-    ]).Unit;
-    check(
-      canonicalDocs(parseDocs(storedData(current)))
-        === canonicalDocs([plan.changedDocs[environment]]),
-      `ConfigHub rejected the ${environment} update before storing it: ${update.error}`,
-    );
-  }
-  const changed = reviewHeadRevision({
-    policyContext,
-    space,
-    stageName: `${environment} change`,
-    expectedDocs: [plan.changedDocs[environment]],
-    revisionId: plan.revisions[environment].changed,
-    minimumRevision: Number(record.baseline.approval.revision) + 1,
-  });
+  const departed = cubJson(policyContext, [
+    "unit", "get", "--space", space, policyUnit, "-o", "json",
+  ]).Unit;
   check(
-    changed.release.manifestDigest !== record.baseline.release.manifestDigest,
-    `the ${environment} change did not produce a new release manifest digest`,
+    canonicalDocs(parseDocs(storedData(departed)))
+      === canonicalDocs([cluster.baselineDoc]),
+    `ConfigHub stored different departures for ${cluster.cluster}`,
   );
-  // Promotion leaves the bootstrap profile alone. Publishing the release moved
-  // the tag the gateway serves, and Sveltos follows it on its own interval.
-  const delivery = waitForRemoteDeploy({
-    managementKubeconfig,
-    managementName,
-    environment,
-    expectedDoc: plan.changedDocs[environment],
-    release: changed.release,
-  });
-  check(
-    delivery.result === "pass",
-    `Sveltos did not fetch the ${environment} change from the gateway: ${delivery.reason ?? "unknown"}`,
-  );
-  assertLiveProfileMatches({
-    managementKubeconfig,
-    environment,
-    expectedDoc: plan.changedDocs[environment],
-  });
-  return { ...changed, delivery };
-}
-
-// One approval bracket: gate armed with no approval, exact-head approval, gate
-// cleared with the approval recorded, and the private release the gateway then
-// serves at the Space's tag.
-function reviewHeadRevision({
-  policyContext,
-  space,
-  stageName,
-  expectedDocs,
-  revisionId,
-  minimumRevision,
-}) {
-  const stored = waitForPolicy(policyContext, space, policyUnit, true);
-  check(
-    canonicalDocs(parseDocs(storedData(stored))) === canonicalDocs(expectedDocs),
-    `ConfigHub stored a different ${stageName} ClusterProfile`,
-  );
-  if (minimumRevision !== undefined) {
-    check(
-      Number(stored.HeadRevisionNum) >= minimumRevision,
-      `the ${stageName} did not create a new revision`,
-    );
-  }
-  const beforeApproval = blockedDryRun(policyContext, space, policyUnit);
-  approveHeadRevision(
-    policyContext,
-    space,
-    policyUnit,
-    stageName,
-    stored.HeadRevisionNum,
-  );
-  const approved = waitForPolicy(policyContext, space, policyUnit, false);
-  check(
-    approved.ContentHash === stored.ContentHash,
-    `approval changed the ${stageName} content`,
-  );
-  const recordedApprovals = approvalCount(approved.ApprovedBy);
-  check(recordedApprovals >= 1, `the ${stageName} has no approval`);
-  const afterApproval = allowedDryRun(policyContext, space, policyUnit);
-  // The published release is not read back here. What the gateway served is
-  // proved downstream, where the object that arrived on the management cluster
-  // is compared field by field against the approved revision.
-  const release = publishRelease(policyContext, space);
   return {
-    revisionId,
-    contentHash: stored.ContentHash,
-    beforeApproval,
-    approval: {
-      revision: approved.HeadRevisionNum,
-      recordedApprovals,
-      approverIdentityRecordedInReceipt: false,
-      contentHashUnchanged: true,
+    cluster: cluster.cluster,
+    environment: cluster.environment,
+    wave: cluster.wave,
+    space,
+    unit: policyUnit,
+    profile: cluster.profileName,
+    selector: { cluster: cluster.cluster },
+    upstream: {
+      space: baseSpace,
+      unit: policyUnit,
+      unitLinked: true,
+      revisionAtClone: Number(cloned.UpstreamRevisionNum ?? 0),
     },
-    afterApproval,
-    release,
+    departures: cluster.departures,
+    departedFields: cluster.departurePaths,
   };
 }
 
-function assertLiveProfileMatches({ managementKubeconfig, environment, expectedDoc }) {
+// The management record holds one bootstrap profile per workload Space. It is
+// the record that opens the gateway path, so its first revision is applied out
+// of band with kubectl, and ConfigHub governs every revision after that.
+function establishManagement({
+  policyContext,
+  space,
+  plan,
+  topology,
+  catalogTarget,
+  runId,
+  workRoot,
+  policySpacesCreated,
+  workloadSpaces,
+}) {
+  createPolicySpace(policyContext, space);
+  policySpacesCreated.add(space);
+  assertPolicySpace(
+    policyContext,
+    space,
+    topology.triggerIds,
+    catalogTarget.TargetID,
+  );
+  const manifest = workloadSpaces
+    .map((row) => bootstrapProfileManifest(row.cluster, row.space))
+    .join("---\n");
+  const manifestPath = join(workRoot, "clusterprofile-management.yaml");
+  writeFileSync(manifestPath, manifest, { mode: 0o600 });
+  const documents = parseDocs(manifest);
+  check(
+    documents.length === workloadSpaces.length,
+    "the management record must hold one bootstrap profile per workload Space",
+  );
+  cub(policyContext, [
+    "unit", "create", "--space", space, policyUnit, manifestPath,
+    "--target", catalogOciTargetRef,
+    "--label", "App=sveltos-kyverno-env-rollout",
+    "--label", `Cluster=${plan.management.cluster}`,
+    "--label", "Role=management",
+    "--label", `Proof=${proofLabel}`,
+    "--label", `Run=${runId}`,
+    "--label", `Record=${variantRecordLabel}`,
+    "--change-desc", "Store the reviewed bootstrap profiles for the management cluster",
+    "--quiet",
+  ]);
+  return {
+    cluster: plan.management.cluster,
+    space,
+    unit: policyUnit,
+    documents,
+    manifestPath,
+    revisionId: `m1-${sha256(stableJson(documents)).slice(0, 12)}`,
+    bootstrapProfiles: workloadSpaces.map((row) => ({
+      profile: bootstrapProfileName(row.cluster),
+      cluster: row.cluster,
+      space: row.space,
+      reference: gatewayReference(row.space),
+    })),
+    boundary: {
+      appliedOutOfBandWith: plan.management.appliedOutOfBandWith,
+      firstRevisionDeliveredThroughGateway: false,
+      laterRevisionsGovernedInConfigHub: true,
+      reason: plan.management.reason,
+    },
+  };
+}
+
+// One wave, one operation. The set is resolved with the reviewed query first,
+// so a query that matches nothing, or that reaches past the wave, refuses
+// before anything is approved.
+function selectSet({ policyContext, stageName, query, expectedUnits }) {
+  const listed = cubJson(policyContext, [
+    "unit", "list", "--space", "*", "--where", query, "-o", "json",
+  ]);
+  const rows = Array.isArray(listed) ? listed : (listed.Units ?? []);
+  const matched = rows
+    .map((row) => {
+      const unit = row.Unit ?? row;
+      return `${unit.SpaceSlug}/${unit.Slug}`;
+    })
+    .sort();
+  check(
+    matched.length > 0,
+    `the ${stageName} query matched no unit; ${query}`,
+  );
+  check(
+    sameSet(matched, expectedUnits),
+    `the ${stageName} query matched ${matched.join(", ") || "nothing"} rather than ${[...expectedUnits].sort().join(", ")}; refusing to approve a set that is not the wave`,
+  );
+  return { scope: setScope, query, matched };
+}
+
+// The gate armed with no approval, one set approval bound to each unit's own
+// exact head revision, the gate cleared with the approval recorded, and the
+// private release the gateway then serves at each Space's tag.
+function reviewSet({ policyContext, stageName, query, members }) {
+  const stored = {};
+  const beforeApproval = {};
+  for (const member of members) {
+    const unit = waitForPolicy(policyContext, member.space, policyUnit, true);
+    check(
+      canonicalDocs(parseDocs(storedData(unit)))
+        === canonicalDocs(member.expectedDocs),
+      `ConfigHub stored a different ${stageName} record for ${member.cluster}`,
+    );
+    if (member.minimumRevision !== undefined) {
+      check(
+        Number(unit.HeadRevisionNum) >= member.minimumRevision,
+        `the ${stageName} did not create a new revision for ${member.cluster}`,
+      );
+    }
+    stored[member.cluster] = unit;
+    beforeApproval[member.cluster] = blockedDryRun(
+      policyContext,
+      member.space,
+      policyUnit,
+    );
+  }
+  const selection = selectSet({
+    policyContext,
+    stageName,
+    query,
+    expectedUnits: members.map((member) => `${member.space}/${policyUnit}`),
+  });
+  approveSet(policyContext, query, stageName, stored);
+
+  const records = {};
+  for (const member of members) {
+    const approved = waitForPolicy(policyContext, member.space, policyUnit, false);
+    check(
+      approved.ContentHash === stored[member.cluster].ContentHash,
+      `approval changed the ${stageName} content for ${member.cluster}`,
+    );
+    const recordedApprovals = approvalCount(approved.ApprovedBy);
+    check(
+      recordedApprovals >= 1,
+      `the ${stageName} record for ${member.cluster} has no approval`,
+    );
+    const afterApproval = allowedDryRun(policyContext, member.space, policyUnit);
+    // The published release is not read back here. What the gateway served is
+    // proved downstream, where the object that arrived on the management
+    // cluster is compared field by field against the approved revision.
+    const release = publishRelease(policyContext, member.space);
+    records[member.cluster] = {
+      cluster: member.cluster,
+      space: member.space,
+      revisionId: member.revisionId,
+      contentHash: stored[member.cluster].ContentHash,
+      beforeApproval: beforeApproval[member.cluster],
+      approval: {
+        revision: approved.HeadRevisionNum,
+        recordedApprovals,
+        approverIdentityRecordedInReceipt: false,
+        contentHashUnchanged: true,
+      },
+      afterApproval,
+      release,
+    };
+  }
+  return {
+    stage: stageName,
+    selection,
+    approval: {
+      command: `cub unit approve --space "*" --where <query> --revision HeadRevisionNum`,
+      appliedAsOneOperation: true,
+      members: members.length,
+      recordedApprovals: members.length,
+    },
+    records,
+  };
+}
+
+function approveSet(policyContext, query, stageName, stored) {
+  const result = cubTry(policyContext, [
+    "unit", "approve", "--space", "*", "--where", query,
+    "--revision", "HeadRevisionNum", "--wait", "--quiet",
+  ]);
+  if (result.ok) return;
+  // The bulk approve can report a delayed trigger while the approvals it made
+  // are already recorded, so the refusal is checked against the units.
+  for (const [cluster, unit] of Object.entries(stored)) {
+    const current = cubJson(policyContext, [
+      "unit", "get", "--space", unit.SpaceSlug, policyUnit, "-o", "json",
+    ]).Unit;
+    check(
+      Number(current.HeadRevisionNum) === Number(unit.HeadRevisionNum)
+        && approvalCount(current.ApprovedBy) >= 1,
+      `ConfigHub rejected the ${stageName} approval for ${cluster} before recording it: ${result.error}`,
+    );
+  }
+  phase(`${stageName} approvals recorded; waiting for delayed trigger completion`);
+}
+
+// The reviewed change lands once, on the base. Every variant inherits it when
+// its wave comes, and keeps its own departures through the merge.
+function changeBaseRecord({ policyContext, space, plan, workRoot }) {
+  const changedPath = join(workRoot, "clusterprofile-base-changed.yaml");
+  writeDocuments(changedPath, [plan.base.changedDoc]);
+  cub(policyContext, [
+    "unit", "update", "--space", space, policyUnit, changedPath,
+    "--change-desc",
+    `Raise ${plan.change.spec.valuesPath} from ${plan.change.spec.before} to ${plan.change.spec.after} on the base record`,
+    "--quiet",
+  ]);
+  const stored = cubJson(policyContext, [
+    "unit", "get", "--space", space, policyUnit, "-o", "json",
+  ]).Unit;
+  check(
+    canonicalDocs(parseDocs(storedData(stored)))
+      === canonicalDocs([plan.base.changedDoc]),
+    "ConfigHub stored a different changed base ClusterProfile",
+  );
+  return {
+    space,
+    unit: policyUnit,
+    revisionId: plan.base.revisions.changed,
+    revision: Number(stored.HeadRevisionNum),
+    valuesPath: plan.change.spec.valuesPath,
+    before: plan.change.spec.before,
+    after: plan.change.spec.after,
+    approved: false,
+    publishedAsRelease: false,
+  };
+}
+
+function promoteWave({
+  policyContext,
+  managementKubeconfig,
+  managementName,
+  wave,
+  plan,
+  spaceFor,
+  runId,
+  variantRecords,
+}) {
+  const query = waveQuery(plan, runId, wave.environment);
+  const clusters = wave.clusters.map((name) =>
+    plan.clusters.find((row) => row.cluster === name));
+  const expectedUnits = clusters.map((row) => `${spaceFor[row.cluster]}/${policyUnit}`);
+  // Selecting before upgrading means a query that reaches past the wave stops
+  // the wave, rather than carrying a cluster the wave never named.
+  const preflight = selectSet({
+    policyContext,
+    stageName: `wave ${wave.wave}`,
+    query,
+    expectedUnits,
+  });
+  const upgrade = cubTry(policyContext, [
+    "unit", "update", "--patch", "--space", "*", "--where", query, "--upgrade",
+    "--change-desc",
+    `Inherit ${plan.change.spec.valuesPath}=${plan.change.spec.after} from the base into the ${wave.environment} variants`,
+    "--quiet",
+  ]);
+  check(
+    upgrade.ok,
+    `the wave ${wave.wave} upgrade did not run: ${upgrade.error}`,
+  );
+  for (const row of clusters) {
+    assertMergeKeptDepartures({
+      policyContext,
+      space: spaceFor[row.cluster],
+      cluster: row,
+      plan,
+    });
+  }
+  const members = clusters.map((row) => ({
+    cluster: row.cluster,
+    space: spaceFor[row.cluster],
+    expectedDocs: [row.changedDoc],
+    revisionId: row.revisions.changed,
+    minimumRevision:
+      Number(variantRecords[row.cluster].baseline.approval.revision) + 1,
+  }));
+  const reviewed = reviewSet({
+    policyContext,
+    stageName: `wave ${wave.wave}`,
+    query,
+    members,
+  });
+  const promoted = [];
+  for (const row of clusters) {
+    const record = reviewed.records[row.cluster];
+    check(
+      record.release.manifestDigest
+        !== variantRecords[row.cluster].baseline.release.manifestDigest,
+      `the ${row.cluster} promotion did not produce a new release manifest digest`,
+    );
+    // Promotion leaves the bootstrap profiles alone. Publishing the release
+    // moved the tag the gateway serves, and Sveltos follows on its interval.
+    const delivery = waitForRemoteDeploy({
+      managementKubeconfig,
+      managementName,
+      cluster: row.cluster,
+      profileName: row.profileName,
+      expectedDoc: row.changedDoc,
+      release: record.release,
+    });
+    check(
+      delivery.result === "pass",
+      `Sveltos did not fetch the ${row.cluster} promotion from the gateway: ${delivery.reason ?? "unknown"}`,
+    );
+    assertLiveProfileMatches({
+      managementKubeconfig,
+      profileName: row.profileName,
+      expectedDoc: row.changedDoc,
+    });
+    variantRecords[row.cluster].changed = { ...record, delivery };
+    promoted.push({
+      cluster: row.cluster,
+      space: record.space,
+      revision: record.approval.revision,
+      revisionId: record.revisionId,
+      recordedApprovals: record.approval.recordedApprovals,
+      releaseManifestDigest: record.release.manifestDigest,
+      inheritedFields: row.inheritedFields,
+      departedFields: row.departurePaths,
+    });
+  }
+  return {
+    wave: wave.wave,
+    environment: wave.environment,
+    selection: { ...preflight, ...reviewed.selection },
+    upgrade: {
+      command: `cub unit update --patch --space "*" --where <query> --upgrade`,
+      appliedAsOneOperation: true,
+      members: clusters.length,
+    },
+    approval: reviewed.approval,
+    clusters: promoted,
+  };
+}
+
+// A promotion that reports success while the variant kept its old content is
+// the silent win the recorded ConfigHub finding describes. The runner names
+// which side lost rather than letting the wave read as promoted.
+function assertMergeKeptDepartures({ policyContext, space, cluster, plan }) {
+  const stored = cubJson(policyContext, [
+    "unit", "get", "--space", space, policyUnit, "-o", "json",
+  ]).Unit;
+  const documents = parseDocs(storedData(stored));
+  if (canonicalDocs(documents) === canonicalDocs([cluster.changedDoc])) return;
+  const merged = documents[0] ?? {};
+  const inherited =
+    readPath(valuesOf(merged), plan.change.spec.valuesPath)
+    === plan.change.spec.after;
+  const kept = cluster.departurePaths.filter(
+    (path) => readPath(merged, path) === cluster.departures[path],
+  );
+  check(
+    false,
+    `${cluster.cluster} did not come out of the upgrade as the reviewed merge: inheritedTheChange=${inherited}, departuresKept=${kept.length}/${cluster.departurePaths.length}. A change and a departure that write the same field, or different keys of the same map, merge with the departure winning and nothing said about it, so this promotion is refused rather than recorded as a success.`,
+  );
+}
+
+function assertLiveProfileMatches({ managementKubeconfig, profileName, expectedDoc }) {
   const live = JSON.parse(
     clusterCommand(managementKubeconfig, [
-      "get", "clusterprofile", `kyverno-env-${environment}`, "-o", "json",
+      "get", "clusterprofile", profileName, "-o", "json",
     ]).output,
   );
   check(
     sourceFieldsMatchLive(expectedDoc, live),
-    `a field from the approved ${environment} ClusterProfile changed in the live object`,
+    `a field from the approved ${profileName} ClusterProfile changed in the live object`,
   );
 }
 
@@ -808,24 +1505,21 @@ function recordCheckpoint({
   fleetClusters,
   managementKubeconfig,
 }) {
-  const waveByEnvironment = Object.fromEntries(
-    plan.waves.map((row) => [row.environment, row.wave]),
-  );
   const observations = fleetClusters.map((row) => {
-    const changed = waveByEnvironment[row.environment] <= completedWaves;
-    const expectedBackgroundReplicas = changed
-      ? plan.change.spec.after
-      : plan.change.spec.before;
+    const planned = plan.clusters.find(
+      (item) => item.cluster === row.logicalCluster,
+    );
+    const changed = planned.wave <= completedWaves;
+    const expectedReplicas = changed
+      ? planned.expectedReplicas.changed
+      : planned.expectedReplicas.baseline;
     const observation = observeWorkload({
       managementKubeconfig,
       workloadName: row.cluster,
       workloadKubeconfig: row.kubeconfig,
-      profileName: `kyverno-env-${row.environment}`,
-      expectedBackgroundReplicas,
-      attempts: convergenceAttempts(
-        waveByEnvironment[row.environment],
-        completedWaves,
-      ),
+      profileName: planned.profileName,
+      expectedReplicas,
+      attempts: convergenceAttempts(planned.wave, completedWaves),
     });
     check(
       observation.result === "pass",
@@ -836,9 +1530,13 @@ function recordCheckpoint({
       logicalCluster: row.logicalCluster,
       environment: row.environment,
       expectedRevisionId: changed
-        ? plan.revisions[row.environment].changed
-        : plan.revisions[row.environment].baseline,
-      expectedBackgroundReplicas,
+        ? planned.revisions.changed
+        : planned.revisions.baseline,
+      expectedBackgroundReplicas: changed
+        ? plan.change.spec.after
+        : plan.change.spec.before,
+      expectedReplicas,
+      departedFields: planned.departurePaths,
       observation,
     };
   });
@@ -847,15 +1545,24 @@ function recordCheckpoint({
 
 function auditConvergence({ plan, fleetClusters, managementKubeconfig }) {
   const clusters = fleetClusters.map((row) => {
+    const planned = plan.clusters.find(
+      (item) => item.cluster === row.logicalCluster,
+    );
     const observation = observeWorkload({
       managementKubeconfig,
       workloadName: row.cluster,
       workloadKubeconfig: row.kubeconfig,
-      profileName: `kyverno-env-${row.environment}`,
-      expectedBackgroundReplicas: plan.change.spec.after,
+      profileName: planned.profileName,
+      expectedReplicas: planned.expectedReplicas.changed,
       attempts: 30,
     });
-    return { cluster: row.cluster, environment: row.environment, observation };
+    return {
+      cluster: row.cluster,
+      logicalCluster: row.logicalCluster,
+      environment: row.environment,
+      expectedReplicas: planned.expectedReplicas.changed,
+      observation,
+    };
   });
   return {
     result: clusters.every((row) => row.observation.result === "pass")
@@ -866,14 +1573,18 @@ function auditConvergence({ plan, fleetClusters, managementKubeconfig }) {
   };
 }
 
+// Every cluster is checked against its own reviewed replica counts, so an
+// inherited change and a surviving departure are both observable on the
+// cluster rather than only in the record.
 function observeWorkload({
   managementKubeconfig,
   workloadName,
   workloadKubeconfig,
   profileName,
-  expectedBackgroundReplicas,
+  expectedReplicas,
   attempts,
 }) {
+  const expectedBackgroundReplicas = expectedReplicas[backgroundDeployment];
   let last = { summary: "missing", helmStatus: "missing", deployments: [] };
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const summaries = clusterTry(managementKubeconfig, [
@@ -918,6 +1629,8 @@ function observeWorkload({
     const background = last.deployments.find(
       (deployment) => deployment.name === backgroundDeployment,
     );
+    const observedFor = (name) =>
+      last.deployments.find((deployment) => deployment.name === name);
     const stable =
       last.deployments.length === 4
       && last.deployments.every(
@@ -925,7 +1638,9 @@ function observeWorkload({
           deployment.desired === deployment.available
           && deployment.observedGenerationMatches,
       )
-      && background?.desired === expectedBackgroundReplicas;
+      && Object.entries(expectedReplicas).every(
+        ([name, replicas]) => observedFor(name)?.desired === replicas,
+      );
     if (last.helmStatus === "Provisioned" && stable) {
       const releases = JSON.parse(
         helmCommand(workloadKubeconfig, ["list", "-n", "kyverno", "-o", "json"])
@@ -947,6 +1662,12 @@ function observeWorkload({
           desired: background.desired,
           available: background.available,
         },
+        observedReplicas: Object.fromEntries(
+          Object.keys(expectedReplicas).map((name) => [
+            name,
+            observedFor(name).desired,
+          ]),
+        ),
         deployments: last.deployments,
       };
     }
@@ -956,7 +1677,7 @@ function observeWorkload({
     result: "fail",
     reason: `summary=${last.summary}; helm=${last.helmStatus}; deployments=${
       JSON.stringify(last.deployments)
-    }; expectedBackgroundReplicas=${expectedBackgroundReplicas}`,
+    }; expectedReplicas=${JSON.stringify(expectedReplicas)}`,
   };
 }
 
@@ -970,11 +1691,61 @@ function buildReceipt({
   sveltosInstall,
   gatewayCredential,
   registrations,
-  environmentRecords,
+  baseRecord,
+  baseChange,
+  baselineSet,
+  variantRecords,
+  managementVariant,
+  bootstrap,
+  waveRecords,
   checkpoints,
   convergenceAudit,
   cleanup,
 }) {
+  const variants = [
+    ...plan.clusters.map((row) => {
+      const record = variantRecords[row.cluster];
+      return {
+        cluster: row.cluster,
+        role: "workload",
+        environment: row.environment,
+        wave: row.wave,
+        space: record.space,
+        gatewayReference: gatewayReference(record.space),
+        unit: policyUnit,
+        profile: row.profileName,
+        selector: record.selector,
+        upstream: record.upstream,
+        departures: record.departures,
+        departedFields: record.departedFields,
+        inheritedFields: row.inheritedFields,
+        records: [
+          { stage: "baseline", wave: 0, ...record.baseline },
+          { stage: "changed", wave: row.wave, ...record.changed },
+        ],
+      };
+    }),
+    {
+      cluster: plan.management.cluster,
+      role: "management",
+      environment: "management",
+      wave: 0,
+      space: managementVariant.space,
+      gatewayReference: gatewayReference(managementVariant.space),
+      unit: policyUnit,
+      profile: managementVariant.bootstrapProfiles
+        .map((row) => row.profile)
+        .join(","),
+      selector: { role: "management" },
+      upstream: null,
+      departures: {},
+      departedFields: [],
+      inheritedFields: [],
+      bootstrapProfiles: managementVariant.bootstrapProfiles,
+      boundary: managementVariant.boundary,
+      records: [{ stage: "baseline", wave: 0, ...managementVariant.baseline }],
+    },
+  ];
   return {
     apiVersion: "catalog.confighub.com/v1alpha1",
     kind: "SveltosEnvRolloutProofReceipt",
@@ -982,28 +1753,36 @@ function buildReceipt({
     spec: {
       recordedAt,
       flow: {
-        path: "source -> ConfigHub review and approval per environment -> ConfigHub release -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes",
-        promotion: "one reviewed values change promoted pilot, then staging, then production",
+        path: "source -> one reviewed base record in ConfigHub -> one variant per cluster -> approval per variant -> ConfigHub release -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes",
+        promotion: "one reviewed values change made once on the base and inherited by the variants pilot, then staging, then both production clusters",
+        mapping: "ConfigHub holds one record per cluster, so this receipt answers which cluster runs which revision without reading a Sveltos selector or a cluster",
       },
       source: {
-        profiles: Object.fromEntries(environments.map((environment) => [
-          environment,
-          {
-            path: plan.profiles[environment].repoPath,
-            rawSha256: sha256(plan.profiles[environment].text),
-          },
-        ])),
+        base: {
+          path: plan.base.repoPath,
+          rawSha256: sha256(plan.base.text),
+        },
+        variants: {
+          path: relativeRepo(variantsPath),
+          rawSha256: sha256(readFileSync(variantsPath, "utf8")),
+        },
         change: {
           path: "examples/sveltos/env-rollout/change-candidate.yaml",
           rawSha256: sha256(readFileSync(changePath, "utf8")),
           valuesPath: plan.change.spec.valuesPath,
           before: plan.change.spec.before,
           after: plan.change.spec.after,
+          editedRecord: "base",
         },
         sourceLock: relativeRepo(sourceLockPath),
         gatewayRecord: probeRecord,
       },
-      revisions: plan.revisions,
+      revisions: {
+        base: plan.base.revisions,
+        clusters: Object.fromEntries(
+          plan.clusters.map((row) => [row.cluster, row.revisions]),
+        ),
+      },
       policy: {
         organization: expectedPolicyOrg,
         profile: "catalog-standard",
@@ -1017,6 +1796,15 @@ function buildReceipt({
         },
       },
       prerequisite: sveltosInstall,
+      base: { ...baseRecord, change: baseChange },
+      variants,
+      baselineApproval: {
+        scope: baselineSet.selection.scope,
+        query: baselineSet.selection.query,
+        matched: baselineSet.selection.matched,
+        ...baselineSet.approval,
+      },
+      waves: waveRecords,
       gatewayDelivery: {
         host: configHubOciHost,
         tag: releaseTag,
@@ -1025,23 +1813,26 @@ function buildReceipt({
         fetchedBy: "the Sveltos addon controller on the management cluster",
         addonControllerImage: sveltosInstall.addonControllerImage,
         secret: gatewayCredential.secret,
-        environments: Object.fromEntries(environments.map((environment) => [
-          environment,
+        bootstrap,
+        clusters: Object.fromEntries(plan.clusters.map((row) => [
+          row.cluster,
           {
-            space: environmentRecords[environment].space,
-            reference: gatewayReference(environmentRecords[environment].space),
-            bootstrapProfile: environmentRecords[environment].bootstrap.profile,
+            space: variantRecords[row.cluster].space,
+            reference: gatewayReference(variantRecords[row.cluster].space),
+            bootstrapProfile: bootstrapProfileName(row.cluster),
             baselineReleaseManifestDigest:
-              environmentRecords[environment].baseline.release.manifestDigest,
+              variantRecords[row.cluster].baseline.release.manifestDigest,
             changedReleaseManifestDigest:
-              environmentRecords[environment].changed.release.manifestDigest,
+              variantRecords[row.cluster].changed.release.manifestDigest,
           },
         ])),
-        waves: plan.waves.map((row) => ({
+        waves: waveRecords.map((row) => ({
           wave: row.wave,
           environment: row.environment,
-          releaseManifestDigest:
-            environmentRecords[row.environment].changed.release.manifestDigest,
+          clusters: row.clusters.map((member) => ({
+            cluster: member.cluster,
+            releaseManifestDigest: member.releaseManifestDigest,
+          })),
         })),
       },
       fleet: {
@@ -1050,32 +1841,22 @@ function buildReceipt({
         managementRegistration,
         registrations,
       },
-      environments: Object.fromEntries(environments.map((environment) => [
-        environment,
-        {
-          wave: plan.waves.find((row) => row.environment === environment).wave,
-          space: environmentRecords[environment].space,
-          unit: policyUnit,
-          bootstrap: environmentRecords[environment].bootstrap,
-          baseline: environmentRecords[environment].baseline,
-          changed: environmentRecords[environment].changed,
-        },
-      ])),
       checkpoints,
       convergenceAudit,
       cleanup,
       limits: [
         "The pinned Sveltos controllers were installed directly as a prerequisite on the throwaway management cluster.",
         "The reviewed ClusterProfiles, not the Sveltos controller installation, were delivered through ConfigHub and its OCI gateway.",
+        "The management record was applied out of band with kubectl, because it is the record that opens the gateway path.",
         "The gateway serves each release as a gzipped tar layer, so the run needs an addon controller that gunzips. The image it ran is recorded above.",
         "The management cluster read the gateway with the operator's own ConfigHub token, taken once at the start of the run and removed with the clusters.",
         "The proof used four local kind workload clusters. It does not prove a large production fleet or a failure-and-pause rollout.",
-        "The proof covers one reviewed values change to this Kyverno profile, not a chart version bump.",
+        "The proof covers one reviewed values change to this Kyverno base, not a chart version bump.",
       ],
     },
     status: {
       result: "pass",
-      claim: "ConfigHub stored and approved one reviewed values change per environment record, published each approved revision as a release its OCI gateway serves, and Sveltos fetched each release itself and converged pilot first, then staging, then both production clusters, with the unchanged environments verified stable at every checkpoint.",
+      claim: "ConfigHub held one variant per cluster over a shared base, each carrying its own departures, and one reviewed change made on the base was inherited wave by wave. Each wave selected its variants with one query and approved that set in one operation, and every approval bound one cluster's record to its own exact revision. Each approved revision was published as a release the ConfigHub OCI gateway serves, Sveltos fetched each release itself, and every cluster converged on its own reviewed state with its departures intact, with the clusters outside the wave verified stable at every checkpoint.",
     },
   };
 }
@@ -1087,30 +1868,32 @@ function verifyReceipt(receipt) {
   );
   check(receipt.status?.result === "pass", "Sveltos env rollout proof is not pass");
   const plan = loadRolloutPlan();
-  for (const environment of environments) {
-    check(
-      receipt.spec?.source?.profiles?.[environment]?.path
-        === plan.profiles[environment].repoPath
-        && receipt.spec.source.profiles[environment].rawSha256
-        === sha256(plan.profiles[environment].text),
-      `Sveltos env rollout ${environment} source record changed`,
-    );
-    check(
-      receipt.spec?.revisions?.[environment]?.baseline
-        === plan.revisions[environment].baseline
-        && receipt.spec.revisions[environment].changed
-        === plan.revisions[environment].changed,
-      "the receipt revisions no longer match the reviewed example files",
-    );
-  }
+  check(
+    receipt.spec?.source?.base?.path === plan.base.repoPath
+      && receipt.spec.source.base.rawSha256 === sha256(plan.base.text)
+      && receipt.spec.source.variants?.path === relativeRepo(variantsPath)
+      && receipt.spec.source.variants.rawSha256
+      === sha256(readFileSync(variantsPath, "utf8")),
+    "Sveltos env rollout source record changed",
+  );
   check(
     receipt.spec?.source?.change?.rawSha256
       === sha256(readFileSync(changePath, "utf8"))
       && receipt.spec.source.change.valuesPath === plan.change.spec.valuesPath
       && receipt.spec.source.change.before === plan.change.spec.before
-      && receipt.spec.source.change.after === plan.change.spec.after,
+      && receipt.spec.source.change.after === plan.change.spec.after
+      && receipt.spec.source.change.editedRecord === "base",
     "Sveltos env rollout change record changed",
   );
+  for (const row of plan.clusters) {
+    check(
+      receipt.spec?.revisions?.clusters?.[row.cluster]?.baseline
+        === row.revisions.baseline
+        && receipt.spec.revisions.clusters[row.cluster].changed
+        === row.revisions.changed,
+      "the receipt revisions no longer match the reviewed example files",
+    );
+  }
   const recordedTriggers = receipt.spec?.policy?.filter?.triggerRefs ?? [];
   check(
     receipt.spec?.policy?.organization === expectedPolicyOrg
@@ -1126,6 +1909,9 @@ function verifyReceipt(receipt) {
       && receipt.spec.prerequisite.deployments?.length > 0,
     "Sveltos env rollout prerequisite record changed",
   );
+  verifyBaseRecord(receipt, plan);
+  verifyVariants(receipt, plan);
+  verifyWaves(receipt, plan);
   verifyGatewayDelivery(receipt, plan);
   check(
     receipt.spec?.fleet?.managementRegistration?.labels?.role === "management"
@@ -1134,120 +1920,65 @@ function verifyReceipt(receipt) {
   );
   const registrations = receipt.spec?.fleet?.registrations ?? [];
   check(
-    registrations.length === 4
+    registrations.length === plan.clusters.length
       && registrations.every(
         (registration) =>
           registration.ready === true
           && registration.credential?.storedInRepository === false,
       )
-      && registrations.filter((registration) =>
-        registration.labels?.environment === "prod").length === 2
-      && ["pilot", "staging"].every((environment) =>
-        registrations.filter((registration) =>
-          registration.labels?.environment === environment).length === 1),
-    "Sveltos env rollout registration record changed",
+      && plan.clusters.every((row) =>
+        registrations.some((registration) =>
+          registration.labels?.cluster === row.cluster
+          && registration.labels.environment === row.environment))
+      && new Set(registrations.map((row) => row.labels?.cluster)).size
+      === registrations.length,
+    "every workload cluster must be registered with its own addressing label",
   );
-  for (const environment of environments) {
-    const record = receipt.spec?.environments?.[environment];
-    for (const [stage, review] of [
-      ["baseline", record?.baseline],
-      ["changed", record?.changed],
-    ]) {
-      check(
-        review?.beforeApproval?.result === "blocked"
-          && review.beforeApproval.gate === approvalGate
-          && review.afterApproval?.result === "allowed"
-          && review.approval?.recordedApprovals >= 1
-          && review.approval.approverIdentityRecordedInReceipt === false
-          && review.approval.contentHashUnchanged === true,
-        `Sveltos env rollout ${environment} ${stage} approval record changed`,
-      );
-      check(
-        normalizeDigest(review.release?.manifestDigest)
-          === review.release.manifestDigest
-          && review.release.space === record.space
-          && review.release.reference === gatewayReference(record.space)
-          && review.release.tag === releaseTag,
-        `Sveltos env rollout ${environment} ${stage} release record changed`,
-      );
-      check(
-        review.delivery?.result === "pass"
-          && review.delivery.status === "Provisioned"
-          && review.delivery.releaseManifestDigest
-          === review.release.manifestDigest
-          && review.delivery.profileMatchesApprovedRevision === true
-          && review.delivery.profile === record.bootstrap?.profile,
-        `Sveltos env rollout ${environment} ${stage} gateway delivery record changed`,
-      );
-    }
-    check(
-      record.bootstrap?.reference === gatewayReference(record.space)
-        && record.bootstrap.interval === remoteFetchInterval
-        && record.bootstrap.deploymentType === "Remote"
-        && record.bootstrap.clusterSelector?.role === "management"
-        && record.bootstrap.secret?.name === gatewaySecretName
-        && record.bootstrap.secret.namespace === registrationNamespace,
-      `Sveltos env rollout ${environment} bootstrap profile record changed`,
-    );
-    check(
-      record.baseline.revisionId === plan.revisions[environment].baseline
-        && record.changed.revisionId === plan.revisions[environment].changed
-        && record.baseline.release.manifestDigest
-        !== record.changed.release.manifestDigest
-        && Number(record.changed.approval.revision)
-        > Number(record.baseline.approval.revision),
-      `Sveltos env rollout ${environment} revision record changed`,
-    );
-  }
   const checkpoints = receipt.spec?.checkpoints ?? [];
   check(
     checkpoints.map((checkpoint) => checkpoint.id).join(",")
       === "baseline,after-wave-1,after-wave-2,after-wave-3",
     "Sveltos env rollout checkpoint set changed",
   );
-  const waveByEnvironment = Object.fromEntries(
-    plan.waves.map((row) => [row.environment, row.wave]),
-  );
   for (const checkpoint of checkpoints) {
     check(
-      checkpoint.observations?.length === 4
-        && new Set(checkpoint.observations.map((row) => row.cluster)).size === 4,
+      checkpoint.observations?.length === plan.clusters.length
+        && new Set(checkpoint.observations.map((row) => row.cluster)).size
+        === plan.clusters.length,
       `Sveltos env rollout ${checkpoint.id} observation set changed`,
     );
     for (const row of checkpoint.observations) {
-      const changed =
-        waveByEnvironment[row.environment] <= checkpoint.completedWaves;
+      const planned = plan.clusters.find(
+        (item) => item.cluster === row.logicalCluster,
+      );
+      check(planned, `${checkpoint.id} observed an unplanned cluster`);
+      const changed = planned.wave <= checkpoint.completedWaves;
       const expectedRevision = changed
-        ? plan.revisions[row.environment].changed
-        : plan.revisions[row.environment].baseline;
+        ? planned.revisions.changed
+        : planned.revisions.baseline;
       const expectedReplicas = changed
-        ? plan.change.spec.after
-        : plan.change.spec.before;
+        ? planned.expectedReplicas.changed
+        : planned.expectedReplicas.baseline;
       check(
         row.expectedRevisionId === expectedRevision
-          && row.expectedBackgroundReplicas === expectedReplicas
+          && stableJson(row.expectedReplicas) === stableJson(expectedReplicas)
           && row.observation?.result === "pass"
           && row.observation.helmFeatureStatus === "Provisioned"
-          && row.observation.backgroundReplicas?.desired === expectedReplicas
-          && row.observation.backgroundReplicas.available === expectedReplicas,
+          && stableJson(row.observation.observedReplicas)
+          === stableJson(expectedReplicas),
         `Sveltos env rollout ${checkpoint.id} observation for ${row.cluster} changed`,
       );
     }
   }
   check(
     receipt.spec?.convergenceAudit?.result === "pass"
-      && receipt.spec.convergenceAudit.clusters?.length === 4
+      && receipt.spec.convergenceAudit.clusters?.length === plan.clusters.length
       && receipt.spec.convergenceAudit.clusters.every(
         (row) => row.observation?.result === "pass",
       ),
     "Sveltos env rollout convergence audit changed",
   );
-  check(
-    Object.values(receipt.spec?.cleanup ?? {}).every(
-      (result) => result === "pass",
-    ),
-    "Sveltos env rollout cleanup did not pass",
-  );
+  verifyCleanup(receipt);
   const serialized = JSON.stringify(receipt);
   check(
     !/argo/i.test(serialized),
@@ -1273,10 +2004,252 @@ function verifyReceipt(receipt) {
   );
 }
 
+// The base is the record every variant clones. It must stay a record that
+// reaches no cluster, or the per-cluster mapping has a hole in it.
+function verifyBaseRecord(receipt, plan) {
+  const base = receipt.spec?.base ?? {};
+  check(
+    base.unit === policyUnit
+      && base.revisionId === plan.base.revisions.baseline
+      && base.target === "none"
+      && base.published === false
+      && base.reachesCluster === false,
+    "the base record must carry no target and reach no cluster",
+  );
+  check(
+    base.change?.revisionId === plan.base.revisions.changed
+      && base.change.valuesPath === plan.change.spec.valuesPath
+      && base.change.after === plan.change.spec.after
+      && Number(base.change.revision) > Number(base.revision)
+      && base.change.publishedAsRelease === false,
+    "the reviewed change must land once on the base record and never be published from it",
+  );
+}
+
+// The whole point of the rework: one record per cluster, each addressing its
+// own cluster and nothing else, each holding its own departures.
+function verifyVariants(receipt, plan) {
+  const variants = receipt.spec?.variants ?? [];
+  const expected = [...plan.clusters.map((row) => row.cluster), plan.management.cluster];
+  check(
+    variants.length === expected.length
+      && sameSet(variants.map((row) => row.cluster), expected),
+    `the receipt must record one variant per cluster, which is ${expected.length} of them`,
+  );
+  check(
+    new Set(variants.map((row) => row.space)).size === variants.length,
+    "two variants share a Space, so ConfigHub cannot answer which cluster runs which change",
+  );
+  check(
+    new Set(variants.map((row) => row.gatewayReference)).size === variants.length,
+    "two variants share a gateway reference, so they cannot be served separately",
+  );
+  // Selectors are evaluated against the labels the run recorded on the
+  // registrations, so a selector is checked against the fleet that existed
+  // rather than against the fleet the plan expected.
+  const clusterLabels = Object.fromEntries(
+    (receipt.spec?.fleet?.registrations ?? []).map((registration) => [
+      registration.logicalCluster,
+      registration.labels ?? {},
+    ]),
+  );
+  for (const variant of variants) {
+    check(
+      variant.gatewayReference === gatewayReference(String(variant.space ?? ""))
+        && variant.unit === policyUnit,
+      `the ${variant.cluster} variant reference changed`,
+    );
+    for (const record of variant.records ?? []) {
+      check(
+        record.beforeApproval?.result === "blocked"
+          && record.beforeApproval.gate === approvalGate
+          && record.afterApproval?.result === "allowed"
+          && record.approval?.recordedApprovals >= 1
+          && record.approval.approverIdentityRecordedInReceipt === false
+          && record.approval.contentHashUnchanged === true,
+        `the ${variant.cluster} ${record.stage} approval record changed`,
+      );
+      check(
+        normalizeDigest(record.release?.manifestDigest)
+          === record.release.manifestDigest
+          && record.release.space === variant.space
+          && record.release.reference === variant.gatewayReference
+          && record.release.tag === releaseTag,
+        `the ${variant.cluster} ${record.stage} release record changed`,
+      );
+    }
+  }
+  for (const row of plan.clusters) {
+    const variant = variants.find((item) => item.cluster === row.cluster);
+    check(
+      variant.role === "workload"
+        && variant.environment === row.environment
+        && variant.wave === row.wave
+        && variant.profile === row.profileName,
+      `the ${row.cluster} variant identity changed`,
+    );
+    const selector = variant.selector ?? {};
+    const matched = Object.entries(clusterLabels).filter(([, labels]) =>
+      Object.entries(selector).every(([key, value]) => labels[key] === value));
+    check(
+      Object.keys(selector).join(",") === "cluster"
+        && selector.cluster === row.cluster
+        && matched.length === 1
+        && matched[0][0] === row.cluster,
+      `the ${row.cluster} selector must address one cluster by name and nothing else; this one matches ${matched.length} of the registered clusters, and a selector that matches an environment fans out and takes the mapping back out of ConfigHub`,
+    );
+    check(
+      variant.upstream?.space === receipt.spec?.base?.space
+        && variant.upstream.unit === policyUnit
+        && variant.upstream.unitLinked === true,
+      `the ${row.cluster} variant is not linked to the base record`,
+    );
+    check(
+      sameSet(variant.departedFields ?? [], row.departurePaths)
+        && stableJson(variant.departures) === stableJson(row.departures)
+        && (variant.departedFields ?? []).some((path) =>
+          !["metadata.name", "spec.clusterSelector.matchLabels.cluster"]
+            .includes(path)),
+      `the ${row.cluster} departures no longer match the reviewed variants record`,
+    );
+    check(
+      sameSet(variant.inheritedFields ?? [], row.inheritedFields)
+        && !(variant.departedFields ?? []).some((path) =>
+          fieldsCollide(path, plan.changeField, plan.base.doc)),
+      `the ${row.cluster} record must inherit the reviewed change rather than depart on it`,
+    );
+    const stages = (variant.records ?? []).map((record) => record.stage).join(",");
+    check(
+      stages === "baseline,changed"
+        && variant.records[0].revisionId === row.revisions.baseline
+        && variant.records[1].revisionId === row.revisions.changed
+        && variant.records[1].wave === row.wave
+        && variant.records[0].release.manifestDigest
+        !== variant.records[1].release.manifestDigest
+        && Number(variant.records[1].approval.revision)
+        > Number(variant.records[0].approval.revision),
+      `the ${row.cluster} revision record changed`,
+    );
+    for (const record of variant.records) {
+      check(
+        record.delivery?.result === "pass"
+          && record.delivery.status === "Provisioned"
+          && record.delivery.releaseManifestDigest
+          === record.release.manifestDigest
+          && record.delivery.profileMatchesApprovedRevision === true
+          && record.delivery.reviewedProfile === row.profileName,
+        `the ${row.cluster} ${record.stage} gateway delivery record changed`,
+      );
+    }
+  }
+  verifyManagementBoundary(receipt, plan, variants);
+}
+
+// The management record is the one that opens the gateway path, so it is the
+// one record that arrives out of band. The receipt says so rather than
+// implying the management cluster governed itself from the beginning.
+function verifyManagementBoundary(receipt, plan, variants) {
+  const variant = variants.find((row) => row.cluster === plan.management.cluster);
+  check(
+    variant?.role === "management" && variant.upstream === null,
+    "the management record must be recorded as the management cluster's own record",
+  );
+  const boundary = variant.boundary ?? {};
+  check(
+    boundary.appliedOutOfBandWith === "kubectl"
+      && boundary.firstRevisionDeliveredThroughGateway === false
+      && boundary.laterRevisionsGovernedInConfigHub === true
+      && String(boundary.reason ?? "").length > 0,
+    "the management bootstrap boundary changed",
+  );
+  const profiles = variant.bootstrapProfiles ?? [];
+  check(
+    profiles.length === plan.clusters.length
+      && plan.clusters.every((row) =>
+        profiles.some((profile) =>
+          profile.cluster === row.cluster
+          && profile.profile === bootstrapProfileName(row.cluster)))
+      && new Set(profiles.map((profile) => profile.reference)).size
+      === profiles.length,
+    "the management record must hold one bootstrap profile per workload Space",
+  );
+  const bootstrap = receipt.spec?.gatewayDelivery?.bootstrap ?? {};
+  check(
+    bootstrap.appliedWith === "kubectl as management-cluster setup"
+      && bootstrap.changedByPromotion === false
+      && (bootstrap.profiles ?? []).length === plan.clusters.length,
+    "the bootstrap profiles must be applied once as cluster setup and left alone by promotion",
+  );
+}
+
+// A wave is one operation over a named set. The receipt keeps the query, the
+// members it matched, and one approval per member bound to its own revision.
+function verifyWaves(receipt, plan) {
+  const waves = receipt.spec?.waves ?? [];
+  check(
+    waves.map((row) => `${row.wave}:${row.environment}`).join(",")
+      === plan.waves.map((row) => `${row.wave}:${row.environment}`).join(","),
+    "Sveltos env rollout wave set changed",
+  );
+  const baseline = receipt.spec?.baselineApproval ?? {};
+  check(
+    baseline.scope === setScope
+      && String(baseline.query ?? "").length > 0
+      && baseline.appliedAsOneOperation === true
+      && (baseline.matched ?? []).length === plan.clusters.length + 1
+      && baseline.recordedApprovals === plan.clusters.length + 1,
+    "the baseline must be approved as one set operation over every record this run created",
+  );
+  for (const wave of waves) {
+    const planned = plan.waves.find((row) => row.wave === wave.wave);
+    const members = wave.clusters ?? [];
+    check(
+      sameSet(members.map((row) => row.cluster), planned.clusters),
+      `wave ${wave.wave} approved ${members.map((row) => row.cluster).join(", ")} rather than the ${wave.environment} clusters`,
+    );
+    check(
+      wave.selection?.scope === setScope
+        && String(wave.selection.query ?? "").includes(wave.environment)
+        && sameSet(
+          wave.selection.matched ?? [],
+          members.map((row) => `${row.space}/${policyUnit}`),
+        ),
+      `wave ${wave.wave} must record the query that selected its set and the units it matched`,
+    );
+    check(
+      wave.upgrade?.appliedAsOneOperation === true
+        && wave.upgrade.members === members.length
+        && wave.approval?.appliedAsOneOperation === true
+        && wave.approval.recordedApprovals === members.length,
+      `wave ${wave.wave} must promote its set in one operation and record one approval per member`,
+    );
+    for (const member of members) {
+      const planCluster = plan.clusters.find(
+        (row) => row.cluster === member.cluster,
+      );
+      check(
+        member.revisionId === planCluster.revisions.changed
+          && member.recordedApprovals >= 1
+          && normalizeDigest(member.releaseManifestDigest)
+          === member.releaseManifestDigest
+          && sameSet(member.inheritedFields ?? [], planCluster.inheritedFields)
+          && sameSet(member.departedFields ?? [], planCluster.departurePaths),
+        `wave ${wave.wave} recorded a different approval for ${member.cluster}`,
+      );
+    }
+  }
+  const approved = waves.flatMap((wave) =>
+    (wave.clusters ?? []).map((row) => row.cluster));
+  check(
+    sameSet(approved, plan.clusters.map((row) => row.cluster)),
+    "every cluster must be approved in exactly one wave",
+  );
+}
+
 // The delivery record carries this chapter's whole claim, so it is checked as
-// one block: the gateway reference per environment, the release manifest
-// digest per wave, the fetch interval, the Secret type the fetcher requires,
-// and the controller image the run actually ran.
+// one block: the gateway reference per cluster, the release manifest digest per
+// wave, the fetch interval, the Secret type the fetcher requires, and the
+// controller image the run actually ran.
 function verifyGatewayDelivery(receipt, plan) {
   const delivery = receipt.spec?.gatewayDelivery ?? {};
   check(
@@ -1302,21 +2275,21 @@ function verifyGatewayDelivery(receipt, plan) {
     "the receipt must record the addon controller image the run used",
   );
   const digests = [];
-  for (const environment of environments) {
-    const row = delivery.environments?.[environment] ?? {};
+  for (const row of plan.clusters) {
+    const record = delivery.clusters?.[row.cluster] ?? {};
     check(
-      row.reference === gatewayReference(String(row.space ?? ""))
-        && row.reference.startsWith(`oci://${configHubOciHost}/space/`)
-        && row.bootstrapProfile === bootstrapProfileName(environment),
-      `the ${environment} gateway reference changed`,
+      record.reference === gatewayReference(String(record.space ?? ""))
+        && record.reference.startsWith(`oci://${configHubOciHost}/space/`)
+        && record.bootstrapProfile === bootstrapProfileName(row.cluster),
+      `the ${row.cluster} gateway reference changed`,
     );
     for (const digest of [
-      row.baselineReleaseManifestDigest,
-      row.changedReleaseManifestDigest,
+      record.baselineReleaseManifestDigest,
+      record.changedReleaseManifestDigest,
     ]) {
       check(
         normalizeDigest(digest) === digest,
-        `the ${environment} gateway delivery lost a release manifest digest`,
+        `the ${row.cluster} gateway delivery lost a release manifest digest`,
       );
       digests.push(digest);
     }
@@ -1328,55 +2301,93 @@ function verifyGatewayDelivery(receipt, plan) {
   const waves = delivery.waves ?? [];
   check(
     waves.map((row) => `${row.wave}:${row.environment}`).join(",")
-      === plan.waves.map((row) => `${row.wave}:${row.environment}`).join(",")
-      && waves.every((row) =>
+      === plan.waves.map((row) => `${row.wave}:${row.environment}`).join(","),
+    "the gateway delivery waves changed",
+  );
+  const waveDigests = waves.flatMap((wave) =>
+    (wave.clusters ?? []).map((row) => {
+      check(
         row.releaseManifestDigest
-        === delivery.environments?.[row.environment]?.changedReleaseManifestDigest)
-      && new Set(waves.map((row) => row.releaseManifestDigest)).size
-      === waves.length,
-    "every wave must publish its own release manifest digest",
+          === delivery.clusters?.[row.cluster]?.changedReleaseManifestDigest,
+        `wave ${wave.wave} published a different release for ${row.cluster}`,
+      );
+      return row.releaseManifestDigest;
+    }));
+  check(
+    new Set(waveDigests).size === waveDigests.length
+      && waveDigests.length === plan.clusters.length,
+    "every cluster in every wave must publish its own release manifest digest",
+  );
+}
+
+// Cleanup is a pass when everything was removed and also when the operator
+// asked to keep the artifacts. Kept artifacts must say what was left and how
+// to remove it, so a kept run never reads as a failed cleanup.
+function verifyCleanup(receipt) {
+  const cleanup = receipt.spec?.cleanup ?? {};
+  check(
+    cleanupSucceeded(cleanup),
+    "Sveltos env rollout cleanup did not pass",
+  );
+  if (cleanup.mode !== "kept") return;
+  check(
+    (cleanup.kept ?? []).every((row) =>
+      typeof row.kind === "string"
+      && typeof row.name === "string"
+      && /^(kind delete cluster|cub space delete) /.test(String(row.removeWith ?? ""))),
+    "a kept artifact must record what it is and the command that removes it",
   );
 }
 
 function renderSummary(receipt) {
   const change = receipt.spec.source.change;
-  const rows = environments.map((environment) => {
-    const record = receipt.spec.environments[environment];
-    return `| ${record.wave} | ${environment} | ${record.baseline.beforeApproval.result} and ${record.changed.beforeApproval.result} | \`${record.changed.release.manifestDigest}\` | ${record.changed.delivery.status} |`;
-  });
+  const rows = receipt.spec.variants
+    .filter((variant) => variant.role === "workload")
+    .map((variant) => {
+      const changed = variant.records[1];
+      return `| ${variant.wave} | ${variant.cluster} | ${variant.space} | ${variant.departedFields.filter((path) => path.startsWith("values.")).join(", ")} | \`${changed.release.manifestDigest}\` | ${changed.delivery.status} |`;
+    });
+  const waves = receipt.spec.waves.map((wave) =>
+    `| ${wave.wave} | ${wave.environment} | ${wave.clusters.length} | ${wave.approval.recordedApprovals} |`);
   const finalCheckpoint = receipt.spec.checkpoints.at(-1);
   const delivery = receipt.spec.gatewayDelivery;
-  return `# ConfigHub promotes one change through an environment fleet
+  return `# ConfigHub promotes one change through a fleet it maps cluster by cluster
 
-This run starts with four workload clusters in three environment groups. Each
-environment keeps its own governed \`ClusterProfile\` record built from one
-shared baseline, so the only reviewed difference between environments is the
-selector.
+This run starts with four workload clusters and a management cluster. ConfigHub
+holds one reviewed base record and one variant per cluster, so the answer to
+which cluster runs which revision comes from ConfigHub rather than from a
+selector on a cluster. Each variant carries its own departures from the base,
+and its selector addresses its own cluster and nothing else.
 
 One reviewed change raises \`${change.valuesPath}\` from ${change.before} to
-${change.after}. ConfigHub blocked every revision until its exact head was
-approved and published each approved revision as a release its OCI gateway
-serves. Sveltos fetched each release itself from
-\`oci://${delivery.host}/space/<space>:${delivery.tag}\` on a
-${delivery.interval} interval and converged the pilot cluster first, then
-staging, then both production clusters. At every checkpoint the unchanged
-environments were verified stable, and the run closed with a convergence audit
-across all four clusters.
+${change.after} on the base record. Each wave selected its variants with one
+query over the labels they carry and approved that set in one operation, so the
+operator acted once per wave and ConfigHub still recorded one approval per
+cluster against that cluster's own exact revision. Every approved revision was
+published as a release the OCI gateway serves, and Sveltos fetched each release
+itself from \`oci://${delivery.host}/space/<space>:${delivery.tag}\` on a
+${delivery.interval} interval.
 
-Promotion never touched the bootstrap profile on the management cluster.
-Publishing a new release moved the tag, and Sveltos followed it.
+The management record holds one bootstrap profile per workload Space. It was
+applied out of band with kubectl, because it is the record that opens the
+gateway path. Promotion never touched it. Publishing a new release moved the
+tag, and Sveltos followed it.
 
-| Wave | Environment | Blocked before approval | Changed release digest | Sveltos |
-| --- | --- | --- | --- | --- |
+| Wave | Cluster | Space | Departure kept through the change | Changed release digest | Sveltos |
+| --- | --- | --- | --- | --- | --- |
 ${rows.join("\n")}
+
+| Wave | Group | Variants selected | Approvals recorded |
+| --- | --- | --- | --- |
+${waves.join("\n")}
 
 | Check | Result |
 | --- | --- |
 | Checkpoints observed | ${receipt.spec.checkpoints.length}/4 |
-| Clusters at the changed revision after wave 3 | ${finalCheckpoint.observations.filter((row) => row.observation.result === "pass").length}/4 |
+| Clusters at their own changed revision after wave 3 | ${finalCheckpoint.observations.filter((row) => row.observation.result === "pass").length}/4 |
 | Convergence audit | ${receipt.spec.convergenceAudit.result} |
 | Addon controller image | \`${delivery.addonControllerImage}\` |
-| Cleanup | ${Object.values(receipt.spec.cleanup).every((value) => value === "pass") ? "Pass" : "Fail"} |
+| Cleanup | ${receipt.spec.cleanup.mode === "kept" ? "Artifacts kept deliberately" : "Pass"} |
 
 The per-cluster matrix in [matrix.md](matrix.md) and
 [matrix.html](matrix.html) shows which cluster ran which revision at each
@@ -1387,6 +2398,8 @@ checkpoint.
 ${receipt.spec.limits.map((limit) => `- ${limit}`).join("\n")}
 
 - [Committed receipt](../../runs/sveltos-env-rollout-proof/receipt.yaml)
+- [Reviewed base profile](../../examples/sveltos/env-rollout/clusterprofile-base.yaml)
+- [Reviewed variants](../../examples/sveltos/env-rollout/variants.yaml)
 - [Reviewed change candidate](../../examples/sveltos/env-rollout/change-candidate.yaml)
 `;
 }
@@ -1460,24 +2473,6 @@ function waitForPolicy(context, space, unit, approvalExpected) {
     sleep(1000);
   }
   throw new Error(`${space}/${unit} did not reach the expected policy state`);
-}
-
-function approveHeadRevision(context, space, unit, stageName, expectedRevision) {
-  const result = cubTry(context, [
-    "unit", "approve", "--space", space, unit,
-    "--revision", "HeadRevisionNum", "--wait", "--quiet",
-  ]);
-  if (result.ok) return;
-  const current = cubJson(
-    context,
-    ["unit", "get", unit, "--space", space, "-o", "json"],
-  ).Unit;
-  check(
-    Number(current.HeadRevisionNum) === Number(expectedRevision)
-      && approvalCount(current.ApprovedBy) >= 1,
-    `ConfigHub rejected the ${stageName} approval before recording it: ${result.error}`,
-  );
-  phase(`${stageName} approval recorded; waiting for delayed trigger completion`);
 }
 
 function approvalObservation(context, space, unit) {
@@ -1609,19 +2604,19 @@ function applyGatewayTokenSecret({
   };
 }
 
-function bootstrapProfileName(environment) {
-  return `sveltos-env-rollout-${environment}-bootstrap`;
+function bootstrapProfileName(cluster) {
+  return `sveltos-env-rollout-${cluster}-bootstrap`;
 }
 
-// One bootstrap profile per environment, applied once as cluster setup. It
-// selects the management cluster and points at that environment's Space on the
+// One bootstrap profile per workload Space, applied once as cluster setup. It
+// selects the management cluster and points at that cluster's Space on the
 // gateway. Promotion never touches it: publishing a release moves the tag, and
 // Sveltos follows on its interval.
-function bootstrapProfileManifest(environment, space) {
+function bootstrapProfileManifest(cluster, space) {
   return `apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: ${bootstrapProfileName(environment)}
+  name: ${bootstrapProfileName(cluster)}
 spec:
   clusterSelector:
     matchLabels:
@@ -1637,25 +2632,21 @@ spec:
 `;
 }
 
-function applyBootstrapProfile({
-  managementKubeconfig,
-  workRoot,
-  environment,
-  space,
-}) {
-  const profilePath = join(
-    workRoot,
-    `bootstrap-clusterprofile-${environment}.yaml`,
-  );
+// The reviewed management record is applied out of band, which is the one step
+// that cannot come through the gateway, because it is what opens the gateway
+// path in the first place.
+function applyBootstrapProfiles({ managementKubeconfig, workRoot, profiles }) {
+  const profilePath = join(workRoot, "bootstrap-clusterprofiles.yaml");
   writeFileSync(
     profilePath,
-    bootstrapProfileManifest(environment, space),
+    profiles
+      .map((row) => bootstrapProfileManifest(row.cluster, row.space))
+      .join("---\n"),
     { mode: 0o600 },
   );
   clusterCommand(managementKubeconfig, ["apply", "-f", profilePath]);
   return {
-    profile: bootstrapProfileName(environment),
-    reference: gatewayReference(space),
+    profiles,
     interval: remoteFetchInterval,
     deploymentType: "Remote",
     clusterSelector: { role: "management" },
@@ -1681,13 +2672,13 @@ function looksLikeGzipDecodeFailure(message) {
 function waitForRemoteDeploy({
   managementKubeconfig,
   managementName,
-  environment,
+  cluster,
+  profileName: reviewedProfile,
   expectedDoc,
   release,
   attempts = 90,
 }) {
-  const profileName = bootstrapProfileName(environment);
-  const reviewedProfile = `kyverno-env-${environment}`;
+  const profileName = bootstrapProfileName(cluster);
   let last = { status: "missing", reason: "no ClusterSummary observed" };
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const summaries = clusterTry(managementKubeconfig, [
@@ -1708,11 +2699,11 @@ function waitForRemoteDeploy({
         };
         check(
           !looksLikeGzipDecodeFailure(failureMessage),
-          `the addon controller could not read the ${environment} release: it decoded gzipped bytes as YAML. The gateway serves each release as a gzipped tar layer, so this run needs an addon controller that gunzips. Set SVELTOS_ADDON_CONTROLLER_IMAGE to that build and see ${probeRecord}.`,
+          `the addon controller could not read the ${cluster} release: it decoded gzipped bytes as YAML. The gateway serves each release as a gzipped tar layer, so this run needs an addon controller that gunzips. Set SVELTOS_ADDON_CONTROLLER_IMAGE to that build and see ${probeRecord}.`,
         );
         check(
           feature.status !== "Failed",
-          `the ${environment} bootstrap profile failed to apply the fetched release: ${last.reason}`,
+          `the ${cluster} bootstrap profile failed to apply the fetched release: ${last.reason}`,
         );
       }
       if (last.status === "Provisioned") {
@@ -2016,16 +3007,24 @@ function createCluster(name, kubeconfigPath) {
   ], { timeout: 420_000 });
 }
 
+// Each workload cluster gains a unique addressing label, so one record can
+// address one cluster. The environment label stays as a grouping label, which
+// is what a wave selects on.
 function registerWorkload({
   managementKubeconfig,
   workloadName,
   workloadKubeconfig,
   workRoot,
+  logicalCluster,
   environment,
 }) {
   check(
     environments.includes(environment),
     `unsupported environment label ${environment}`,
+  );
+  check(
+    typeof logicalCluster === "string" && logicalCluster.length > 0,
+    "a workload registration needs the stable logical cluster name",
   );
   const serviceAccountPath = join(
     workRoot,
@@ -2108,6 +3107,7 @@ metadata:
   name: ${workloadName}
   namespace: ${registrationNamespace}
   labels:
+    cluster: ${logicalCluster}
     environment: ${environment}
     sveltos-agent: present
 spec: {}
@@ -2122,7 +3122,12 @@ spec: {}
     method: "programmatic SveltosCluster registration",
     namespace: registrationNamespace,
     cluster: workloadName,
-    labels: { environment, "sveltos-agent": "present" },
+    logicalCluster,
+    labels: {
+      cluster: logicalCluster,
+      environment,
+      "sveltos-agent": "present",
+    },
     credential: {
       type: "short-lived Kubernetes service-account token",
       duration: "2h",
@@ -2292,10 +3297,15 @@ function readPath(value, path) {
   return current;
 }
 
-function writePath(value, path, next) {
+// A departure may add a field the base never carried, so the writer can create
+// the map on the way down when the caller asks for it.
+function writePath(value, path, next, createMissing = false) {
   const keys = path.split(".");
   let current = value;
   for (const key of keys.slice(0, -1)) {
+    if (createMissing && !(current[key] && typeof current[key] === "object")) {
+      current[key] = {};
+    }
     check(
       current[key] && typeof current[key] === "object",
       `values path ${path} does not exist in the baseline values`,
@@ -2424,6 +3434,7 @@ function selfTest() {
   const policyContext = "self-test-policy";
   const managementKubeconfig = join(workRoot, "management.kubeconfig");
   const managementName = "hx-sveltos-envmgmt-selftest";
+  const runId = "20260812091500";
   try {
     let clockMs = 0;
     const hub = createFakeConfigHub();
@@ -2454,9 +3465,9 @@ function selfTest() {
 
     // A live run cost two fleet builds to learn this: the baseline gives every
     // cluster its first install, so a checkpoint that only waits for the
-    // environment matching completedWaves gives all of them the holding
-    // budget and can never pass. The waves are numbered from one, so nothing
-    // ever equals zero.
+    // cluster matching completedWaves gives all of them the holding budget and
+    // can never pass. The waves are numbered from one, so nothing ever equals
+    // zero.
     check(
       convergenceAttempts(1, 0) === convergenceWaitAttempts
         && convergenceAttempts(2, 0) === convergenceWaitAttempts
@@ -2467,19 +3478,104 @@ function selfTest() {
       convergenceAttempts(1, 1) === convergenceWaitAttempts
         && convergenceAttempts(2, 1) === holdingCheckAttempts
         && convergenceAttempts(3, 1) === holdingCheckAttempts,
-      "after a wave, only the promoted environment converges and the others must hold",
+      "after a wave, only the promoted clusters converge and the others must hold",
     );
     check(
       convergenceWaitAttempts * 4 >= 150,
       "the convergence budget must cover a first Kyverno install, which takes over a minute",
     );
-    for (const environment of environments) {
+
+    // One record per cluster, each addressing its own cluster and departing
+    // from the base in a field the reviewed change never writes.
+    check(
+      plan.clusters.length === 4
+        && plan.clusters.every((row) =>
+          row.baselineDoc.spec.clusterSelector.matchLabels.cluster === row.cluster
+          && Object.keys(row.baselineDoc.spec.clusterSelector.matchLabels).length === 1)
+        && new Set(plan.clusters.map((row) => row.space)).size === 4
+        && new Set(plan.clusters.map((row) => row.profileName)).size === 4,
+      "the plan must hold one single-cluster variant per workload cluster",
+    );
+    for (const row of plan.clusters) {
       check(
-        plan.revisions[environment].baseline.startsWith("r1-")
-          && plan.revisions[environment].changed.startsWith("r2-"),
-        "the plan revisions lost their identities",
+        row.revisions.baseline.startsWith("r1-")
+          && row.revisions.changed.startsWith("r2-")
+          && row.departurePaths.length >= 3
+          && readPath(row.baselineDoc, "spec.stopMatchingBehavior")
+          === row.departures["spec.stopMatchingBehavior"]
+          && readPath(valuesOf(row.changedDoc), plan.change.spec.valuesPath)
+          === plan.change.spec.after
+          && readPath(row.changedDoc, "spec.stopMatchingBehavior")
+          === row.departures["spec.stopMatchingBehavior"],
+        `the ${row.cluster} variant lost its departures or its inherited change`,
       );
     }
+    check(
+      plan.waves.map((wave) => wave.clusters.length).join(",") === "1,1,2",
+      "wave three must carry both production clusters",
+    );
+
+    // The collision rule, from the recorded finding: same field, and different
+    // keys of the same map of scalars.
+    check(
+      fieldsCollide(
+        "spec.helmCharts.0.values",
+        "spec.helmCharts.0.values",
+        plan.base.doc,
+      )
+        && fieldsCollide(
+          "spec.helmCharts.0.values.admissionController.replicas",
+          "spec.helmCharts.0.values",
+          plan.base.doc,
+        )
+        && fieldsCollide(
+          "spec.clusterSelector.matchLabels.cluster",
+          "spec.clusterSelector.matchLabels.environment",
+          plan.base.doc,
+        )
+        && !fieldsCollide(
+          "spec.stopMatchingBehavior",
+          "spec.helmCharts.0.values",
+          plan.base.doc,
+        ),
+      "the departure collision rule changed",
+    );
+    expectFailure(
+      () => loadRolloutPlan(tamperedExampleRoot(workRoot, "collision", (text) =>
+        text.replace(
+          "        spec.stopMatchingBehavior: WithdrawPolicies\n    - cluster: hx-sveltos-env-staging",
+          "        spec.helmCharts.0.values: the whole values document\n    - cluster: hx-sveltos-env-staging",
+        ))),
+      /departs on spec\.helmCharts\.0\.values, which the reviewed change also writes/,
+      "departure collision refusal",
+    );
+    expectFailure(
+      () => loadRolloutPlan(tamperedExampleRoot(workRoot, "fanout", (text) =>
+        text.replace(
+          "        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-prod-a",
+          "        spec.clusterSelector.matchLabels.environment: prod",
+        ))),
+      /must depart on its own selector/,
+      "environment selector refusal",
+    );
+    expectFailure(
+      () => loadRolloutPlan(tamperedExampleRoot(workRoot, "shared-space", (text) =>
+        text.replace(
+          "      space: sveltos-kyverno-env-prod-b",
+          "      space: sveltos-kyverno-env-prod-a",
+        ))),
+      /belong to one record/,
+      "shared Space refusal",
+    );
+    expectFailure(
+      () => loadRolloutPlan(tamperedExampleRoot(workRoot, "addressing-only", (text) =>
+        text.replace(
+          "        spec.stopMatchingBehavior: WithdrawPolicies\n    - cluster: hx-sveltos-env-staging",
+          "    - cluster: hx-sveltos-env-staging",
+        ))),
+      /at least one field beyond addressing/,
+      "addressing-only variant refusal",
+    );
 
     // The pin this chapter reads, and the controller image rule the gateway
     // forces on top of it.
@@ -2570,19 +3666,24 @@ function selfTest() {
     );
 
     // The registrations the gateway path stands on: each workload cluster by
-    // its environment label, and the management cluster by its role.
-    const workloadRegistration = registerWorkload({
-      managementKubeconfig,
-      workloadName: "hx-sveltos-env-pilot-selftest",
-      workloadKubeconfig: join(workRoot, "pilot.kubeconfig"),
-      workRoot,
-      environment: "pilot",
-    });
+    // its own addressing label, and the management cluster by its role.
+    const registrations = plan.clusters.map((row) =>
+      registerWorkload({
+        managementKubeconfig,
+        workloadName: `${row.cluster}-${runId}`,
+        workloadKubeconfig: join(workRoot, `${row.cluster}.kubeconfig`),
+        workRoot,
+        logicalCluster: row.cluster,
+        environment: row.environment,
+      }));
     check(
-      workloadRegistration.labels.environment === "pilot"
-        && workloadRegistration.ready === true
-        && workloadRegistration.credential.storedInRepository === false,
-      "the workload registration record changed",
+      registrations.every((registration, index) =>
+        registration.labels.cluster === plan.clusters[index].cluster
+        && registration.labels.environment === plan.clusters[index].environment
+        && registration.ready === true
+        && registration.credential.storedInRepository === false)
+        && new Set(registrations.map((row) => row.labels.cluster)).size === 4,
+      "the workload registrations lost their addressing labels",
     );
     const managementRegistration = registerManagementCluster({
       managementKubeconfig,
@@ -2633,15 +3734,18 @@ function selfTest() {
       "the gateway credential record changed",
     );
 
-    // The bootstrap profile the management cluster receives.
-    const bootstrap = bootstrapProfileManifest("pilot", "self-test-env-pilot");
+    // One bootstrap profile per workload Space, each addressing its own Space.
+    const bootstrapSample = bootstrapProfileManifest(
+      "hx-sveltos-env-pilot",
+      "self-test-pilot",
+    );
     check(
-      bootstrap.includes("deploymentType: Remote")
-        && bootstrap.includes(`url: ${gatewayReference("self-test-env-pilot")}`)
-        && bootstrap.includes(`interval: ${remoteFetchInterval}`)
-        && bootstrap.includes("role: management")
-        && bootstrap.includes(`name: ${gatewaySecretName}`)
-        && bootstrap.includes(`namespace: ${registrationNamespace}`),
+      bootstrapSample.includes("deploymentType: Remote")
+        && bootstrapSample.includes(`url: ${gatewayReference("self-test-pilot")}`)
+        && bootstrapSample.includes(`interval: ${remoteFetchInterval}`)
+        && bootstrapSample.includes("role: management")
+        && bootstrapSample.includes(`name: ${gatewaySecretName}`)
+        && bootstrapSample.includes(`namespace: ${registrationNamespace}`),
       "the bootstrap profile lost its remote fetch contract",
     );
 
@@ -2667,40 +3771,248 @@ function selfTest() {
     );
     hub.state.neverPopulateGates = false;
 
-    // The whole path, environment by environment: review, approve, publish,
-    // and watch the management cluster fetch the release from the gateway.
+    // The whole path: one base record, four variants cloned from it, the
+    // management record, one set approval for the baseline, delivery through
+    // the gateway, one change on the base, and three waves of set promotion.
     const policySpacesCreated = new Set();
-    const environmentRecords = {};
-    for (const environment of environments) {
-      environmentRecords[environment] = establishEnvironment({
+    const baseSpace = spaceName(`hx-sveltos-env-base-${runId}`);
+    const spaceFor = Object.fromEntries([
+      ...plan.clusters.map((row) => [row.cluster, spaceName(`${row.cluster}-${runId}`)]),
+      [plan.management.cluster, spaceName(`${plan.management.cluster}-${runId}`)],
+    ]);
+    const baseRecord = establishBase({
+      policyContext,
+      space: baseSpace,
+      plan,
+      topology,
+      catalogTarget,
+      runId,
+      policySpacesCreated,
+    });
+    check(
+      baseRecord.published === false
+        && baseRecord.target === "none"
+        && baseRecord.revisionId === plan.base.revisions.baseline,
+      "the base record must be stored without a target and without a release",
+    );
+    const variantRecords = {};
+    for (const row of plan.clusters) {
+      variantRecords[row.cluster] = establishVariant({
         policyContext,
-        managementKubeconfig,
-        managementName,
-        environment,
-        space: spaceName(`self-test-env-${environment}`),
-        plan,
+        space: spaceFor[row.cluster],
+        baseSpace,
+        cluster: row,
         topology,
         catalogTarget,
+        runId,
         workRoot,
         policySpacesCreated,
       });
     }
-    for (const wave of plan.waves) {
-      const environment = wave.environment;
-      environmentRecords[environment].changed = promoteEnvironment({
+    check(
+      plan.clusters.every((row) =>
+        variantRecords[row.cluster].upstream.space === baseSpace
+        && variantRecords[row.cluster].upstream.unitLinked === true
+        && variantRecords[row.cluster].selector.cluster === row.cluster),
+      "every variant must be linked to the base and address its own cluster",
+    );
+    hub.state.refuseUpstreamLink = true;
+    expectFailure(
+      () => establishVariant({
+        policyContext,
+        space: spaceName(`self-test-unlinked-${runId}`),
+        baseSpace,
+        cluster: plan.clusters[0],
+        topology,
+        catalogTarget,
+        runId,
+        workRoot,
+        policySpacesCreated: new Set(),
+      }),
+      /records no upstream unit, so it is a copy rather than a variant/,
+      "unlinked variant refusal",
+    );
+    hub.state.refuseUpstreamLink = false;
+    // The refused clone carries this run's labels, so it would join the set a
+    // wave query selects. A live run stops on that refusal; the self-test walks
+    // on, so it removes the record the refusal left behind.
+    cubTry(policyContext, [
+      "space", "delete", spaceName(`self-test-unlinked-${runId}`),
+      "--recursive-force", "--quiet",
+    ]);
+
+    const managementVariant = establishManagement({
+      policyContext,
+      space: spaceFor[plan.management.cluster],
+      plan,
+      topology,
+      catalogTarget,
+      runId,
+      workRoot,
+      policySpacesCreated,
+      workloadSpaces: plan.clusters.map((row) => ({
+        cluster: row.cluster,
+        space: spaceFor[row.cluster],
+      })),
+    });
+    check(
+      managementVariant.bootstrapProfiles.length === 4
+        && new Set(managementVariant.bootstrapProfiles.map((row) => row.reference))
+          .size === 4
+        && managementVariant.boundary.firstRevisionDeliveredThroughGateway === false,
+      "the management record must hold one bootstrap profile per workload Space",
+    );
+
+    // The set query is the wave. It must match the wave and nothing else.
+    const stagingQuery = waveQuery(plan, runId, "staging");
+    check(
+      stagingQuery.includes(runId) && stagingQuery.includes("staging"),
+      "the wave query no longer names the run and the group",
+    );
+    expectFailure(
+      () => selectSet({
+        policyContext,
+        stageName: "empty wave",
+        query: waveQuery(plan, "20990101000000", "staging"),
+        expectedUnits: [`${spaceFor["hx-sveltos-env-staging"]}/${policyUnit}`],
+      }),
+      /matched no unit/,
+      "empty query refusal",
+    );
+    expectFailure(
+      () => selectSet({
+        policyContext,
+        stageName: "over-broad wave",
+        query: baselineQuery(plan, runId),
+        expectedUnits: [`${spaceFor["hx-sveltos-env-staging"]}/${policyUnit}`],
+      }),
+      /refusing to approve a set that is not the wave/,
+      "over-broad query refusal",
+    );
+    expectFailure(
+      () => selectSet({
+        policyContext,
+        stageName: "wrong group",
+        query: waveQuery(plan, runId, "prod"),
+        expectedUnits: [`${spaceFor["hx-sveltos-env-staging"]}/${policyUnit}`],
+      }),
+      /refusing to approve a set that is not the wave/,
+      "outside-the-wave query refusal",
+    );
+
+    const baselineSet = reviewSet({
+      policyContext,
+      stageName: "baseline",
+      query: baselineQuery(plan, runId),
+      members: [
+        ...plan.clusters.map((row) => ({
+          cluster: row.cluster,
+          space: spaceFor[row.cluster],
+          expectedDocs: [row.baselineDoc],
+          revisionId: row.revisions.baseline,
+        })),
+        {
+          cluster: plan.management.cluster,
+          space: spaceFor[plan.management.cluster],
+          expectedDocs: managementVariant.documents,
+          revisionId: managementVariant.revisionId,
+        },
+      ],
+    });
+    check(
+      baselineSet.selection.matched.length === 5
+        && baselineSet.approval.recordedApprovals === 5
+        && baselineSet.approval.appliedAsOneOperation === true,
+      "the baseline must be approved as one set operation over five records",
+    );
+    for (const row of plan.clusters) {
+      variantRecords[row.cluster].baseline = baselineSet.records[row.cluster];
+    }
+    managementVariant.baseline = baselineSet.records[plan.management.cluster];
+
+    const bootstrap = applyBootstrapProfiles({
+      managementKubeconfig,
+      workRoot,
+      profiles: managementVariant.bootstrapProfiles,
+    });
+    for (const row of plan.clusters) {
+      const delivery = waitForRemoteDeploy({
+        managementKubeconfig,
+        managementName,
+        cluster: row.cluster,
+        profileName: row.profileName,
+        expectedDoc: row.baselineDoc,
+        release: variantRecords[row.cluster].baseline.release,
+      });
+      check(
+        delivery.result === "pass" && delivery.status === "Provisioned",
+        `the ${row.cluster} baseline did not arrive from the gateway`,
+      );
+      assertLiveProfileMatches({
+        managementKubeconfig,
+        profileName: row.profileName,
+        expectedDoc: row.baselineDoc,
+      });
+      variantRecords[row.cluster].baseline.delivery = delivery;
+    }
+
+    const baseChange = changeBaseRecord({
+      policyContext,
+      space: baseSpace,
+      plan,
+      workRoot,
+    });
+    check(
+      baseChange.revisionId === plan.base.revisions.changed
+        && baseChange.publishedAsRelease === false,
+      "the base change record changed",
+    );
+
+    // The trap: when the merge hands back the variant's own content, the wave
+    // is refused rather than recorded as promoted.
+    hub.state.mergeKeepsDepartureOnly = true;
+    expectFailure(
+      () => promoteWave({
         policyContext,
         managementKubeconfig,
         managementName,
-        environment,
-        space: environmentRecords[environment].space,
-        record: environmentRecords[environment],
+        wave: plan.waves[0],
         plan,
-        workRoot,
-      });
+        spaceFor,
+        runId,
+        variantRecords,
+      }),
+      /did not come out of the upgrade as the reviewed merge: inheritedTheChange=false/,
+      "silent departure win refusal",
+    );
+    hub.state.mergeKeepsDepartureOnly = false;
+    hub.restoreVariantBaselines();
+
+    const waveRecords = [];
+    for (const wave of plan.waves) {
+      waveRecords.push(promoteWave({
+        policyContext,
+        managementKubeconfig,
+        managementName,
+        wave,
+        plan,
+        spaceFor,
+        runId,
+        variantRecords,
+      }));
     }
+    check(
+      waveRecords.map((wave) => wave.clusters.length).join(",") === "1,1,2"
+        && waveRecords[2].approval.recordedApprovals === 2
+        && waveRecords[2].clusters.every((row) => row.recordedApprovals === 1)
+        && new Set(waveRecords[2].clusters.map((row) => row.revisionId)).size === 2
+        && new Set(waveRecords[2].clusters.map((row) => row.releaseManifestDigest))
+          .size === 2,
+      "wave three must approve both production variants separately from one operation",
+    );
     const walkDigests = [];
-    for (const environment of environments) {
-      const record = environmentRecords[environment];
+    for (const row of plan.clusters) {
+      const record = variantRecords[row.cluster];
       walkDigests.push(
         record.baseline.release.manifestDigest,
         record.changed.release.manifestDigest,
@@ -2708,11 +4020,9 @@ function selfTest() {
       check(
         record.baseline.delivery.result === "pass"
           && record.changed.delivery.result === "pass"
-          && record.baseline.delivery.status === "Provisioned"
           && record.changed.delivery.profileMatchesApprovedRevision === true
-          && record.bootstrap.reference === gatewayReference(record.space)
-          && record.bootstrap.changedByPromotion === false,
-        `the ${environment} walk did not deliver both revisions through the gateway`,
+          && record.baseline.release.reference === gatewayReference(record.space),
+        `the ${row.cluster} walk did not deliver both revisions through the gateway`,
       );
     }
     check(
@@ -2733,9 +4043,10 @@ function selfTest() {
       () => waitForRemoteDeploy({
         managementKubeconfig,
         managementName,
-        environment: "pilot",
-        expectedDoc: plan.changedDocs.pilot,
-        release: environmentRecords.pilot.changed.release,
+        cluster: plan.clusters[0].cluster,
+        profileName: plan.clusters[0].profileName,
+        expectedDoc: plan.clusters[0].changedDoc,
+        release: variantRecords[plan.clusters[0].cluster].changed.release,
         attempts: 2,
       }),
       /addon controller that gunzips/,
@@ -2753,24 +4064,23 @@ function selfTest() {
       managementRegistration,
       sveltosInstall: fakeSveltosInstall(sveltos, overrideImage),
       gatewayCredential,
-      registrations: plan.fleet.spec.workloads.map((workload) =>
-        fakeRegistration(workload)),
-      environmentRecords,
+      registrations,
+      baseRecord,
+      baseChange,
+      baselineSet,
+      variantRecords,
+      managementVariant,
+      bootstrap,
+      waveRecords,
       checkpoints: synthesizeCheckpoints(plan),
       convergenceAudit: synthesizeAudit(plan),
-      cleanup: {
-        probeSpace: "pass",
-        managementCluster: "pass",
-        workloadClusters: "pass",
-        policySpaces: "pass",
-        localFiles: "pass",
-      },
+      cleanup: removedCleanup(),
     });
     verifyReceipt(receipt);
     const summary = renderSummary(receipt);
     check(
       summary.includes(
-        receipt.spec.environments.prod.changed.release.manifestDigest,
+        receipt.spec.variants[3].records[1].release.manifestDigest,
       )
         && summary.includes(`oci://${configHubOciHost}/space/`)
         && summary.includes(overrideImage)
@@ -2778,14 +4088,74 @@ function selfTest() {
       "the rendered summary lost its evidence",
     );
 
+    // The keep-alive flag leaves the record honest rather than reading as a
+    // failed cleanup, and it still has to say what it left and how to remove it.
+    const kept = structuredClone(receipt);
+    kept.spec.cleanup = keptCleanup();
+    verifyReceipt(kept);
+    check(
+      renderSummary(kept).includes("Artifacts kept deliberately"),
+      "a kept run must say so in its summary",
+    );
+    const keptWithoutCommands = structuredClone(kept);
+    keptWithoutCommands.spec.cleanup.kept[0].removeWith = "rm -rf /";
+    expectFailure(
+      () => verifyReceipt(keptWithoutCommands),
+      /must record what it is and the command that removes it/,
+      "kept artifact without a removal command",
+    );
+    const keptWithoutList = structuredClone(kept);
+    keptWithoutList.spec.cleanup.kept = [];
+    expectFailure(
+      () => verifyReceipt(keptWithoutList),
+      /cleanup did not pass/,
+      "kept run that names nothing it kept",
+    );
+
     const tampers = [
       ["kind", (c) => { c.kind = "OtherReceipt"; }, /receipt kind changed/],
       ["result", (c) => { c.status.result = "fail"; }, /proof is not pass/],
-      ["source hash", (c) => { c.spec.source.profiles.pilot.rawSha256 = "0".repeat(64); }, /pilot source record changed/],
-      ["revision drift", (c) => { c.spec.revisions.staging.changed = "r2-000000000000"; }, /revisions no longer match the reviewed example files/],
+      ["source hash", (c) => { c.spec.source.base.rawSha256 = "0".repeat(64); }, /source record changed/],
+      ["variants hash", (c) => { c.spec.source.variants.rawSha256 = "0".repeat(64); }, /source record changed/],
+      ["revision drift", (c) => { c.spec.revisions.clusters["hx-sveltos-env-staging"].changed = "r2-000000000000"; }, /revisions no longer match the reviewed example files/],
       ["change record", (c) => { c.spec.source.change.after = 9; }, /change record changed/],
       ["policy triggers", (c) => { c.spec.policy.filter.triggerRefs = ["platform/bogus"]; }, /policy record changed/],
       ["sveltos pin", (c) => { c.spec.prerequisite.manifestSha256 = "0".repeat(64); }, /prerequisite record changed/],
+      ["base published", (c) => { c.spec.base.published = true; }, /base record must carry no target and reach no cluster/],
+      ["base change published", (c) => { c.spec.base.change.publishedAsRelease = true; }, /must land once on the base record and never be published from it/],
+      ["variant dropped", (c) => { c.spec.variants.pop(); }, /must record one variant per cluster/],
+      ["shared Space", (c) => {
+        c.spec.variants[1].space = c.spec.variants[0].space;
+      }, /two variants share a Space/],
+      ["shared gateway reference", (c) => {
+        c.spec.variants[1].gatewayReference = c.spec.variants[0].gatewayReference;
+      }, /two variants share a gateway reference/],
+      ["environment selector", (c) => {
+        c.spec.variants[2].selector = { environment: "prod" };
+      }, /must address one cluster by name and nothing else/],
+      ["selector fans out", (c) => {
+        c.spec.variants[2].selector = { "sveltos-agent": "present" };
+      }, /must address one cluster by name and nothing else/],
+      ["upstream link dropped", (c) => { c.spec.variants[0].upstream = null; }, /is not linked to the base record/],
+      ["departures dropped", (c) => {
+        c.spec.variants[0].departures = {};
+        c.spec.variants[0].departedFields = [];
+      }, /departures no longer match the reviewed variants record/],
+      ["departure on the changed field", (c) => {
+        c.spec.variants[0].departedFields = [
+          ...c.spec.variants[0].departedFields,
+          "spec.helmCharts.0.values",
+        ];
+      }, /departures no longer match the reviewed variants record/],
+      ["management boundary", (c) => {
+        c.spec.variants[4].boundary.firstRevisionDeliveredThroughGateway = true;
+      }, /management bootstrap boundary changed/],
+      ["management bootstrap profiles", (c) => {
+        c.spec.variants[4].bootstrapProfiles.pop();
+      }, /one bootstrap profile per workload Space/],
+      ["bootstrap changed by promotion", (c) => {
+        c.spec.gatewayDelivery.bootstrap.changedByPromotion = true;
+      }, /applied once as cluster setup and left alone by promotion/],
       ["controller image dropped", (c) => {
         delete c.spec.prerequisite.addonControllerImage;
         delete c.spec.gatewayDelivery.addonControllerImage;
@@ -2798,41 +4168,50 @@ function selfTest() {
       ["secret type", (c) => { c.spec.gatewayDelivery.secret.type = "Opaque"; }, /requires a Secret of type/],
       ["token in the receipt", (c) => { c.spec.gatewayDelivery.secret.tokenRecordedInReceipt = true; }, /requires a Secret of type/],
       ["gateway reference", (c) => {
-        c.spec.gatewayDelivery.environments.pilot.reference =
+        c.spec.gatewayDelivery.clusters["hx-sveltos-env-pilot"].reference =
           "oci://registry.example.com/space/hx-sveltos-env-pilot:latest";
-      }, /pilot gateway reference changed/],
+      }, /the hx-sveltos-env-pilot gateway reference changed/],
       ["wave digest reuse", (c) => {
-        c.spec.gatewayDelivery.waves[2].releaseManifestDigest =
-          c.spec.gatewayDelivery.waves[1].releaseManifestDigest;
-      }, /every wave must publish its own release manifest digest/],
+        c.spec.gatewayDelivery.waves[2].clusters[1].releaseManifestDigest =
+          c.spec.gatewayDelivery.waves[2].clusters[0].releaseManifestDigest;
+      }, /published a different release for/],
       ["release digest reuse", (c) => {
-        c.spec.gatewayDelivery.environments.prod.changedReleaseManifestDigest =
-          c.spec.gatewayDelivery.environments.prod.baselineReleaseManifestDigest;
+        c.spec.gatewayDelivery.clusters["hx-sveltos-env-prod-a"].changedReleaseManifestDigest =
+          c.spec.gatewayDelivery.clusters["hx-sveltos-env-prod-a"].baselineReleaseManifestDigest;
       }, /own manifest digest/],
       ["management unregistered", (c) => { c.spec.fleet.managementRegistration.ready = false; }, /management cluster must be registered/],
-      ["registration shape", (c) => { c.spec.fleet.registrations[3].labels.environment = "staging"; }, /registration record changed/],
-      ["approval bracket", (c) => { c.spec.environments.pilot.changed.beforeApproval.result = "allowed"; }, /pilot changed approval record changed/],
-      ["approval count", (c) => { c.spec.environments.prod.baseline.approval.recordedApprovals = 0; }, /prod baseline approval record changed/],
+      ["registration relabelled", (c) => { c.spec.fleet.registrations[3].labels.cluster = "hx-sveltos-env-prod-a"; }, /matches 2 of the registered clusters/],
+      ["registration not ready", (c) => { c.spec.fleet.registrations[3].ready = false; }, /own addressing label/],
+      ["approval bracket", (c) => { c.spec.variants[0].records[1].beforeApproval.result = "allowed"; }, /approval record changed/],
+      ["approval count", (c) => { c.spec.variants[2].records[0].approval.recordedApprovals = 0; }, /approval record changed/],
       ["release reference", (c) => {
-        c.spec.environments.staging.changed.release.reference =
+        c.spec.variants[1].records[1].release.reference =
           "oci://oci.hub.confighub.com/space/somewhere-else:latest";
-      }, /staging changed release record changed/],
-      ["delivery status", (c) => { c.spec.environments.pilot.baseline.delivery.status = "Failed"; }, /pilot baseline gateway delivery record changed/],
+      }, /release record changed/],
+      ["delivery status", (c) => { c.spec.variants[0].records[0].delivery.status = "Failed"; }, /gateway delivery record changed/],
       ["delivery digest", (c) => {
-        c.spec.environments.pilot.baseline.delivery.releaseManifestDigest = `sha256:${"0".repeat(64)}`;
-      }, /pilot baseline gateway delivery record changed/],
-      ["bootstrap rewired", (c) => { c.spec.environments.prod.bootstrap.interval = "24h0m0s"; }, /prod bootstrap profile record changed/],
-      ["environment digest reuse", (c) => {
-        c.spec.environments.prod.changed.release.manifestDigest =
-          c.spec.environments.prod.baseline.release.manifestDigest;
-        c.spec.environments.prod.changed.delivery.releaseManifestDigest =
-          c.spec.environments.prod.baseline.release.manifestDigest;
-      }, /prod revision record changed/],
+        c.spec.variants[0].records[0].delivery.releaseManifestDigest = `sha256:${"0".repeat(64)}`;
+      }, /gateway delivery record changed/],
+      ["variant digest reuse", (c) => {
+        c.spec.variants[2].records[1].release.manifestDigest =
+          c.spec.variants[2].records[0].release.manifestDigest;
+        c.spec.variants[2].records[1].delivery.releaseManifestDigest =
+          c.spec.variants[2].records[0].release.manifestDigest;
+      }, /revision record changed/],
+      ["baseline set collapsed", (c) => { c.spec.baselineApproval.recordedApprovals = 1; }, /approved as one set operation/],
+      ["baseline approvals iterated", (c) => { c.spec.baselineApproval.appliedAsOneOperation = false; }, /approved as one set operation/],
+      ["wave query dropped", (c) => { c.spec.waves[2].selection.query = ""; }, /must record the query that selected its set/],
+      ["wave matched set", (c) => { c.spec.waves[2].selection.matched.pop(); }, /must record the query that selected its set/],
+      ["wave member dropped", (c) => { c.spec.waves[2].clusters.pop(); }, /rather than the prod clusters/],
+      ["wave approvals miscounted", (c) => { c.spec.waves[2].approval.recordedApprovals = 1; }, /one approval per member/],
+      ["wave approval iterated", (c) => { c.spec.waves[2].approval.appliedAsOneOperation = false; }, /one operation/],
+      ["wave upgrade iterated", (c) => { c.spec.waves[2].upgrade.appliedAsOneOperation = false; }, /one operation/],
       ["checkpoint set", (c) => { c.spec.checkpoints.pop(); }, /checkpoint set changed/],
-      ["checkpoint math", (c) => { c.spec.checkpoints[1].observations.find((row) => row.environment === "staging").expectedBackgroundReplicas = 2; }, /observation for .* changed/],
+      ["checkpoint math", (c) => { c.spec.checkpoints[1].observations.find((row) => row.environment === "staging").expectedReplicas[backgroundDeployment] = 2; }, /observation for .* changed/],
       ["observation result", (c) => { c.spec.checkpoints[2].observations[0].observation.result = "fail"; }, /observation for .* changed/],
       ["audit", (c) => { c.spec.convergenceAudit.result = "fail"; }, /convergence audit changed/],
-      ["cleanup", (c) => { c.spec.cleanup.policySpaces = "fail"; }, /cleanup did not pass/],
+      ["cleanup", (c) => { c.spec.cleanup.results.policySpaces = "fail"; }, /cleanup did not pass/],
+      ["cleanup mode", (c) => { c.spec.cleanup.keptDeliberately = true; }, /cleanup did not pass/],
       ["carrier reintroduced", (c) => { c.spec.notes = "Argo CD reconciled the management cluster"; }, /naming Argo CD predates that design/],
       ["other carrier reintroduced", (c) => { c.spec.notes = "Flux pulled the bundle"; }, /naming Flux predates that design/],
       ["registry reintroduced", (c) => { c.spec.notes = "published to a temporary registry on host.docker.internal"; }, /naming a temporary registry predates that design/],
@@ -2847,7 +4226,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: the Sveltos pin and its refusal, the addon controller image override, the workload and management registrations, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, six approval brackets delivered through the gateway to a fake management cluster, the gzip fetch refusal, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets delivered through the gateway to a fake management cluster, the gzip fetch refusal, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -2855,6 +4234,69 @@ function selfTest() {
     timeSource = realTime;
     rmSync(workRoot, { recursive: true, force: true });
   }
+}
+
+// A tampered copy of the reviewed example files, so a plan refusal is proved
+// against a real fixture rather than a hand-built object.
+function tamperedExampleRoot(workRoot, label, edit) {
+  const root = join(workRoot, `tamper-${label}`);
+  const planRoot = join(root, "examples", "sveltos", "env-rollout");
+  mkdirSync(planRoot, { recursive: true });
+  for (const name of [
+    "fleet.yaml",
+    "change-candidate.yaml",
+    "variants.yaml",
+    "clusterprofile-base.yaml",
+  ]) {
+    cpSync(join(exampleRoot, name), join(planRoot, name));
+  }
+  const path = join(planRoot, "variants.yaml");
+  const text = readFileSync(path, "utf8");
+  const next = edit(text);
+  check(next !== text, `the ${label} tamper did not change the fixture`);
+  writeFileSync(path, next);
+  return root;
+}
+
+function removedCleanup() {
+  return {
+    mode: "removed",
+    keptDeliberately: false,
+    results: {
+      probeSpace: "pass",
+      managementCluster: "pass",
+      workloadClusters: "pass",
+      policySpaces: "pass",
+      localFiles: "pass",
+    },
+    kept: [],
+  };
+}
+
+function keptCleanup() {
+  return {
+    mode: "kept",
+    keptDeliberately: true,
+    results: {
+      probeSpace: "pass",
+      managementCluster: "kept",
+      workloadClusters: "kept",
+      policySpaces: "kept",
+      localFiles: "pass",
+    },
+    kept: [
+      {
+        kind: "kind cluster",
+        name: "hx-sveltos-env-pilot-20260812091500",
+        removeWith: "kind delete cluster --name hx-sveltos-env-pilot-20260812091500",
+      },
+      {
+        kind: "ConfigHub Space",
+        name: "hx-sveltos-env-pilot-20260812091500",
+        removeWith: "cub space delete hx-sveltos-env-pilot-20260812091500 --recursive-force",
+      },
+    ],
+  };
 }
 
 // The install path only needs a manifest with one CRD and one workload, so the
@@ -2923,44 +4365,28 @@ function fakeSveltosInstall(sveltos, addonControllerImage) {
   };
 }
 
-function fakeRegistration(workload) {
-  return {
-    method: "programmatic SveltosCluster registration",
-    namespace: registrationNamespace,
-    cluster: `${workload.cluster}-selftest`,
-    labels: { environment: workload.environment, "sveltos-agent": "present" },
-    credential: {
-      type: "short-lived Kubernetes service-account token",
-      duration: "2h",
-      storedInRepository: false,
-      removedWithClusters: true,
-    },
-    ready: true,
-    kubernetesVersion: "v1.35.0",
-  };
-}
-
 function synthesizeCheckpoints(plan) {
-  const waveByEnvironment = Object.fromEntries(
-    plan.waves.map((row) => [row.environment, row.wave]),
-  );
   return [0, 1, 2, 3].map((completedWaves) => ({
     id: completedWaves === 0 ? "baseline" : `after-wave-${completedWaves}`,
     completedWaves,
-    observations: plan.fleet.spec.workloads.map((workload) => {
-      const changed = waveByEnvironment[workload.environment] <= completedWaves;
-      const expectedBackgroundReplicas = changed
-        ? plan.change.spec.after
-        : plan.change.spec.before;
+    observations: plan.clusters.map((row) => {
+      const changed = row.wave <= completedWaves;
+      const expectedReplicas = changed
+        ? row.expectedReplicas.changed
+        : row.expectedReplicas.baseline;
       return {
-        cluster: `${workload.cluster}-selftest`,
-        logicalCluster: workload.cluster,
-        environment: workload.environment,
+        cluster: `${row.cluster}-selftest`,
+        logicalCluster: row.cluster,
+        environment: row.environment,
         expectedRevisionId: changed
-          ? plan.revisions[workload.environment].changed
-          : plan.revisions[workload.environment].baseline,
-        expectedBackgroundReplicas,
-        observation: fakeObservation(expectedBackgroundReplicas),
+          ? row.revisions.changed
+          : row.revisions.baseline,
+        expectedBackgroundReplicas: changed
+          ? plan.change.spec.after
+          : plan.change.spec.before,
+        expectedReplicas,
+        departedFields: row.departurePaths,
+        observation: fakeObservation(expectedReplicas),
       };
     }),
   }));
@@ -2970,15 +4396,17 @@ function synthesizeAudit(plan) {
   return {
     result: "pass",
     expectedBackgroundReplicas: plan.change.spec.after,
-    clusters: plan.fleet.spec.workloads.map((workload) => ({
-      cluster: `${workload.cluster}-selftest`,
-      environment: workload.environment,
-      observation: fakeObservation(plan.change.spec.after),
+    clusters: plan.clusters.map((row) => ({
+      cluster: `${row.cluster}-selftest`,
+      logicalCluster: row.cluster,
+      environment: row.environment,
+      expectedReplicas: row.expectedReplicas.changed,
+      observation: fakeObservation(row.expectedReplicas.changed),
     })),
   };
 }
 
-function fakeObservation(expectedBackgroundReplicas) {
+function fakeObservation(expectedReplicas) {
   return {
     result: "pass",
     clusterSummary: "projectsveltos/self-test-summary",
@@ -2990,9 +4418,10 @@ function fakeObservation(expectedBackgroundReplicas) {
       status: "deployed",
     },
     backgroundReplicas: {
-      desired: expectedBackgroundReplicas,
-      available: expectedBackgroundReplicas,
+      desired: expectedReplicas[backgroundDeployment],
+      available: expectedReplicas[backgroundDeployment],
     },
+    observedReplicas: { ...expectedReplicas },
     deployments: [],
   };
 }
@@ -3008,8 +4437,8 @@ function createFakeConfigHub() {
   let releaseSequence = 0;
   const state = {
     neverPopulateGates: false,
-    approveFails: false,
-    stripReleaseManifestDigest: false,
+    refuseUpstreamLink: false,
+    mergeKeepsDepartureOnly: false,
     triggerIdOverride: null,
     releaseTargetOverride: null,
   };
@@ -3028,6 +4457,24 @@ function createFakeConfigHub() {
   };
   const ok = (output) => ({ ok: true, status: 0, output, error: "" });
   const refuse = (error) => ({ ok: false, status: 1, output: "", error });
+  const store = (unit, text) => {
+    unit.Data = Buffer.from(text).toString("base64");
+    unit.ContentHash = sha256(text);
+    unit.history.set(unit.HeadRevisionNum, text);
+  };
+  const dataOf = (unit) => Buffer.from(unit.Data, "base64").toString("utf8");
+  // The where evaluator understands the label conjunctions this chapter
+  // queries with, and refuses anything else rather than matching by accident.
+  const matching = (where) => {
+    const clauses = String(where ?? "").split(/\s+AND\s+/);
+    const predicates = clauses.map((clause) =>
+      clause.trim().match(/^Labels\.([A-Za-z0-9_-]+)\s*=\s*'([^']*)'$/));
+    if (predicates.some((predicate) => !predicate)) return null;
+    return [...units.values()].filter((unit) =>
+      predicates.every(
+        (predicate) => unit.Labels?.[predicate[1]] === predicate[2],
+      ));
+  };
   const handle = (args) => {
     const { positionals, flags } = parseCubCommand(args);
     const [entity, verb, ...rest] = positionals;
@@ -3083,19 +4530,67 @@ function createFakeConfigHub() {
     }
     if (entity === "unit" && verb === "create") {
       const [slug, path] = rest;
-      const data = readFileSync(path, "utf8");
       const key = unitKey(flags.space, slug);
-      units.set(key, {
+      const upstreamKey = flags["upstream-unit"]
+        ? unitKey(flags["upstream-space"], flags["upstream-unit"])
+        : null;
+      if (upstreamKey && !units.has(upstreamKey)) {
+        return refuse(`upstream unit ${upstreamKey} not found`);
+      }
+      const text = upstreamKey
+        ? dataOf(units.get(upstreamKey))
+        : readFileSync(path, "utf8");
+      const unit = {
         Slug: slug,
         SpaceSlug: flags.space,
         UnitID: `self-test-unit-${flags.space}-${slug}`,
-        Data: Buffer.from(data).toString("base64"),
-        ContentHash: sha256(data),
         HeadRevisionNum: 1,
         ApplyGates: { "awaiting/triggers": true },
         ApprovedBy: [],
-      });
+        Labels: labelsFrom(flags.label),
+        TargetID: flags.target ? `self-test-target-${flags.target}` : null,
+        UpstreamUnitID: upstreamKey && !state.refuseUpstreamLink
+          ? units.get(upstreamKey).UnitID
+          : "",
+        UpstreamUnitKey: upstreamKey,
+        UpstreamRevisionNum: upstreamKey
+          ? units.get(upstreamKey).HeadRevisionNum
+          : 0,
+        history: new Map(),
+      };
+      store(unit, text);
+      units.set(key, unit);
       pending.add(key);
+      return ok("");
+    }
+    if (entity === "unit" && verb === "update" && flags.patch) {
+      if (flags.space !== "*") return refuse("bulk patch needs --space \"*\"");
+      if (!flags.upgrade) return refuse("the self-test fake hub only patches upgrades");
+      const selected = matching(flags.where);
+      if (!selected) return refuse(`unsupported where expression ${flags.where}`);
+      for (const unit of selected) {
+        const upstream = units.get(unit.UpstreamUnitKey ?? "");
+        if (!upstream) return refuse(`${unit.SpaceSlug}/${unit.Slug} has no upstream`);
+        const merged = state.mergeKeepsDepartureOnly
+          ? parseDocs(dataOf(unit))
+          : mergeUpstream(
+            parseDocs(upstream.history.get(unit.UpstreamRevisionNum)),
+            parseDocs(dataOf(upstream)),
+            parseDocs(dataOf(unit)),
+          );
+        unit.snapshot = {
+          HeadRevisionNum: unit.HeadRevisionNum,
+          Data: unit.Data,
+          ContentHash: unit.ContentHash,
+          UpstreamRevisionNum: unit.UpstreamRevisionNum,
+        };
+        unit.HeadRevisionNum += 1;
+        unit.UpstreamRevisionNum = upstream.HeadRevisionNum;
+        unit.ApprovedBy = [];
+        unit.ApplyGates = { "awaiting/triggers": true };
+        store(unit, documentsToText(merged));
+        pending.add(unitKey(unit.SpaceSlug, unit.Slug));
+      }
       return ok("");
     }
     if (entity === "unit" && verb === "update") {
@@ -3103,56 +4598,59 @@ function createFakeConfigHub() {
       const key = unitKey(flags.space, slug);
       const unit = units.get(key);
       if (!unit) return refuse(`unit ${key} not found`);
-      const data = readFileSync(path, "utf8");
-      unit.Data = Buffer.from(data).toString("base64");
-      unit.ContentHash = sha256(data);
       unit.HeadRevisionNum += 1;
       unit.ApprovedBy = [];
       unit.ApplyGates = { "awaiting/triggers": true };
+      store(unit, readFileSync(path, "utf8"));
       pending.add(key);
-      return ok(JSON.stringify({ Unit: structuredClone(unit) }));
+      return ok(JSON.stringify({ Unit: projectUnit(unit) }));
     }
     if (entity === "unit" && verb === "get") {
       const key = unitKey(flags.space, rest[0]);
       const unit = units.get(key);
       if (!unit) return refuse(`unit ${key} not found`);
-      if (flags.select) {
-        const projection = {};
-        for (const field of flags.select.split(",")) {
-          projection[field] = structuredClone(unit[field]);
-        }
-        return ok(JSON.stringify(projection));
-      }
-      return ok(JSON.stringify({ Unit: structuredClone(unit) }));
+      return ok(JSON.stringify({ Unit: projectUnit(unit) }));
+    }
+    if (entity === "unit" && verb === "list") {
+      if (flags.space !== "*") return refuse("the set query needs --space \"*\"");
+      const selected = matching(flags.where);
+      if (!selected) return refuse(`unsupported where expression ${flags.where}`);
+      return ok(JSON.stringify(selected.map((unit) => ({ Unit: projectUnit(unit) }))));
     }
     if (entity === "unit" && verb === "approve") {
-      if (state.approveFails) return refuse("self-test simulated approval rejection");
-      const key = unitKey(flags.space, rest[0]);
-      const unit = units.get(key);
-      if (!unit) return refuse(`unit ${key} not found`);
-      unit.ApprovedBy = ["self-test-reviewer"];
-      pending.add(key);
+      const selected = flags.where
+        ? matching(flags.where)
+        : [units.get(unitKey(flags.space, rest[0]))].filter(Boolean);
+      if (!selected) return refuse(`unsupported where expression ${flags.where}`);
+      if (flags.where && flags.space !== "*") {
+        return refuse("bulk approve across Spaces needs --space \"*\"");
+      }
+      if (selected.length === 0) return refuse("no unit matched the approval query");
+      if (flags.revision !== "HeadRevisionNum") {
+        return refuse(`the self-test fake hub approves HeadRevisionNum, not ${flags.revision}`);
+      }
+      for (const unit of selected) {
+        unit.ApprovedBy = ["self-test-reviewer"];
+        pending.add(unitKey(unit.SpaceSlug, unit.Slug));
+      }
       return ok("");
     }
     if (entity === "release" && verb === "publish") {
       const spaceSlug = rest[0];
       const rows = [...units.values()]
-        .filter((unit) => unit.SpaceSlug === spaceSlug)
+        .filter((unit) => unit.SpaceSlug === spaceSlug && unit.TargetID)
         .sort((left, right) => left.Slug.localeCompare(right.Slug));
+      if (rows.length === 0) return refuse(`${spaceSlug} has no unit to publish`);
       const digestInput = rows
         .map((unit) => `${unit.Slug}:${unit.ContentHash}:${unit.HeadRevisionNum}`)
         .join("|");
       releaseSequence += 1;
-      const manifestDigest = state.stripReleaseManifestDigest
-        ? ""
-        : `sha256:${sha256(`manifest:${spaceSlug}:${releaseSequence}:${digestInput}`)}`;
+      const manifestDigest = `sha256:${sha256(`manifest:${spaceSlug}:${releaseSequence}:${digestInput}`)}`;
       // The gateway serves what was published, so the fake keeps the published
       // bytes and the fake cluster reads them back through the tag.
       releases.set(spaceSlug, {
         manifestDigest,
-        data: rows
-          .map((unit) => Buffer.from(unit.Data, "base64").toString("utf8"))
-          .join("\n---\n"),
+        data: rows.map((unit) => dataOf(unit)).join("\n---\n"),
       });
       return ok(JSON.stringify({
         Release: {
@@ -3164,17 +4662,89 @@ function createFakeConfigHub() {
     }
     return refuse(`the self-test fake hub refuses: cub ${args.join(" ")}`);
   };
+  const projectUnit = (unit) => {
+    const { history, UpstreamUnitKey, snapshot, ...rest } = unit;
+    return structuredClone(rest);
+  };
+  // The refused promotion left the variants a revision ahead, so the walk that
+  // follows it starts from the departed baseline again.
+  const restoreVariantBaselines = () => {
+    for (const unit of units.values()) {
+      if (!unit.snapshot) continue;
+      unit.history.delete(unit.HeadRevisionNum);
+      Object.assign(unit, unit.snapshot);
+      unit.ApprovedBy = ["self-test-reviewer"];
+      unit.ApplyGates = {};
+      delete unit.snapshot;
+    }
+  };
   const releaseFor = (space) => releases.get(space) ?? null;
-  return { state, handle, tick, releaseFor, filterId, catalogTargetId };
+  return {
+    state,
+    handle,
+    tick,
+    releaseFor,
+    restoreVariantBaselines,
+    filterId,
+    catalogTargetId,
+  };
+}
+
+function labelsFrom(value) {
+  const rows = Array.isArray(value) ? value : [value].filter(Boolean);
+  return Object.fromEntries(rows.map((row) => {
+    const index = String(row).indexOf("=");
+    return [String(row).slice(0, index), String(row).slice(index + 1)];
+  }));
+}
+
+function documentsToText(documents) {
+  return `${documents.map((document) => JSON.stringify(document, null, 2)).join("\n---\n")}\n`;
+}
+
+// The merge the fake performs is the one the recorded finding describes: a
+// field the downstream left alone takes the upstream's new value, a field the
+// downstream departed on keeps the departure, and a departure inside a map of
+// scalars keeps that whole map, which is how a base change goes missing.
+function mergeUpstream(baseOld, baseNew, mine) {
+  return baseNew.map((document, index) =>
+    mergeValue(baseOld[index], document, mine[index]));
+}
+
+function mergeValue(baseOld, baseNew, mine) {
+  if (mine === undefined) return structuredClone(baseNew);
+  if (baseNew === undefined) return structuredClone(mine);
+  if (stableJson(baseOld) === stableJson(mine)) return structuredClone(baseNew);
+  if (stableJson(baseOld) === stableJson(baseNew)) return structuredClone(mine);
+  if (Array.isArray(baseNew) && Array.isArray(mine) && baseNew.length === mine.length) {
+    return baseNew.map((item, index) =>
+      mergeValue(baseOld?.[index], item, mine[index]));
+  }
+  if (
+    baseNew && mine && typeof baseNew === "object" && typeof mine === "object"
+    && !Array.isArray(baseNew) && !Array.isArray(mine)
+  ) {
+    if (isScalarMap(baseNew) && isScalarMap(mine)) return structuredClone(mine);
+    const keys = [...new Set([...Object.keys(baseNew), ...Object.keys(mine)])];
+    return Object.fromEntries(keys.map((key) => [
+      key,
+      mergeValue(baseOld?.[key], baseNew[key], mine[key]),
+    ]));
+  }
+  return structuredClone(mine);
 }
 
 function parseCubCommand(args) {
-  const booleans = new Set(["--quiet", "--wait", "--patch", "--refresh-triggers", "--recursive-force"]);
+  const booleans = new Set([
+    "--quiet", "--wait", "--patch", "--refresh-triggers", "--recursive-force",
+    "--upgrade",
+  ]);
+  const repeatable = new Set(["label"]);
   const positionals = [];
   const flags = {};
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
-    if (!token.startsWith("-") || token === "-") {
+    if (!token.startsWith("-") || token === "-" || token === "*") {
       positionals.push(token);
       continue;
     }
@@ -3183,8 +4753,17 @@ function parseCubCommand(args) {
       continue;
     }
     const name = token.replace(/^--?/, "");
-    flags[name] = args[index + 1];
+    const value = args[index + 1];
+    if (repeatable.has(name)) flags[name] = [...(flags[name] ?? []), value];
+    else flags[name] = value;
     index += 1;
+  }
+  // The set commands pass the wildcard Space as a positional-looking value, so
+  // it is put back where the reader expects it.
+  const wildcard = positionals.indexOf("*");
+  if (wildcard >= 0 && args[args.indexOf("*") - 1] === "--space") {
+    flags.space = "*";
+    positionals.splice(wildcard, 1);
   }
   return { positionals, flags };
 }
@@ -3232,12 +4811,16 @@ function createFakeManagementCluster(hub) {
     if (rest[0] === "apply") {
       const text = readFileSync(rest[rest.indexOf("-f") + 1], "utf8");
       applied.push(text);
-      const bootstrapName = text.match(/^ {2}name: (\S+)$/m)?.[1];
-      const space = text.match(/url: oci:\/\/[^/]+\/space\/([^:\s]+):/)?.[1];
-      if (bootstrapName && space && text.includes("deploymentType: Remote")) {
-        bootstraps.set(bootstrapName, space);
-        deliver();
+      let wired = false;
+      for (const chunk of text.split(/^---$/m)) {
+        const bootstrapName = chunk.match(/^ {2}name: (\S+)$/m)?.[1];
+        const space = chunk.match(/url: oci:\/\/[^/]+\/space\/([^:\s]+):/)?.[1];
+        if (bootstrapName && space && chunk.includes("deploymentType: Remote")) {
+          bootstraps.set(bootstrapName, space);
+          wired = true;
+        }
       }
+      if (wired) deliver();
       return ok("");
     }
     if (rest.includes("create") && rest.includes("token")) {

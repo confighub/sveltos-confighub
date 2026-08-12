@@ -514,16 +514,24 @@ function loadRehearsalPlan(root = repoRoot) {
     );
   }
 
+  // The rehearsal fans out by environment label and claims no governance, so
+  // it keeps its own three environment profiles. Chapter three now governs one
+  // record per cluster and addresses each cluster by name, which is a
+  // different shape from the one this rehearsal exercises. The bytes here are
+  // the ones the recorded rehearsal published.
   const profiles = {};
   for (const environment of environments) {
-    const profilePath = join(planRolloutRoot, `clusterprofile-${environment}.yaml`);
+    const profilePath = join(
+      root, "examples", "sveltos", "fleet-rehearsal",
+      `clusterprofile-${environment}.yaml`,
+    );
     const text = readFileSync(profilePath, "utf8");
     const docs = parseDocs(text);
     check(docs.length === 1, `clusterprofile-${environment}.yaml must contain one object`);
     profiles[environment] = {
       doc: docs[0],
       text,
-      repoPath: `examples/sveltos/env-rollout/clusterprofile-${environment}.yaml`,
+      repoPath: `examples/sveltos/fleet-rehearsal/clusterprofile-${environment}.yaml`,
     };
   }
   const baselineValues = parseDocs(profiles.pilot.doc.spec.helmCharts[0].values)[0];

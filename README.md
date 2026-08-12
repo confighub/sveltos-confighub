@@ -70,13 +70,16 @@ receipt records the shape of that fan-out honestly: one reviewed edit, three
 record updates, three approvals, and three release publishes, because each
 Space publishes its own release.
 
-Chapter three moved one reviewed values change from pilot to staging to
-production. Every wave has its own approval bracket, and the
-[per-cluster matrix](data/sveltos-env-rollout/matrix.md) shows which cluster
-ran which revision at each of the four checkpoints. The
-[receipt](runs/sveltos-env-rollout-proof/receipt.yaml) records six approval
-brackets, the release digest per wave, the gateway reference per
-environment, and the controller image that read them.
+Chapter three now governs one record per cluster over a shared base, so
+ConfigHub answers which cluster runs which revision from its own records
+rather than from a label query Sveltos resolves at delivery time. Each wave
+selects its variants with one query and approves that set in one operation,
+and ConfigHub still records one approval and one release per cluster. That
+rework awaits a live re-record, so the
+[per-cluster matrix](data/sveltos-env-rollout/matrix.md) keeps its observed
+columns empty and the committed
+[receipt](runs/sveltos-env-rollout-proof/receipt.yaml) is kept as recorded
+against the three environment records it governed.
 
 Chapters one and two are recorded in the
 [two-wave proof](data/sveltos-oci-delivery-proof/summary.md): ConfigHub held
@@ -96,7 +99,9 @@ and records its phase timings.
    the pilot cluster, and one approved selector change added the second
    cluster at a new OCI digest. Recorded live.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
-   one reviewed values change pilot to staging to production. Recorded live.
+   one reviewed values change pilot to staging to production, with one
+   governed record per cluster. The earlier three-record run is recorded; the
+   per-cluster rework awaits its own live run.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
    that proves no cluster was missed. No vulnerability scanning is claimed.
@@ -105,9 +110,11 @@ and records its phase timings.
    edit written to every record in one pass, closed by a zero-drift audit.
    Recorded live.
 
-All five chapters are recorded. Every observed cell in every matrix comes
-from a committed receipt, and each receipt records the addon controller
-image its run used.
+All five chapters have been recorded live. Every observed cell in every
+matrix comes from a committed receipt, and each receipt records the addon
+controller image its run used. Chapter three has since been reworked to one
+record per cluster and awaits a live run of that shape, which its matrix and
+its verify lane both say plainly.
 
 ## How to run it
 

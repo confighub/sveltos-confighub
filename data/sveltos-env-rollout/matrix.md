@@ -3,53 +3,54 @@
 Chapter three of the Sveltos fleet example promotes one reviewed change
 through the environment groups. The change raises `backgroundController.replicas`
 from 1 to 2 in the kyverno/kyverno chart, version 3.8.1.
-Each environment keeps its own governed record, so the matrix shows exactly
-which cluster runs which revision at every checkpoint.
+It is made once, on the base record. ConfigHub holds one variant per
+cluster over that base, so the matrix shows exactly which cluster runs
+which revision at every checkpoint, and which departure each cluster keeps
+through the change.
 
-The observed columns come from the committed live receipt in
-`runs/sveltos-env-rollout-proof/receipt.yaml`. The expected columns
-come from the reviewed example files.
+No live run of this design has been recorded yet, so every observed
+cell below stays empty until the live proof earns it. The committed receipt governs three environment records and predates the per-cluster variant design.
+The expected columns come from the reviewed example files.
 
 ## Baseline, before the change
 
-| Cluster | Environment | Wave | Expected revision | Expected background replicas | Observed | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | 1 | `r1-5ef2cd8aef8e` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
-| hx-sveltos-env-staging | staging | 2 | `r1-445596dc846a` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
-| hx-sveltos-env-prod-a | prod | 3 | `r1-25f80d487bba` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
-| hx-sveltos-env-prod-b | prod | 3 | `r1-25f80d487bba` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
+| Cluster | Environment | Wave | Expected revision | Departure kept | Expected background replicas | Observed | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| hx-sveltos-env-pilot | pilot | 1 | `r1-584811b8a981` | `spec.stopMatchingBehavior=WithdrawPolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-staging | staging | 2 | `r1-558f1f5b7f18` | `spec.stopMatchingBehavior=WithdrawPolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-a | prod | 3 | `r1-5d3f50a38643` | `spec.stopMatchingBehavior=LeavePolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-b | prod | 3 | `r1-f32c12212414` | `spec.stopMatchingBehavior=LeavePolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
 
 ## After wave 1, pilot
 
-| Cluster | Environment | Wave | Expected revision | Expected background replicas | Observed | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | 1 | `r2-4a7541e862f9` | 2 | kyverno-3.8.1 with 2 background replicas | observed-pass |
-| hx-sveltos-env-staging | staging | 2 | `r1-445596dc846a` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
-| hx-sveltos-env-prod-a | prod | 3 | `r1-25f80d487bba` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
-| hx-sveltos-env-prod-b | prod | 3 | `r1-25f80d487bba` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
+| Cluster | Environment | Wave | Expected revision | Departure kept | Expected background replicas | Observed | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| hx-sveltos-env-pilot | pilot | 1 | `r2-2c6a2fcb7349` | `spec.stopMatchingBehavior=WithdrawPolicies` | 2 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-staging | staging | 2 | `r1-558f1f5b7f18` | `spec.stopMatchingBehavior=WithdrawPolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-a | prod | 3 | `r1-5d3f50a38643` | `spec.stopMatchingBehavior=LeavePolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-b | prod | 3 | `r1-f32c12212414` | `spec.stopMatchingBehavior=LeavePolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
 
 ## After wave 2, staging
 
-| Cluster | Environment | Wave | Expected revision | Expected background replicas | Observed | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | 1 | `r2-4a7541e862f9` | 2 | kyverno-3.8.1 with 2 background replicas | observed-pass |
-| hx-sveltos-env-staging | staging | 2 | `r2-5471d24ca614` | 2 | kyverno-3.8.1 with 2 background replicas | observed-pass |
-| hx-sveltos-env-prod-a | prod | 3 | `r1-25f80d487bba` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
-| hx-sveltos-env-prod-b | prod | 3 | `r1-25f80d487bba` | 1 | kyverno-3.8.1 with 1 background replicas | observed-pass |
+| Cluster | Environment | Wave | Expected revision | Departure kept | Expected background replicas | Observed | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| hx-sveltos-env-pilot | pilot | 1 | `r2-2c6a2fcb7349` | `spec.stopMatchingBehavior=WithdrawPolicies` | 2 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-staging | staging | 2 | `r2-ae67b227bea8` | `spec.stopMatchingBehavior=WithdrawPolicies` | 2 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-a | prod | 3 | `r1-5d3f50a38643` | `spec.stopMatchingBehavior=LeavePolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-b | prod | 3 | `r1-f32c12212414` | `spec.stopMatchingBehavior=LeavePolicies` | 1 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
 
 ## After wave 3, production
 
-| Cluster | Environment | Wave | Expected revision | Expected background replicas | Observed | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | 1 | `r2-4a7541e862f9` | 2 | kyverno-3.8.1 with 2 background replicas | observed-pass |
-| hx-sveltos-env-staging | staging | 2 | `r2-5471d24ca614` | 2 | kyverno-3.8.1 with 2 background replicas | observed-pass |
-| hx-sveltos-env-prod-a | prod | 3 | `r2-6d3daa60f562` | 2 | kyverno-3.8.1 with 2 background replicas | observed-pass |
-| hx-sveltos-env-prod-b | prod | 3 | `r2-6d3daa60f562` | 2 | kyverno-3.8.1 with 2 background replicas | observed-pass |
+| Cluster | Environment | Wave | Expected revision | Departure kept | Expected background replicas | Observed | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| hx-sveltos-env-pilot | pilot | 1 | `r2-2c6a2fcb7349` | `spec.stopMatchingBehavior=WithdrawPolicies` | 2 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-staging | staging | 2 | `r2-ae67b227bea8` | `spec.stopMatchingBehavior=WithdrawPolicies` | 2 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-a | prod | 3 | `r2-3547312fad1c` | `spec.stopMatchingBehavior=LeavePolicies` | 2 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
+| hx-sveltos-env-prod-b | prod | 3 | `r2-c59295d6be06` | `spec.stopMatchingBehavior=LeavePolicies` | 2 |  | awaiting-live-run (awaiting-per-cluster-rerecord) |
 
 ## Sources
 
-- [Pilot profile](../../examples/sveltos/env-rollout/clusterprofile-pilot.yaml)
-- [Staging profile](../../examples/sveltos/env-rollout/clusterprofile-staging.yaml)
-- [Production profile](../../examples/sveltos/env-rollout/clusterprofile-prod.yaml)
+- [Base profile](../../examples/sveltos/env-rollout/clusterprofile-base.yaml)
+- [Per-cluster variants](../../examples/sveltos/env-rollout/variants.yaml)
 - [Fleet design](../../examples/sveltos/env-rollout/fleet.yaml)
 - [Change candidate](../../examples/sveltos/env-rollout/change-candidate.yaml)

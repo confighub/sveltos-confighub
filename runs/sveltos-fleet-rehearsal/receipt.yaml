@@ -15,13 +15,13 @@ spec:
   source:
     profiles:
       pilot:
-        path: "examples/sveltos/env-rollout/clusterprofile-pilot.yaml"
+        path: "examples/sveltos/fleet-rehearsal/clusterprofile-pilot.yaml"
         rawSha256: "24a10206c42a4543404e4e299a0d690f13ccc13e143b318c483503147c17db85"
       staging:
-        path: "examples/sveltos/env-rollout/clusterprofile-staging.yaml"
+        path: "examples/sveltos/fleet-rehearsal/clusterprofile-staging.yaml"
         rawSha256: "79cddceceaf3b8164e8abaf3dfc057fabb1ac201cd057ed3d617dc822393c7f3"
       prod:
-        path: "examples/sveltos/env-rollout/clusterprofile-prod.yaml"
+        path: "examples/sveltos/fleet-rehearsal/clusterprofile-prod.yaml"
         rawSha256: "dd1ce5de049e43803c8ac3cfe535b1ec9ab0dd75682762da1a236ac34fcde311"
     appProfiles:
       pilot:

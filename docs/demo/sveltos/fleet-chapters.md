@@ -22,9 +22,11 @@ matrix, a receipt contract, and deterministic self-tests.
    a new OCI digest. Recorded live in the
    [two-wave proof](../../../data/sveltos-oci-delivery-proof/summary.md).
 3. **[Environment rollout](../../../examples/sveltos/env-rollout/README.md)**
-   promotes one reviewed values change pilot to staging to production, with a
-   [per-cluster matrix](../../../data/sveltos-env-rollout/matrix.md) showing
-   which cluster runs which revision at every checkpoint.
+   promotes one reviewed values change pilot to staging to production, with
+   one governed record per cluster over a shared base, so the
+   [per-cluster matrix](../../../data/sveltos-env-rollout/matrix.md) shows
+   which cluster runs which revision at every checkpoint. The per-cluster
+   rework awaits its own live run.
 4. **[CVE patching](../../../examples/sveltos/cve-patch/README.md)** is fleet
    patch day with evidence: one reviewed version bump with digest-bound
    provenance, promoted through the same groups, closed by a coverage audit

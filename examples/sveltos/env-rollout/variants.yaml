@@ -1,0 +1,46 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosEnvRolloutVariants
+metadata:
+  name: kyverno-env-rollout-variants
+spec:
+  base:
+    profile: clusterprofile-base.yaml
+    unit: clusterprofile
+    space: sveltos-kyverno-env-base
+    reachesCluster: false
+    note: The base holds the reviewed content every cluster shares. It carries a selector that matches no registered cluster, it is given no target, and its Space is never published, so nothing reaches a cluster from the base itself.
+  workloads:
+    - cluster: hx-sveltos-env-pilot
+      environment: pilot
+      space: sveltos-kyverno-env-pilot
+      departures:
+        metadata.name: kyverno-hx-sveltos-env-pilot
+        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-pilot
+        spec.stopMatchingBehavior: WithdrawPolicies
+    - cluster: hx-sveltos-env-staging
+      environment: staging
+      space: sveltos-kyverno-env-staging
+      departures:
+        metadata.name: kyverno-hx-sveltos-env-staging
+        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-staging
+        spec.stopMatchingBehavior: WithdrawPolicies
+    - cluster: hx-sveltos-env-prod-a
+      environment: prod
+      space: sveltos-kyverno-env-prod-a
+      departures:
+        metadata.name: kyverno-hx-sveltos-env-prod-a
+        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-prod-a
+        spec.stopMatchingBehavior: LeavePolicies
+    - cluster: hx-sveltos-env-prod-b
+      environment: prod
+      space: sveltos-kyverno-env-prod-b
+      departures:
+        metadata.name: kyverno-hx-sveltos-env-prod-b
+        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-prod-b
+        spec.stopMatchingBehavior: LeavePolicies
+  management:
+    cluster: hx-sveltos-env-mgmt
+    space: sveltos-kyverno-env-mgmt
+    holds: one bootstrap ClusterProfile per workload Space, each pointing at that Space on the ConfigHub OCI gateway
+    appliedOutOfBandWith: kubectl
+    reason: This record is what lets the management cluster fetch from the gateway, so its first revision cannot arrive through the gateway. It is applied once as cluster setup, and ConfigHub governs every revision after that under the same approval gate.
