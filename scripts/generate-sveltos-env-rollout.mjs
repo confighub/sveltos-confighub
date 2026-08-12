@@ -38,6 +38,10 @@ const exampleFiles = [
   "examples/sveltos/env-rollout/fleet.yaml",
   "examples/sveltos/env-rollout/change-candidate.yaml",
 ];
+// The committed live receipt fills the observed columns, so the fixture
+// compile has to see it too or the determinism check compares a recorded
+// matrix against an unrecorded one.
+const liveReceiptFile = "runs/sveltos-env-rollout-proof/receipt.yaml";
 const outputFiles = [
   "data/sveltos-env-rollout/matrix.csv",
   "data/sveltos-env-rollout/matrix.md",
@@ -413,10 +417,12 @@ function stableJson(value) {
 function selfTest() {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "helm-expt-sveltos-env-rollout-self-test-"));
   try {
-    for (const file of exampleFiles) {
+    for (const file of [...exampleFiles, liveReceiptFile]) {
+      const source = join(repoRoot, file);
+      if (!existsSync(source)) continue;
       const destination = join(fixtureRoot, file);
       mkdirSync(dirname(destination), { recursive: true });
-      cpSync(join(repoRoot, file), destination);
+      cpSync(source, destination);
     }
     const first = buildOutputs(compileRollout(fixtureRoot));
     const second = buildOutputs(compileRollout(fixtureRoot));
@@ -436,10 +442,21 @@ function selfTest() {
       csv.trim().split("\n").length === 17,
       "the matrix must hold sixteen cluster rows across four checkpoints",
     );
-    check(
-      !csv.includes("observed-pass") && csv.split(proofStatus).length === 17,
-      "every matrix row must stay honestly awaiting the live run",
-    );
+    // Before the live run every row must stay honestly empty. After it, every
+    // row must carry an observation, because a recorded run that leaves cells
+    // blank is the same dishonesty pointing the other way.
+    const recorded = existsSync(join(repoRoot, liveReceiptFile));
+    if (recorded) {
+      check(
+        csv.split("observed-pass").length === 17 && !csv.includes(proofStatus),
+        "every matrix row must carry its observation once the live run is recorded",
+      );
+    } else {
+      check(
+        !csv.includes("observed-pass") && csv.split(proofStatus).length === 17,
+        "every matrix row must stay honestly awaiting the live run",
+      );
+    }
     const html = first["data/sveltos-env-rollout/matrix.html"];
     check(
       !/<script[^>]*src=|<link[^>]+rel="stylesheet"|url\(http/.test(html),

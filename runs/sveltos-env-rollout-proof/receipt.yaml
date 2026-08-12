@@ -1,0 +1,1344 @@
+apiVersion: "catalog.confighub.com/v1alpha1"
+kind: "SveltosEnvRolloutProofReceipt"
+metadata:
+  name: "kyverno-environment-rollout"
+spec:
+  recordedAt: "2026-08-12T07:03:58.395Z"
+  flow:
+    path: "source -> ConfigHub review and approval per environment -> ConfigHub release -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes"
+    promotion: "one reviewed values change promoted pilot, then staging, then production"
+  source:
+    profiles:
+      pilot:
+        path: "examples/sveltos/env-rollout/clusterprofile-pilot.yaml"
+        rawSha256: "24a10206c42a4543404e4e299a0d690f13ccc13e143b318c483503147c17db85"
+      staging:
+        path: "examples/sveltos/env-rollout/clusterprofile-staging.yaml"
+        rawSha256: "79cddceceaf3b8164e8abaf3dfc057fabb1ac201cd057ed3d617dc822393c7f3"
+      prod:
+        path: "examples/sveltos/env-rollout/clusterprofile-prod.yaml"
+        rawSha256: "dd1ce5de049e43803c8ac3cfe535b1ec9ab0dd75682762da1a236ac34fcde311"
+    change:
+      path: "examples/sveltos/env-rollout/change-candidate.yaml"
+      rawSha256: "d9d3ca93ddf870d8cda11e3a56173fc3a2759eaea05fccac5ac1c4882e6d5128"
+      valuesPath: "backgroundController.replicas"
+      before: 1
+      after: 2
+    sourceLock: "examples/sveltos/env-rollout/source-lock.yaml"
+    gatewayRecord: "docs/planning/remote-url-oci-probe.md"
+  revisions:
+    pilot:
+      baseline: "r1-5ef2cd8aef8e"
+      changed: "r2-4a7541e862f9"
+    staging:
+      baseline: "r1-445596dc846a"
+      changed: "r2-5471d24ca614"
+    prod:
+      baseline: "r1-25f80d487bba"
+      changed: "r2-6d3daa60f562"
+  policy:
+    organization: "helm-catalog"
+    profile: "catalog-standard"
+    resourceClass: "system-configuration"
+    filter:
+      ref: "platform/helm-catalog-prod-gates"
+      id: "8784a447-0e4d-4471-b924-eae5377778a2"
+      hash: "31133ade3ebd259030d3d2ef559e6aec14a62590779fbce9c0d13b188f717dc1"
+      triggerRefs:
+        - "platform/aicr-training-images-pinned"
+        - "platform/aicr-training-secret-refs"
+        - "platform/digest-pinned-images"
+        - "platform/lifecycle-route-evidence"
+        - "platform/probes-declared"
+        - "platform/require-approval"
+        - "platform/vet-placeholders"
+        - "platform/vet-schemas"
+      triggerIds:
+        - "04746183-327b-484e-b061-91d2c7753a76"
+        - "1823a4c6-9743-467a-8e9a-5e1893e31d17"
+        - "2651b7cc-31a2-4833-adde-11e018656dee"
+        - "3f5dd412-1cf2-4583-a73a-12817f899c87"
+        - "4d7664a3-9ac0-4160-868f-95eaa0b59f8f"
+        - "5ce74cb1-7129-43c8-a48c-a0ba4322de3d"
+        - "894ba8a0-eb84-4105-9557-4854f3739cf2"
+        - "9d281daf-79f4-4244-84cc-fbde411e3c11"
+    approvalGate: "platform/require-approval/vet-approvedby"
+    target:
+      ref: "bitnami-redis-27-0-0-default-pilot-live-20260705/oci-target"
+      id: "b6b9c7b8-71bd-4a2f-8bdc-7a8303666b6c"
+      provider: "OCI"
+  prerequisite:
+    source: "https://raw.githubusercontent.com/projectsveltos/sveltos/v1.13.0/manifest/manifest.yaml"
+    version: "v1.13.0"
+    manifestSha256: "5538558ad428617153f963318f22e70eb32fa949e9e0f07e07f02a0db700e2d7"
+    addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.13.0-ch"
+    pinnedAddonControllerImage: "docker.io/projectsveltos/addon-controller:v1.13.0"
+    addonControllerImageOverridden: true
+    addonControllerImageLines: 2
+    objectCount: 102
+    crdCount: 29
+    appliedObjectCount: 98
+    omittedOptionalServiceMonitorCount: 4
+    deployments:
+      -
+        name: "access-manager"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "addon-controller"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "classifier-manager"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "event-manager"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "hc-manager"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "mcp-server"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "sc-manager"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "shard-controller"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "sveltos-agent-manager"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+      -
+        name: "techsupport-controller"
+        desired: 1
+        updated: 1
+        ready: 1
+        available: 1
+        observedGenerationMatches: true
+    installationMethod: "pinned manifest applied as a management-cluster prerequisite"
+  gatewayDelivery:
+    host: "oci.hub.confighub.com"
+    tag: "latest"
+    interval: "1m0s"
+    deploymentType: "Remote"
+    fetchedBy: "the Sveltos addon controller on the management cluster"
+    addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.13.0-ch"
+    secret:
+      name: "confighub-gateway"
+      namespace: "projectsveltos"
+      type: "addons.projectsveltos.io/cluster-profile"
+      key: "token"
+      source: "cub auth get-token"
+      storedInRepository: false
+      tokenRecordedInReceipt: false
+      removedWithClusters: true
+    environments:
+      pilot:
+        space: "hx-sveltos-env-pilot-20260812070358"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260812070358:latest"
+        bootstrapProfile: "sveltos-env-rollout-pilot-bootstrap"
+        baselineReleaseManifestDigest: "sha256:21fa6a2afd6ffce136a27406d4164a617215ecc0eb47aafa551e560c7fec39a6"
+        changedReleaseManifestDigest: "sha256:894b8fa9df040e6b709a6c487c7730c96b2bf6496909393c57c45a0410331ff8"
+      staging:
+        space: "hx-sveltos-env-staging-20260812070358"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260812070358:latest"
+        bootstrapProfile: "sveltos-env-rollout-staging-bootstrap"
+        baselineReleaseManifestDigest: "sha256:5d3722862ff8e16c49c5b5ccb4a95f956cfaf7b63fe4ecd673334cf4eb655486"
+        changedReleaseManifestDigest: "sha256:afd26309e53fa794ec135fa65a099b791e11f84b93269e1ec4d174ac85d54499"
+      prod:
+        space: "hx-sveltos-env-prod-20260812070358"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-20260812070358:latest"
+        bootstrapProfile: "sveltos-env-rollout-prod-bootstrap"
+        baselineReleaseManifestDigest: "sha256:8a191e7363b944509f9d1f8ad9499a129ce030cef2e3a8fbd46916736b0eea55"
+        changedReleaseManifestDigest: "sha256:20ef4d3787e52508708685745fddb6009e8412574b2b03ea8397492eed4bd879"
+    waves:
+      -
+        wave: 1
+        environment: "pilot"
+        releaseManifestDigest: "sha256:894b8fa9df040e6b709a6c487c7730c96b2bf6496909393c57c45a0410331ff8"
+      -
+        wave: 2
+        environment: "staging"
+        releaseManifestDigest: "sha256:afd26309e53fa794ec135fa65a099b791e11f84b93269e1ec4d174ac85d54499"
+      -
+        wave: 3
+        environment: "prod"
+        releaseManifestDigest: "sha256:20ef4d3787e52508708685745fddb6009e8412574b2b03ea8397492eed4bd879"
+  fleet:
+    managementCluster: "hx-sveltos-envmgmt-20260812070358"
+    creationCommand: "kind create cluster"
+    managementRegistration:
+      method: "programmatic SveltosCluster registration of the management cluster"
+      namespace: "projectsveltos"
+      cluster: "management"
+      labels:
+        role: "management"
+      credential:
+        type: "short-lived Kubernetes service-account token"
+        duration: "2h"
+        storedInRepository: false
+        removedWithClusters: true
+      ready: true
+      kubernetesVersion: "v1.35.0"
+    registrations:
+      -
+        method: "programmatic SveltosCluster registration"
+        namespace: "projectsveltos"
+        cluster: "hx-sveltos-env-pilot-20260812070358"
+        labels:
+          environment: "pilot"
+          sveltos-agent: "present"
+        credential:
+          type: "short-lived Kubernetes service-account token"
+          duration: "2h"
+          storedInRepository: false
+          removedWithClusters: true
+        ready: true
+        kubernetesVersion: "v1.35.0"
+      -
+        method: "programmatic SveltosCluster registration"
+        namespace: "projectsveltos"
+        cluster: "hx-sveltos-env-staging-20260812070358"
+        labels:
+          environment: "staging"
+          sveltos-agent: "present"
+        credential:
+          type: "short-lived Kubernetes service-account token"
+          duration: "2h"
+          storedInRepository: false
+          removedWithClusters: true
+        ready: true
+        kubernetesVersion: "v1.35.0"
+      -
+        method: "programmatic SveltosCluster registration"
+        namespace: "projectsveltos"
+        cluster: "hx-sveltos-env-prod-a-20260812070358"
+        labels:
+          environment: "prod"
+          sveltos-agent: "present"
+        credential:
+          type: "short-lived Kubernetes service-account token"
+          duration: "2h"
+          storedInRepository: false
+          removedWithClusters: true
+        ready: true
+        kubernetesVersion: "v1.35.0"
+      -
+        method: "programmatic SveltosCluster registration"
+        namespace: "projectsveltos"
+        cluster: "hx-sveltos-env-prod-b-20260812070358"
+        labels:
+          environment: "prod"
+          sveltos-agent: "present"
+        credential:
+          type: "short-lived Kubernetes service-account token"
+          duration: "2h"
+          storedInRepository: false
+          removedWithClusters: true
+        ready: true
+        kubernetesVersion: "v1.35.0"
+  environments:
+    pilot:
+      wave: 1
+      space: "hx-sveltos-env-pilot-20260812070358"
+      unit: "clusterprofile"
+      bootstrap:
+        profile: "sveltos-env-rollout-pilot-bootstrap"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260812070358:latest"
+        interval: "1m0s"
+        deploymentType: "Remote"
+        clusterSelector:
+          role: "management"
+        secret:
+          name: "confighub-gateway"
+          namespace: "projectsveltos"
+        appliedWith: "kubectl as management-cluster setup"
+        changedByPromotion: false
+      baseline:
+        revisionId: "r1-5ef2cd8aef8e"
+        contentHash: -1262684035
+        beforeApproval:
+          result: "blocked"
+          gate: "platform/require-approval/vet-approvedby"
+          observation: "apply-gate-present-approval-absent"
+          dryRun: false
+          exitCode: 0
+        approval:
+          revision: 2
+          recordedApprovals: 1
+          approverIdentityRecordedInReceipt: false
+          contentHashUnchanged: true
+        afterApproval:
+          result: "allowed"
+          observation: "approval-recorded"
+          dryRun: false
+          exitCode: 0
+        release:
+          space: "hx-sveltos-env-pilot-20260812070358"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260812070358:latest"
+          tag: "latest"
+          manifestDigest: "sha256:21fa6a2afd6ffce136a27406d4164a617215ecc0eb47aafa551e560c7fec39a6"
+          bundleDigest: "sha256:a701b3fb50005037b20025256b1ac642bae6c2d523863410b7761369b22007f7"
+          releaseId: "af267580-f473-4fc2-a8bc-aae9090a1841"
+        delivery:
+          result: "pass"
+          profile: "sveltos-env-rollout-pilot-bootstrap"
+          cluster: "hx-sveltos-envmgmt-20260812070358"
+          reviewedProfile: "kyverno-env-pilot"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260812070358:latest"
+          releaseManifestDigest: "sha256:21fa6a2afd6ffce136a27406d4164a617215ecc0eb47aafa551e560c7fec39a6"
+          interval: "1m0s"
+          status: "Provisioned"
+          profileMatchesApprovedRevision: true
+      changed:
+        revisionId: "r2-4a7541e862f9"
+        contentHash: -633719507
+        beforeApproval:
+          result: "blocked"
+          gate: "platform/require-approval/vet-approvedby"
+          observation: "apply-gate-present-approval-absent"
+          dryRun: false
+          exitCode: 0
+        approval:
+          revision: 4
+          recordedApprovals: 1
+          approverIdentityRecordedInReceipt: false
+          contentHashUnchanged: true
+        afterApproval:
+          result: "allowed"
+          observation: "approval-recorded"
+          dryRun: false
+          exitCode: 0
+        release:
+          space: "hx-sveltos-env-pilot-20260812070358"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260812070358:latest"
+          tag: "latest"
+          manifestDigest: "sha256:894b8fa9df040e6b709a6c487c7730c96b2bf6496909393c57c45a0410331ff8"
+          bundleDigest: "sha256:7ac19c53b7b48179c97e345a511edfa00d9525ddcef084c5238ba2cb15b6a516"
+          releaseId: "84a6a4db-f1ee-4c65-9c8c-0baa259cdf6b"
+        delivery:
+          result: "pass"
+          profile: "sveltos-env-rollout-pilot-bootstrap"
+          cluster: "hx-sveltos-envmgmt-20260812070358"
+          reviewedProfile: "kyverno-env-pilot"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260812070358:latest"
+          releaseManifestDigest: "sha256:894b8fa9df040e6b709a6c487c7730c96b2bf6496909393c57c45a0410331ff8"
+          interval: "1m0s"
+          status: "Provisioned"
+          profileMatchesApprovedRevision: true
+    staging:
+      wave: 2
+      space: "hx-sveltos-env-staging-20260812070358"
+      unit: "clusterprofile"
+      bootstrap:
+        profile: "sveltos-env-rollout-staging-bootstrap"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260812070358:latest"
+        interval: "1m0s"
+        deploymentType: "Remote"
+        clusterSelector:
+          role: "management"
+        secret:
+          name: "confighub-gateway"
+          namespace: "projectsveltos"
+        appliedWith: "kubectl as management-cluster setup"
+        changedByPromotion: false
+      baseline:
+        revisionId: "r1-445596dc846a"
+        contentHash: -874612233
+        beforeApproval:
+          result: "blocked"
+          gate: "platform/require-approval/vet-approvedby"
+          observation: "apply-gate-present-approval-absent"
+          dryRun: false
+          exitCode: 0
+        approval:
+          revision: 2
+          recordedApprovals: 1
+          approverIdentityRecordedInReceipt: false
+          contentHashUnchanged: true
+        afterApproval:
+          result: "allowed"
+          observation: "approval-recorded"
+          dryRun: false
+          exitCode: 0
+        release:
+          space: "hx-sveltos-env-staging-20260812070358"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260812070358:latest"
+          tag: "latest"
+          manifestDigest: "sha256:5d3722862ff8e16c49c5b5ccb4a95f956cfaf7b63fe4ecd673334cf4eb655486"
+          bundleDigest: "sha256:aa7910998d55119166249b432837ed313b26d1d12fa6730f8e93be9cefdcfcab"
+          releaseId: "1079f615-7a98-4e51-b6f5-049e87107f07"
+        delivery:
+          result: "pass"
+          profile: "sveltos-env-rollout-staging-bootstrap"
+          cluster: "hx-sveltos-envmgmt-20260812070358"
+          reviewedProfile: "kyverno-env-staging"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260812070358:latest"
+          releaseManifestDigest: "sha256:5d3722862ff8e16c49c5b5ccb4a95f956cfaf7b63fe4ecd673334cf4eb655486"
+          interval: "1m0s"
+          status: "Provisioned"
+          profileMatchesApprovedRevision: true
+      changed:
+        revisionId: "r2-5471d24ca614"
+        contentHash: 839588995
+        beforeApproval:
+          result: "blocked"
+          gate: "platform/require-approval/vet-approvedby"
+          observation: "apply-gate-present-approval-absent"
+          dryRun: false
+          exitCode: 0
+        approval:
+          revision: 4
+          recordedApprovals: 1
+          approverIdentityRecordedInReceipt: false
+          contentHashUnchanged: true
+        afterApproval:
+          result: "allowed"
+          observation: "approval-recorded"
+          dryRun: false
+          exitCode: 0
+        release:
+          space: "hx-sveltos-env-staging-20260812070358"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260812070358:latest"
+          tag: "latest"
+          manifestDigest: "sha256:afd26309e53fa794ec135fa65a099b791e11f84b93269e1ec4d174ac85d54499"
+          bundleDigest: "sha256:934fae647bd216d993aa4e75a976372a8dd4d32eb922c0b5001b123448aa26ae"
+          releaseId: "bb1125c9-0bb9-45aa-a655-b089e3d3cbe5"
+        delivery:
+          result: "pass"
+          profile: "sveltos-env-rollout-staging-bootstrap"
+          cluster: "hx-sveltos-envmgmt-20260812070358"
+          reviewedProfile: "kyverno-env-staging"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260812070358:latest"
+          releaseManifestDigest: "sha256:afd26309e53fa794ec135fa65a099b791e11f84b93269e1ec4d174ac85d54499"
+          interval: "1m0s"
+          status: "Provisioned"
+          profileMatchesApprovedRevision: true
+    prod:
+      wave: 3
+      space: "hx-sveltos-env-prod-20260812070358"
+      unit: "clusterprofile"
+      bootstrap:
+        profile: "sveltos-env-rollout-prod-bootstrap"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-20260812070358:latest"
+        interval: "1m0s"
+        deploymentType: "Remote"
+        clusterSelector:
+          role: "management"
+        secret:
+          name: "confighub-gateway"
+          namespace: "projectsveltos"
+        appliedWith: "kubectl as management-cluster setup"
+        changedByPromotion: false
+      baseline:
+        revisionId: "r1-25f80d487bba"
+        contentHash: 670621898
+        beforeApproval:
+          result: "blocked"
+          gate: "platform/require-approval/vet-approvedby"
+          observation: "apply-gate-present-approval-absent"
+          dryRun: false
+          exitCode: 0
+        approval:
+          revision: 2
+          recordedApprovals: 1
+          approverIdentityRecordedInReceipt: false
+          contentHashUnchanged: true
+        afterApproval:
+          result: "allowed"
+          observation: "approval-recorded"
+          dryRun: false
+          exitCode: 0
+        release:
+          space: "hx-sveltos-env-prod-20260812070358"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-20260812070358:latest"
+          tag: "latest"
+          manifestDigest: "sha256:8a191e7363b944509f9d1f8ad9499a129ce030cef2e3a8fbd46916736b0eea55"
+          bundleDigest: "sha256:f87328df6ff057fc365e1cbe1b8c09fbb41955190a58e08d2da879b375ee0c54"
+          releaseId: "13f871e0-97f4-4927-916b-0b27b082ade9"
+        delivery:
+          result: "pass"
+          profile: "sveltos-env-rollout-prod-bootstrap"
+          cluster: "hx-sveltos-envmgmt-20260812070358"
+          reviewedProfile: "kyverno-env-prod"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-20260812070358:latest"
+          releaseManifestDigest: "sha256:8a191e7363b944509f9d1f8ad9499a129ce030cef2e3a8fbd46916736b0eea55"
+          interval: "1m0s"
+          status: "Provisioned"
+          profileMatchesApprovedRevision: true
+      changed:
+        revisionId: "r2-6d3daa60f562"
+        contentHash: -524270249
+        beforeApproval:
+          result: "blocked"
+          gate: "platform/require-approval/vet-approvedby"
+          observation: "apply-gate-present-approval-absent"
+          dryRun: false
+          exitCode: 0
+        approval:
+          revision: 4
+          recordedApprovals: 1
+          approverIdentityRecordedInReceipt: false
+          contentHashUnchanged: true
+        afterApproval:
+          result: "allowed"
+          observation: "approval-recorded"
+          dryRun: false
+          exitCode: 0
+        release:
+          space: "hx-sveltos-env-prod-20260812070358"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-20260812070358:latest"
+          tag: "latest"
+          manifestDigest: "sha256:20ef4d3787e52508708685745fddb6009e8412574b2b03ea8397492eed4bd879"
+          bundleDigest: "sha256:cb8757b8c5bf0b924c76e99e57f7f9a5ec3ad7d11f0932ba5fdc1cb193256eb9"
+          releaseId: "1b2143b9-c30c-4c73-9ce3-7a6cfc582dd3"
+        delivery:
+          result: "pass"
+          profile: "sveltos-env-rollout-prod-bootstrap"
+          cluster: "hx-sveltos-envmgmt-20260812070358"
+          reviewedProfile: "kyverno-env-prod"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-20260812070358:latest"
+          releaseManifestDigest: "sha256:20ef4d3787e52508708685745fddb6009e8412574b2b03ea8397492eed4bd879"
+          interval: "1m0s"
+          status: "Provisioned"
+          profileMatchesApprovedRevision: true
+  checkpoints:
+    -
+      id: "baseline"
+      completedWaves: 0
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260812070358"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedRevisionId: "r1-5ef2cd8aef8e"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-pilot-sveltos-hx-sveltos-env-pilot-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260812070358"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedRevisionId: "r1-445596dc846a"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-staging-sveltos-hx-sveltos-env-staging-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedRevisionId: "r1-25f80d487bba"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-a-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedRevisionId: "r1-25f80d487bba"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-b-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+    -
+      id: "after-wave-1"
+      completedWaves: 1
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260812070358"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedRevisionId: "r2-4a7541e862f9"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-pilot-sveltos-hx-sveltos-env-pilot-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 2
+              available: 2
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 2
+                available: 2
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260812070358"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedRevisionId: "r1-445596dc846a"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-staging-sveltos-hx-sveltos-env-staging-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedRevisionId: "r1-25f80d487bba"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-a-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedRevisionId: "r1-25f80d487bba"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-b-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+    -
+      id: "after-wave-2"
+      completedWaves: 2
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260812070358"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedRevisionId: "r2-4a7541e862f9"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-pilot-sveltos-hx-sveltos-env-pilot-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 2
+              available: 2
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 2
+                available: 2
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260812070358"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedRevisionId: "r2-5471d24ca614"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-staging-sveltos-hx-sveltos-env-staging-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 2
+              available: 2
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 2
+                available: 2
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedRevisionId: "r1-25f80d487bba"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-a-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedRevisionId: "r1-25f80d487bba"
+          expectedBackgroundReplicas: 1
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-b-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 1
+              available: 1
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+    -
+      id: "after-wave-3"
+      completedWaves: 3
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260812070358"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedRevisionId: "r2-4a7541e862f9"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-pilot-sveltos-hx-sveltos-env-pilot-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 2
+              available: 2
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 2
+                available: 2
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260812070358"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedRevisionId: "r2-5471d24ca614"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-staging-sveltos-hx-sveltos-env-staging-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 2
+              available: 2
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 2
+                available: 2
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedRevisionId: "r2-6d3daa60f562"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-a-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 2
+              available: 2
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 2
+                available: 2
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260812070358"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedRevisionId: "r2-6d3daa60f562"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-b-20260812070358"
+            helmFeatureStatus: "Provisioned"
+            helmRelease:
+              name: "kyverno"
+              namespace: "kyverno"
+              chart: "kyverno-3.8.1"
+              status: "deployed"
+            backgroundReplicas:
+              desired: 2
+              available: 2
+            deployments:
+              -
+                name: "kyverno-admission-controller"
+                desired: 3
+                available: 3
+                observedGenerationMatches: true
+              -
+                name: "kyverno-background-controller"
+                desired: 2
+                available: 2
+                observedGenerationMatches: true
+              -
+                name: "kyverno-cleanup-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+              -
+                name: "kyverno-reports-controller"
+                desired: 1
+                available: 1
+                observedGenerationMatches: true
+  convergenceAudit:
+    result: "pass"
+    expectedBackgroundReplicas: 2
+    clusters:
+      -
+        cluster: "hx-sveltos-env-pilot-20260812070358"
+        environment: "pilot"
+        observation:
+          result: "pass"
+          clusterSummary: "projectsveltos/kyverno-env-pilot-sveltos-hx-sveltos-env-pilot-20260812070358"
+          helmFeatureStatus: "Provisioned"
+          helmRelease:
+            name: "kyverno"
+            namespace: "kyverno"
+            chart: "kyverno-3.8.1"
+            status: "deployed"
+          backgroundReplicas:
+            desired: 2
+            available: 2
+          deployments:
+            -
+              name: "kyverno-admission-controller"
+              desired: 3
+              available: 3
+              observedGenerationMatches: true
+            -
+              name: "kyverno-background-controller"
+              desired: 2
+              available: 2
+              observedGenerationMatches: true
+            -
+              name: "kyverno-cleanup-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+            -
+              name: "kyverno-reports-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+      -
+        cluster: "hx-sveltos-env-staging-20260812070358"
+        environment: "staging"
+        observation:
+          result: "pass"
+          clusterSummary: "projectsveltos/kyverno-env-staging-sveltos-hx-sveltos-env-staging-20260812070358"
+          helmFeatureStatus: "Provisioned"
+          helmRelease:
+            name: "kyverno"
+            namespace: "kyverno"
+            chart: "kyverno-3.8.1"
+            status: "deployed"
+          backgroundReplicas:
+            desired: 2
+            available: 2
+          deployments:
+            -
+              name: "kyverno-admission-controller"
+              desired: 3
+              available: 3
+              observedGenerationMatches: true
+            -
+              name: "kyverno-background-controller"
+              desired: 2
+              available: 2
+              observedGenerationMatches: true
+            -
+              name: "kyverno-cleanup-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+            -
+              name: "kyverno-reports-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+      -
+        cluster: "hx-sveltos-env-prod-a-20260812070358"
+        environment: "prod"
+        observation:
+          result: "pass"
+          clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-a-20260812070358"
+          helmFeatureStatus: "Provisioned"
+          helmRelease:
+            name: "kyverno"
+            namespace: "kyverno"
+            chart: "kyverno-3.8.1"
+            status: "deployed"
+          backgroundReplicas:
+            desired: 2
+            available: 2
+          deployments:
+            -
+              name: "kyverno-admission-controller"
+              desired: 3
+              available: 3
+              observedGenerationMatches: true
+            -
+              name: "kyverno-background-controller"
+              desired: 2
+              available: 2
+              observedGenerationMatches: true
+            -
+              name: "kyverno-cleanup-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+            -
+              name: "kyverno-reports-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+      -
+        cluster: "hx-sveltos-env-prod-b-20260812070358"
+        environment: "prod"
+        observation:
+          result: "pass"
+          clusterSummary: "projectsveltos/kyverno-env-prod-sveltos-hx-sveltos-env-prod-b-20260812070358"
+          helmFeatureStatus: "Provisioned"
+          helmRelease:
+            name: "kyverno"
+            namespace: "kyverno"
+            chart: "kyverno-3.8.1"
+            status: "deployed"
+          backgroundReplicas:
+            desired: 2
+            available: 2
+          deployments:
+            -
+              name: "kyverno-admission-controller"
+              desired: 3
+              available: 3
+              observedGenerationMatches: true
+            -
+              name: "kyverno-background-controller"
+              desired: 2
+              available: 2
+              observedGenerationMatches: true
+            -
+              name: "kyverno-cleanup-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+            -
+              name: "kyverno-reports-controller"
+              desired: 1
+              available: 1
+              observedGenerationMatches: true
+  cleanup:
+    probeSpace: "pass"
+    managementCluster: "pass"
+    workloadClusters: "pass"
+    policySpaces: "pass"
+    localFiles: "pass"
+  limits:
+    - "The pinned Sveltos controllers were installed directly as a prerequisite on the throwaway management cluster."
+    - "The reviewed ClusterProfiles, not the Sveltos controller installation, were delivered through ConfigHub and its OCI gateway."
+    - "The gateway serves each release as a gzipped tar layer, so the run needs an addon controller that gunzips. The image it ran is recorded above."
+    - "The management cluster read the gateway with the operator's own ConfigHub token, taken once at the start of the run and removed with the clusters."
+    - "The proof used four local kind workload clusters. It does not prove a large production fleet or a failure-and-pause rollout."
+    - "The proof covers one reviewed values change to this Kyverno profile, not a chart version bump."
+status:
+  result: "pass"
+  claim: "ConfigHub stored and approved one reviewed values change per environment record, published each approved revision as a release its OCI gateway serves, and Sveltos fetched each release itself and converged pilot first, then staging, then both production clusters, with the unchanged environments verified stable at every checkpoint."
