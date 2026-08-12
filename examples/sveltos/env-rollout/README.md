@@ -70,23 +70,18 @@ run earns them.
 
 ## Current status
 
-No live run has been recorded. On the current server the approval gate never
-appears in a Unit's `ApplyGates` from the Space trigger-filter wiring, so the
-approval boundary cannot be observed live. These runners still carry the delivery path the fleet rehearsal replaced,
-where a GitOps controller moved the artifact instead of Sveltos fetching
-it. No live run is recorded until they are rebuilt on the recorded path. The offline surfaces below are deterministic and
-verified in the repository gate; every observed cell in the matrix stays
-honestly empty until the live proof runs.
+Recorded live. The receipt at
+[runs/sveltos-env-rollout-proof/receipt.yaml](../../../runs/sveltos-env-rollout-proof/receipt.yaml)
+holds six approval brackets across the three environments, a distinct
+release digest per wave, the gateway reference per environment, and the
+addon controller image the run used. The matrix generator fills the observed
+columns from that receipt, so every cell in the matrix is an observation
+rather than an expectation.
 
-The live runner is drafted in
-`scripts/run-sveltos-env-rollout-proof.mjs` and stays behind that blocker on
-purpose. Before it builds anything it probes the approval gate on a throwaway
-Space and Unit; while the defect stands, the probe refuses in seconds and
-names the issue, instead of failing after the seven-minute fleet build. Its
-self-test proves the whole governance walk offline: six approval brackets
-across the three environments, a distinct OCI digest per revision, and a
-receipt bound to the reviewed example files. Once the receipt is recorded,
-the matrix generator fills the observed columns from it.
+Before it builds anything the runner probes the approval gate on a throwaway
+Space and Unit, so a wiring problem refuses in seconds instead of failing
+after the fleet build. Its self-test proves the same governance walk offline
+against fake ConfigHub and cluster surfaces, with no account or cluster.
 
 ## Chapter four
 
