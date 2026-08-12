@@ -86,6 +86,8 @@ const keepArtifactsVariable = "HELM_EXPT_KEEP_SVELTOS_ARTIFACTS";
 // anything further down the file is initialized.
 const convergenceWaitAttempts = 150;
 const holdingCheckAttempts = 3;
+const componentLabel = "sveltos-kyverno-env-rollout";
+const ownerLabel = "platform-team";
 const publishGateAttempts = 30;
 const publishGatePollMs = 2_000;
 // Declared here with the other constants because the mode dispatch runs before
@@ -2485,6 +2487,12 @@ function createPolicySpace(context, space) {
   cub(context, [
     "space", "create", space,
     "--label", "App=sveltos-kyverno-env-rollout",
+    // The ConfigHub component view groups Spaces by their Component label and
+    // files them under their Owner. Without these two the base and its
+    // variants are invisible there, which is the one view where a reader
+    // would look to see that a variant and a cluster stand one to one.
+    "--label", `Component=${componentLabel}`,
+    "--label", `Owner=${ownerLabel}`,
     "--label", "ApplyPolicyProfile=catalog-standard",
     "--label", "Proof=sveltos-env-rollout",
     "--label", "ResourceClass=system-configuration",
@@ -3987,6 +3995,18 @@ function selfTest() {
         space: spaceFor[row.cluster],
       })),
     });
+    // The component view groups Spaces by Component and files them under
+    // Owner. A run whose Spaces lack those labels is invisible in the one view
+    // that shows a base and its per-cluster variants together, so the labels
+    // are part of the record rather than something added by hand afterwards.
+    check(
+      [baseSpace, ...Object.values(spaceFor)].every((space) => {
+        const labels = hub.spaceLabels(space) ?? {};
+        return labels.Component === componentLabel
+          && labels.Owner === ownerLabel;
+      }),
+      `every Space the run creates must carry its Component and Owner labels; missing on ${[baseSpace, ...Object.values(spaceFor)].filter((space) => { const l = hub.spaceLabels(space) ?? {}; return l.Component !== componentLabel || l.Owner !== ownerLabel; }).join(", ") || "none"}`,
+    );
     check(
       managementVariant.bootstrapProfiles.length === 4
         && new Set(managementVariant.bootstrapProfiles.map((row) => row.reference))
@@ -4380,7 +4400,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -4653,6 +4673,10 @@ function createFakeConfigHub() {
         TriggerIDs: [],
         ReleaseTargetID: null,
         TriggerFilterID: filterId,
+        Labels: Object.fromEntries((flags.label ?? []).map((pair) => {
+          const at = String(pair).indexOf("=");
+          return [String(pair).slice(0, at), String(pair).slice(at + 1)];
+        })),
       });
       return ok("");
     }
@@ -4883,6 +4907,7 @@ function createFakeConfigHub() {
     tick,
     releaseFor,
     restoreVariantBaselines,
+    spaceLabels: (slug) => spaces.get(slug)?.Labels ?? null,
     filterId,
     catalogTargetId,
   };

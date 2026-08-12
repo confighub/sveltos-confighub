@@ -25,14 +25,6 @@ five records: one for each of the four workload clusters, and one for the
 management cluster that runs Sveltos itself. No record ever addresses two
 clusters.
 
-The consequence runs further than the records. Because the mapping is
-explicit, everything that derives from the configuration is explicit too. The
-labels each record carries, the queries each wave selects with, the approvals,
-the releases, the lifecycle hooks and the checks all name one cluster and
-resolve to one cluster. Nothing about scope is worked out at delivery time by
-a controller reading labels, so nothing about scope has to be reconstructed
-afterwards from what a controller decided.
-
 The reason is that a record which covers two clusters cannot answer the
 questions an operator is actually asked. You cannot approve a change for one
 of those clusters and hold the other. You cannot roll one back and leave its
@@ -40,6 +32,14 @@ twin on the newer release. You cannot say which of them is running which
 revision today, because that was decided by a label query the delivery tool
 resolved at delivery time, and the answer exists only on the management
 cluster after the fact.
+
+The consequence runs further than the records. Because the mapping is
+explicit, everything that derives from the configuration is explicit too. The
+labels each record carries, the queries each wave selects with, the approvals,
+the releases, the lifecycle hooks and the checks all name one cluster and
+resolve to one cluster. Nothing about scope is worked out at delivery time by
+a controller reading labels, so nothing about scope has to be reconstructed
+afterwards from what a controller decided.
 
 One record per cluster puts that mapping in ConfigHub, where it can be
 queried, approved, and rolled back per cluster. The selector inside each
@@ -51,6 +51,13 @@ This is not five copies of one file. Each variant is a clone of a shared base
 and carries only its own departures, so a change made once on the base flows
 down to every variant while each keeps what makes it itself. That is the
 difference between variant management and five directories.
+
+Each Space the run creates carries a `Component` label naming this rollout and
+an `Owner` label naming the team. The ConfigHub component view groups Spaces by
+those two labels, so the base and its five variants appear there together, in
+the one view where a reader would look to see that a variant and a cluster
+stand one to one. A run whose Spaces lacked them would be invisible in that
+view, so the repository gate refuses a run that does not set them.
 
 ## Why this chapter exists
 
