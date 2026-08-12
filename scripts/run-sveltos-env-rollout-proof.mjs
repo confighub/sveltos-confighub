@@ -15,6 +15,7 @@ import { join } from "node:path";
 
 import {
   applyDepartures,
+  governedRecords,
   canonicalValue,
   isScalarMap,
   parentPath,
@@ -120,6 +121,51 @@ const gatewaySecretName = "confighub-gateway";
 const gatewaySecretType = "addons.projectsveltos.io/cluster-profile";
 const gatewaySecretKey = "token";
 const addonControllerRepository = "docker.io/projectsveltos/addon-controller";
+
+// The chapters differ in what they prove, not in how a governed record works,
+// so the record machinery comes from one place and is told this chapter's own
+// labels and hub access.
+const {
+  allowedDryRun,
+  approvalCount,
+  approvalObservation,
+  approveSet,
+  assertMergeKeptDepartures,
+  assertPolicySpace,
+  assertUpstreamLineage,
+  blockedDryRun,
+  createPolicySpace,
+  establishBase,
+  establishVariant,
+  gatewayReference,
+  publishRelease,
+  reviewSet,
+  selectSet,
+  waitForPolicy,
+} = governedRecords({
+  valuesOf: (...args) => valuesOf(...args),
+  cub: (...args) => cub(...args),
+  cubJson: (...args) => cubJson(...args),
+  cubTry: (...args) => cubTry(...args),
+  sleep: (...args) => sleep(...args),
+  appLabel: "sveltos-kyverno-env-rollout",
+  approvalFilterRef,
+  approvalGate,
+  baseRecordLabel,
+  catalogOciTargetRef,
+  componentLabel,
+  configHubOciHost,
+  ownerLabel,
+  policyUnit,
+  probeRecord,
+  proofLabel,
+  publishGateAttempts,
+  publishGatePollMs,
+  releaseTag,
+  setScope,
+  variantRecordLabel,
+  now: (...args) => now(...args),
+});
 
 // The self-test swaps these three seams for a fake ConfigHub, a fake
 // management cluster, and a fake clock; every live lane uses the real defaults.
@@ -943,10 +989,6 @@ function assertPublishableSpaceName(space) {
   );
 }
 
-function gatewayReference(space) {
-  assertPublishableSpaceName(space);
-  return `oci://${configHubOciHost}/space/${space}:${releaseTag}`;
-}
 
 function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
   const probeSpace = spaceName(`hx-sveltos-env-probe-${runId}`);
@@ -986,135 +1028,7 @@ function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
   }
 }
 
-// The base record holds what every cluster shares. It is given no target and
-// its Space is never published, so nothing reaches a cluster from it: every
-// revision that reaches a cluster is approved on the variant that owns it.
-function establishBase({
-  policyContext,
-  space,
-  plan,
-  topology,
-  catalogTarget,
-  runId,
-  policySpacesCreated,
-}) {
-  createPolicySpace(policyContext, space);
-  policySpacesCreated.add(space);
-  assertPolicySpace(
-    policyContext,
-    space,
-    topology.triggerIds,
-    catalogTarget.TargetID,
-  );
-  cub(policyContext, [
-    "unit", "create", "--space", space, policyUnit, plan.base.path,
-    "--label", "App=sveltos-kyverno-env-rollout",
-    "--label", `Proof=${proofLabel}`,
-    "--label", `Run=${runId}`,
-    "--label", `Record=${baseRecordLabel}`,
-    "--change-desc", "Store the reviewed base ClusterProfile every cluster shares",
-    "--quiet",
-  ]);
-  const stored = cubJson(policyContext, [
-    "unit", "get", "--space", space, policyUnit, "-o", "json",
-  ]).Unit;
-  check(
-    canonicalDocs(parseDocs(storedData(stored))) === canonicalDocs([plan.base.doc]),
-    "ConfigHub stored a different base ClusterProfile",
-  );
-  return {
-    space,
-    unit: policyUnit,
-    revisionId: plan.base.revisions.baseline,
-    revision: Number(stored.HeadRevisionNum),
-    contentHash: stored.ContentHash,
-    target: "none",
-    published: false,
-    reachesCluster: false,
-    note: "The base carries no target and its Space is never published, so it reaches no cluster on its own.",
-  };
-}
 
-// A variant is a clone of the base unit, linked to it, with this cluster's
-// departures written over it. The link is what lets a later base change flow
-// down while the departures stay.
-function establishVariant({
-  policyContext,
-  space,
-  baseSpace,
-  cluster,
-  topology,
-  catalogTarget,
-  runId,
-  workRoot,
-  policySpacesCreated,
-}) {
-  createPolicySpace(policyContext, space);
-  policySpacesCreated.add(space);
-  assertPolicySpace(
-    policyContext,
-    space,
-    topology.triggerIds,
-    catalogTarget.TargetID,
-  );
-  cub(policyContext, [
-    "unit", "create", "--space", space, policyUnit,
-    "--upstream-space", baseSpace,
-    "--upstream-unit", policyUnit,
-    "--target", catalogOciTargetRef,
-    "--label", "App=sveltos-kyverno-env-rollout",
-    "--label", `Cluster=${cluster.cluster}`,
-    "--label", `Environment=${cluster.environment}`,
-    "--label", `Wave=${cluster.wave}`,
-    "--label", `Proof=${proofLabel}`,
-    "--label", `Run=${runId}`,
-    "--label", `Record=${variantRecordLabel}`,
-    "--change-desc", `Clone the base record for ${cluster.cluster}`,
-    "--quiet",
-  ]);
-  const cloned = cubJson(policyContext, [
-    "unit", "get", "--space", space, policyUnit, "-o", "json",
-  ]).Unit;
-  const upstreamUnit = String(cloned.UpstreamUnitID ?? "");
-  check(
-    upstreamUnit.length > 0,
-    `${space}/${policyUnit} records no upstream unit, so it is a copy rather than a variant`,
-  );
-  const departedPath = join(workRoot, `clusterprofile-${cluster.cluster}.yaml`);
-  writeStoredDocuments(departedPath, [cluster.baselineDoc]);
-  cub(policyContext, [
-    "unit", "update", "--space", space, policyUnit, departedPath,
-    "--change-desc",
-    `Depart from the base for ${cluster.cluster}: ${cluster.departurePaths.join(", ")}`,
-    "--quiet",
-  ]);
-  const departed = cubJson(policyContext, [
-    "unit", "get", "--space", space, policyUnit, "-o", "json",
-  ]).Unit;
-  check(
-    canonicalDocs(parseDocs(storedData(departed)))
-      === canonicalDocs([cluster.baselineDoc]),
-    `ConfigHub stored different departures for ${cluster.cluster}`,
-  );
-  assertUpstreamLineage(policyContext, space, cluster.cluster);
-  return {
-    cluster: cluster.cluster,
-    environment: cluster.environment,
-    wave: cluster.wave,
-    space,
-    unit: policyUnit,
-    profile: cluster.profileName,
-    selector: { cluster: cluster.cluster },
-    upstream: {
-      space: baseSpace,
-      unit: policyUnit,
-      unitLinked: true,
-      revisionAtClone: Number(cloned.UpstreamRevisionNum ?? 0),
-    },
-    departures: cluster.departures,
-    departedFields: cluster.departurePaths,
-  };
-}
 
 // The management record holds one bootstrap profile per workload Space. It is
 // the record that opens the gateway path, so its first revision is applied out
@@ -1182,139 +1096,8 @@ function establishManagement({
   };
 }
 
-// One wave, one operation. The set is resolved with the reviewed query first,
-// so a query that matches nothing, or that reaches past the wave, refuses
-// before anything is approved.
-function selectSet({ policyContext, stageName, query, expectedUnits }) {
-  const listed = cubJson(policyContext, [
-    "unit", "list", "--space", "*", "--where", query, "-o", "json",
-  ]);
-  const rows = Array.isArray(listed) ? listed : (listed.Units ?? []);
-  const matched = rows
-    .map((row) => {
-      const unit = row.Unit ?? row;
-      return `${unit.SpaceSlug}/${unit.Slug}`;
-    })
-    .sort();
-  check(
-    matched.length > 0,
-    `the ${stageName} query matched no unit; ${query}`,
-  );
-  check(
-    sameSet(matched, expectedUnits),
-    `the ${stageName} query matched ${matched.join(", ") || "nothing"} rather than ${[...expectedUnits].sort().join(", ")}; refusing to approve a set that is not the wave`,
-  );
-  return { scope: setScope, query, matched };
-}
 
-// The gate armed with no approval, one set approval bound to each unit's own
-// exact head revision, the gate cleared with the approval recorded, and the
-// private release the gateway then serves at each Space's tag.
-function reviewSet({ policyContext, stageName, query, members }) {
-  const stored = {};
-  const beforeApproval = {};
-  for (const member of members) {
-    const unit = waitForPolicy(policyContext, member.space, policyUnit, true);
-    check(
-      canonicalDocs(parseDocs(storedData(unit)))
-        === canonicalDocs(member.expectedDocs),
-      `ConfigHub stored a different ${stageName} record for ${member.cluster}`,
-    );
-    if (member.minimumRevision !== undefined) {
-      check(
-        Number(unit.HeadRevisionNum) >= member.minimumRevision,
-        `the ${stageName} did not create a new revision for ${member.cluster}`,
-      );
-    }
-    stored[member.cluster] = unit;
-    beforeApproval[member.cluster] = blockedDryRun(
-      policyContext,
-      member.space,
-      policyUnit,
-    );
-  }
-  const selection = selectSet({
-    policyContext,
-    stageName,
-    query,
-    expectedUnits: members.map((member) => `${member.space}/${policyUnit}`),
-  });
-  approveSet(policyContext, query, stageName, stored);
 
-  const records = {};
-  for (const member of members) {
-    const approved = waitForPolicy(policyContext, member.space, policyUnit, false);
-    check(
-      approved.ContentHash === stored[member.cluster].ContentHash,
-      `approval changed the ${stageName} content for ${member.cluster}`,
-    );
-    const recordedApprovals = approvalCount(approved.ApprovedBy);
-    check(
-      recordedApprovals >= 1,
-      `the ${stageName} record for ${member.cluster} has no approval`,
-    );
-    const afterApproval = allowedDryRun(policyContext, member.space, policyUnit);
-    // The published release is not read back here. What the gateway served is
-    // proved downstream, where the object that arrived on the management
-    // cluster is compared field by field against the approved revision.
-    //
-    // The management record is the exception, and it is the record that opens
-    // the gateway path. Its bootstrap profiles are what let the management
-    // cluster fetch at all, so its first revision cannot arrive through the
-    // gateway and is applied with kubectl instead. It is stored, gated, and
-    // approved exactly like every other record; it is simply not published.
-    const release = member.publishesRelease === false
-      ? null
-      : publishRelease(policyContext, member.space);
-    records[member.cluster] = {
-      cluster: member.cluster,
-      space: member.space,
-      revisionId: member.revisionId,
-      contentHash: stored[member.cluster].ContentHash,
-      beforeApproval: beforeApproval[member.cluster],
-      approval: {
-        revision: approved.HeadRevisionNum,
-        recordedApprovals,
-        approverIdentityRecordedInReceipt: false,
-        contentHashUnchanged: true,
-      },
-      afterApproval,
-      release,
-    };
-  }
-  return {
-    stage: stageName,
-    selection,
-    approval: {
-      command: `cub unit approve --space "*" --where <query> --revision HeadRevisionNum`,
-      appliedAsOneOperation: true,
-      members: members.length,
-      recordedApprovals: members.length,
-    },
-    records,
-  };
-}
-
-function approveSet(policyContext, query, stageName, stored) {
-  const result = cubTry(policyContext, [
-    "unit", "approve", "--space", "*", "--where", query,
-    "--revision", "HeadRevisionNum", "--wait", "--quiet",
-  ]);
-  if (result.ok) return;
-  // The bulk approve can report a delayed trigger while the approvals it made
-  // are already recorded, so the refusal is checked against the units.
-  for (const [cluster, unit] of Object.entries(stored)) {
-    const current = cubJson(policyContext, [
-      "unit", "get", "--space", unit.SpaceSlug, policyUnit, "-o", "json",
-    ]).Unit;
-    check(
-      Number(current.HeadRevisionNum) === Number(unit.HeadRevisionNum)
-        && approvalCount(current.ApprovedBy) >= 1,
-      `ConfigHub rejected the ${stageName} approval for ${cluster} before recording it: ${result.error}`,
-    );
-  }
-  phase(`${stageName} approvals recorded; waiting for delayed trigger completion`);
-}
 
 // The reviewed change lands once, on the base. Every variant inherits it when
 // its wave comes, and keeps its own departures through the merge.
@@ -1455,27 +1238,6 @@ function promoteWave({
   };
 }
 
-// A promotion that reports success while the variant kept its old content is
-// the silent win the recorded ConfigHub finding describes. The runner names
-// which side lost rather than letting the wave read as promoted.
-function assertMergeKeptDepartures({ policyContext, space, cluster, plan }) {
-  const stored = cubJson(policyContext, [
-    "unit", "get", "--space", space, policyUnit, "-o", "json",
-  ]).Unit;
-  const documents = parseDocs(storedData(stored));
-  if (canonicalDocs(documents) === canonicalDocs([cluster.changedDoc])) return;
-  const merged = documents[0] ?? {};
-  const inherited =
-    readPath(valuesOf(merged), plan.change.spec.valuesPath)
-    === plan.change.spec.after;
-  const kept = cluster.departurePaths.filter(
-    (path) => readPath(merged, path) === cluster.departures[path],
-  );
-  check(
-    false,
-    `${cluster.cluster} did not come out of the upgrade as the reviewed merge: inheritedTheChange=${inherited}, departuresKept=${kept.length}/${cluster.departurePaths.length}. A change and a departure that write the same field, or different keys of the same map, merge with the departure winning and nothing said about it, so this promotion is refused rather than recorded as a success.`,
-  );
-}
 
 function assertLiveProfileMatches({ managementKubeconfig, profileName, expectedDoc }) {
   const live = JSON.parse(
@@ -2438,34 +2200,6 @@ ${receipt.spec.limits.map((limit) => `- ${limit}`).join("\n")}
 // shape the base itself is stored from, with multi-line strings as block
 // scalars so a values blob reads the way it does in the example files.
 
-function createPolicySpace(context, space) {
-  assertPublishableSpaceName(space);
-  cub(context, [
-    "space", "create", space,
-    "--label", "App=sveltos-kyverno-env-rollout",
-    // The ConfigHub component view groups Spaces by their Component label and
-    // files them under their Owner. Without these two the base and its
-    // variants are invisible there, which is the one view where a reader
-    // would look to see that a variant and a cluster stand one to one.
-    "--label", `Component=${componentLabel}`,
-    "--label", `Owner=${ownerLabel}`,
-    "--label", "ApplyPolicyProfile=catalog-standard",
-    "--label", "Proof=sveltos-env-rollout",
-    "--label", "ResourceClass=system-configuration",
-    "--label", "SourceType=sveltos",
-    "--trigger-filter", approvalFilterRef,
-    "--where-trigger", "-",
-    "--quiet",
-  ]);
-  cub(context, [
-    "space", "update", space,
-    "--release-target", catalogOciTargetRef,
-    "--quiet",
-  ]);
-  cub(context, [
-    "space", "update", "--patch", space, "--refresh-triggers", "--quiet",
-  ]);
-}
 
 function readApprovalTopology(context) {
   const filter = getByRef(context, "filter", approvalFilterRef).Filter;
@@ -2481,90 +2215,10 @@ function readApprovalTopology(context) {
   };
 }
 
-function assertPolicySpace(context, space, expectedTriggerIds, expectedReleaseTargetId) {
-  const actual = cubJson(context, ["space", "get", space, "-o", "json"]).Space;
-  check(
-    sameSet(actual.TriggerIDs ?? [], expectedTriggerIds),
-    `${space} received the wrong Trigger set`,
-  );
-  check(
-    actual.ReleaseTargetID === expectedReleaseTargetId,
-    `${space} received the wrong release target`,
-  );
-}
 
-function waitForPolicy(context, space, unit, approvalExpected) {
-  for (let attempt = 0; attempt < 90; attempt += 1) {
-    const current = cubJson(
-      context,
-      ["unit", "get", unit, "--space", space, "-o", "json"],
-    ).Unit;
-    const waiting = current.ApplyGates?.["awaiting/triggers"] === true;
-    const approvalPresent = current.ApplyGates?.[approvalGate] === true;
-    if (!waiting && approvalPresent === approvalExpected) return current;
-    sleep(1000);
-  }
-  throw new Error(`${space}/${unit} did not reach the expected policy state`);
-}
 
-function approvalObservation(context, space, unit) {
-  // Read the whole Unit. `--select ApplyGates,ApprovedBy` does not project
-  // those fields; it answers with an unrelated object, so a parser reading
-  // them off the top level always saw an ungated Unit. That misreading is
-  // what confighubai/confighub#4975 reported before it was withdrawn: the
-  // gate attaches about a second after the Unit is created.
-  const unitRecord = cubJson(context, [
-    "unit", "get", "--space", space, unit,
-    "-o", "json",
-  ]);
-  const info = unitRecord?.Unit ?? unitRecord;
-  const gateKeys = Object.keys(info?.ApplyGates ?? {});
-  const approvals = info?.ApprovedBy;
-  const recorded = Array.isArray(approvals)
-    ? approvals.length
-    : Object.keys(approvals ?? {}).length;
-  return { gateKeys, approvalCount: recorded };
-}
 
-function blockedDryRun(context, space, unit) {
-  let seen = approvalObservation(context, space, unit);
-  const gatePresent = () =>
-    seen.gateKeys.some((key) => key === approvalGate || key.includes("require-approval"));
-  const deadline = now() + 120_000;
-  while (!gatePresent() && now() < deadline) {
-    sleep(5_000);
-    seen = approvalObservation(context, space, unit);
-  }
-  check(
-    gatePresent(),
-    `${space}/${unit} carries no ${approvalGate} apply gate before approval`,
-  );
-  check(
-    seen.approvalCount === 0,
-    `${space}/${unit} was already approved before the gate observation`,
-  );
-  return {
-    result: "blocked",
-    gate: approvalGate,
-    observation: "apply-gate-present-approval-absent",
-    dryRun: false,
-    exitCode: 0,
-  };
-}
 
-function allowedDryRun(context, space, unit) {
-  const seen = approvalObservation(context, space, unit);
-  check(
-    seen.approvalCount > 0,
-    `${space}/${unit} records no approval after the gate cleared`,
-  );
-  return {
-    result: "allowed",
-    observation: "approval-recorded",
-    dryRun: false,
-    exitCode: 0,
-  };
-}
 
 // The server evaluates apply gates asynchronously, so a publish can arrive
 // while a gate trigger is still queued. The server says so in those words, and
@@ -2572,45 +2226,6 @@ function allowedDryRun(context, space, unit) {
 // for a bounded budget and then fails with the gate the server named. A gate
 // that genuinely refuses reports something else and still stops the run here.
 
-function publishRelease(context, space) {
-  let lastPending = "";
-  let response;
-  for (let attempt = 0; attempt < publishGateAttempts; attempt += 1) {
-    try {
-      response = cubJson(
-        context,
-        ["release", "publish", space, "-o", "json"],
-        { timeout: 300_000 },
-      );
-      break;
-    } catch (error) {
-      const message = String(error?.message ?? error);
-      if (!pendingApplyGate(message)) throw error;
-      lastPending = message;
-      response = undefined;
-      sleep(publishGatePollMs);
-    }
-  }
-  check(
-    response,
-    `${space} still had outstanding apply gates after ${
-      Math.round((publishGateAttempts * publishGatePollMs) / 1000)
-    }s; ${lastPending}`,
-  );
-  const release = response.Release ?? response.release ?? response;
-  const manifestDigest = normalizeDigest(
-    release.ManifestDigest ?? release.manifestDigest,
-  );
-  check(manifestDigest, `${space} release publish returned no manifest digest`);
-  return {
-    space,
-    reference: gatewayReference(space),
-    tag: releaseTag,
-    manifestDigest,
-    bundleDigest: normalizeDigest(release.Digest ?? release.digest),
-    releaseId: String(release.ReleaseID ?? release.releaseId ?? ""),
-  };
-}
 
 // The management cluster reads the gateway with the operator's own ConfigHub
 // token. Sveltos refuses an Opaque Secret here, and the recorded probe names
@@ -3265,11 +2880,6 @@ function getByRef(context, entity, ref) {
 }
 
 
-function approvalCount(value) {
-  if (Array.isArray(value)) return value.length;
-  if (value && typeof value === "object") return Object.keys(value).length;
-  return value ? 1 : 0;
-}
 
 
 
@@ -3296,24 +2906,6 @@ function projectToShape(actual, shape) {
   );
 }
 
-// ConfigHub reports what it can still merge from the base as a mutation list.
-// A variant that kept its lineage shows one resource carrying field-level
-// updates. A variant that lost it shows the base resource deleted and a
-// different resource added, and from then on no change to the base can reach
-// it. The failure is silent at the point it happens and only surfaces waves
-// later as a promotion that reported success without landing, so the lineage is
-// checked the moment the departures are stored.
-function assertUpstreamLineage(context, space, cluster) {
-  const mutations = cub(context, [
-    "unit", "get", "--space", space, policyUnit, "-o", "mutations",
-  ]).replace(/\[[0-9;]*m/g, "");
-  const resources = [...mutations.matchAll(/^Resource: /gm)].length;
-  const deleted = /\[Delete\]/.test(mutations);
-  check(
-    resources === 1 && !deleted,
-    `${cluster} lost its upstream lineage when its departures were stored: ConfigHub tracks ${resources} resources${deleted ? " and records the base resource as deleted" : ""}, so no later change to the base can merge into it`,
-  );
-}
 
 
 
