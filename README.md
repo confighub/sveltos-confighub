@@ -93,9 +93,10 @@ and records its phase timings.
    edit fans out to every record in one pass, closed by a zero-drift audit.
    Drafted and proven offline.
 
-Chapters four and five are not recorded yet. Their runners still carry the
-delivery path chapter three replaced, and every observed cell in their
-matrices stays empty until they are rebuilt and run.
+Chapters four and five are not recorded yet. Chapter four's runner now carries
+the gateway path chapter three recorded and waits only on a live run. Chapter
+five's runner still carries the delivery path chapter three replaced. Every
+observed cell in both matrices stays empty until each run happens.
 
 ## How to run it
 
