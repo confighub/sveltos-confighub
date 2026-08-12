@@ -88,6 +88,20 @@ const convergenceWaitAttempts = 150;
 const holdingCheckAttempts = 3;
 const publishGateAttempts = 30;
 const publishGatePollMs = 2_000;
+// Declared here with the other constants because the mode dispatch runs before
+// anything further down the file is initialized.
+const yamlWriter = `
+import json, sys, yaml
+
+def represent_str(dumper, data):
+    style = "|" if "\\n" in data else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style=style)
+
+yaml.add_representer(str, represent_str)
+documents = json.load(sys.stdin)
+with open(sys.argv[1], "w") as handle:
+    handle.write(yaml.dump_all(documents, default_flow_style=False, sort_keys=False))
+`;
 const registrationNamespace = "projectsveltos";
 const backgroundDeployment = "kyverno-background-controller";
 const managementClusterRecord = "management";
@@ -1088,7 +1102,7 @@ function establishVariant({
     `${space}/${policyUnit} records no upstream unit, so it is a copy rather than a variant`,
   );
   const departedPath = join(workRoot, `clusterprofile-${cluster.cluster}.yaml`);
-  writeDocuments(departedPath, [cluster.baselineDoc]);
+  writeStoredDocuments(departedPath, [cluster.baselineDoc]);
   cub(policyContext, [
     "unit", "update", "--space", space, policyUnit, departedPath,
     "--change-desc",
@@ -1103,6 +1117,7 @@ function establishVariant({
       === canonicalDocs([cluster.baselineDoc]),
     `ConfigHub stored different departures for ${cluster.cluster}`,
   );
+  assertUpstreamLineage(policyContext, space, cluster.cluster);
   return {
     cluster: cluster.cluster,
     environment: cluster.environment,
@@ -1326,7 +1341,7 @@ function approveSet(policyContext, query, stageName, stored) {
 // its wave comes, and keeps its own departures through the merge.
 function changeBaseRecord({ policyContext, space, plan, workRoot }) {
   const changedPath = join(workRoot, "clusterprofile-base-changed.yaml");
-  writeDocuments(changedPath, [plan.base.changedDoc]);
+  writeStoredDocuments(changedPath, [plan.base.changedDoc]);
   cub(policyContext, [
     "unit", "update", "--space", space, policyUnit, changedPath,
     "--change-desc",
@@ -2429,11 +2444,39 @@ ${receipt.spec.limits.map((limit) => `- ${limit}`).join("\n")}
 `;
 }
 
+// Documents that are applied to a cluster with kubectl are written as JSON,
+// which is valid YAML and makes every scalar quoted, so a check for a pinned
+// image cannot be satisfied by a longer tag that merely starts the same way.
 function writeDocuments(path, documents) {
   writeFileSync(
     path,
     `${documents.map((document) =>
       JSON.stringify(document, null, 2)).join("\n---\n")}\n`,
+  );
+}
+
+// Documents that ConfigHub stores are a different matter. ConfigHub tracks a
+// variant against its base by aligning the resources in the two stored
+// documents. A unit stored as YAML that is later written as JSON does not
+// align: ConfigHub records the base resource as deleted and a different
+// resource as added, which severs the upstream lineage. The variant then keeps
+// its departures forever, inherits nothing, and every later promotion is a
+// silent no-op that still reports success. That cost a live run before it was
+// understood. Everything this runner stores is therefore written as YAML, the
+// shape the base itself is stored from, with multi-line strings as block
+// scalars so a values blob reads the way it does in the example files.
+function writeStoredDocuments(path, documents) {
+  const written = spawnSync("python3", ["-c", yamlWriter, path], {
+    input: JSON.stringify(documents),
+    encoding: "utf8",
+  });
+  check(
+    written.status === 0,
+    `could not write ${path} as YAML: ${written.stderr ?? written.error}`,
+  );
+  check(
+    !readFileSync(path, "utf8").trimStart().startsWith("{"),
+    `${path} was written as JSON, which severs a variant's upstream lineage`,
   );
 }
 
@@ -3324,6 +3367,25 @@ function projectToShape(actual, shape) {
   );
 }
 
+// ConfigHub reports what it can still merge from the base as a mutation list.
+// A variant that kept its lineage shows one resource carrying field-level
+// updates. A variant that lost it shows the base resource deleted and a
+// different resource added, and from then on no change to the base can reach
+// it. The failure is silent at the point it happens and only surfaces waves
+// later as a promotion that reported success without landing, so the lineage is
+// checked the moment the departures are stored.
+function assertUpstreamLineage(context, space, cluster) {
+  const mutations = cub(context, [
+    "unit", "get", "--space", space, policyUnit, "-o", "mutations",
+  ]).replace(/\[[0-9;]*m/g, "");
+  const resources = [...mutations.matchAll(/^Resource: /gm)].length;
+  const deleted = /\[Delete\]/.test(mutations);
+  check(
+    resources === 1 && !deleted,
+    `${cluster} lost its upstream lineage when its departures were stored: ConfigHub tracks ${resources} resources${deleted ? " and records the base resource as deleted" : ""}, so no later change to the base can merge into it`,
+  );
+}
+
 function identity(document) {
   return [
     document.apiVersion ?? "",
@@ -3870,6 +3932,22 @@ function selfTest() {
         && variantRecords[row.cluster].selector.cluster === row.cluster),
       "every variant must be linked to the base and address its own cluster",
     );
+    // A variant can be linked to the base and still be unable to inherit from
+    // it. When ConfigHub reports the base resource deleted and a different one
+    // added, every later promotion is a no-op that still reports success, and
+    // the symptom appears waves away from the cause. The guard must refuse at
+    // the point the departures are stored.
+    hub.state.severUpstreamLineage = true;
+    expectFailure(
+      () => assertUpstreamLineage(
+        policyContext,
+        spaceFor[plan.clusters[0].cluster],
+        plan.clusters[0].cluster,
+      ),
+      /lost its upstream lineage when its departures were stored/,
+      "severed upstream lineage refusal",
+    );
+    hub.state.severUpstreamLineage = false;
     hub.state.refuseUpstreamLink = true;
     expectFailure(
       () => establishVariant({
@@ -4302,7 +4380,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -4515,6 +4593,7 @@ function createFakeConfigHub() {
     neverPopulateGates: false,
     refuseUpstreamLink: false,
     mergeKeepsDepartureOnly: false,
+    severUpstreamLineage: false,
     triggerIdOverride: null,
     releaseTargetOverride: null,
   };
@@ -4680,6 +4759,49 @@ function createFakeConfigHub() {
       store(unit, readFileSync(path, "utf8"));
       pending.add(key);
       return ok(JSON.stringify({ Unit: projectUnit(unit) }));
+    }
+    // ConfigHub reports what it can still merge from the base as a mutation
+    // list. A variant stored in a different serialization from its base does
+    // not align resource for resource: the base resource is recorded as deleted
+    // and a different one added, and the lineage is gone. The fake models that
+    // from the stored text so the runner's lineage check is exercised rather
+    // than bypassed offline.
+    if (entity === "unit" && verb === "get" && flags.o === "mutations") {
+      const key = unitKey(flags.space, rest[0]);
+      const unit = units.get(key);
+      if (!unit) return refuse(`unit ${key} not found`);
+      const resourceKind = "config.projectsveltos.io/v1beta1/ClusterProfile";
+      const nameOf = (text) => {
+        const json = String(text).match(/"name"\s*:\s*"([^"]+)"/);
+        if (json) return json[1];
+        const yaml = String(text).match(/^\s*name:\s*(\S+)\s*$/m);
+        return yaml ? yaml[1] : "unknown";
+      };
+      const isJson = (text) => String(text).trimStart().startsWith("{");
+      const own = dataOf(unit);
+      const upstream = unit.UpstreamUnitID
+        ? [...units.values()].find((row) => row.UnitID === unit.UpstreamUnitID)
+        : null;
+      const severed = upstream
+        && (state.severUpstreamLineage || isJson(own) !== isJson(dataOf(upstream)));
+      if (severed) {
+        return ok([
+          "Eligible for upstream merges:",
+          `Resource: ${resourceKind} /${nameOf(dataOf(upstream))}`,
+          "  - [Delete] (#2)",
+          "",
+          `Resource: ${resourceKind} /${nameOf(own)}`,
+          "  + [Add] (#2)",
+          "",
+        ].join("\n"));
+      }
+      return ok([
+        "Eligible for upstream merges:",
+        `Resource: ${resourceKind} /${nameOf(own)}`,
+        "  + [Add] (#1)",
+        "  ~ [Update] metadata.name  (#2)",
+        "",
+      ].join("\n"));
     }
     if (entity === "unit" && verb === "get") {
       const key = unitKey(flags.space, rest[0]);

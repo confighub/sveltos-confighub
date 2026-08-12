@@ -11,6 +11,33 @@ publishes each approved revision as an OCI image that Sveltos fetches. The
 runner pins Sveltos v1.13.0 and expects the addon controller build that
 decompresses gzipped layers, which the ConfigHub gateway serves.
 
+## One variant per cluster
+
+The rule this chapter follows is that a ConfigHub variant and a Sveltos target
+cluster stand one to one. This fleet runs five clusters, so ConfigHub holds
+five records: one for each of the four workload clusters, and one for the
+management cluster that runs Sveltos itself. No record ever addresses two
+clusters.
+
+The reason is that a record which covers two clusters cannot answer the
+questions an operator is actually asked. You cannot approve a change for one
+of those clusters and hold the other. You cannot roll one back and leave its
+twin on the newer release. You cannot say which of them is running which
+revision today, because that was decided by a label query the delivery tool
+resolved at delivery time, and the answer exists only on the management
+cluster after the fact.
+
+One record per cluster puts that mapping in ConfigHub, where it can be
+queried, approved, and rolled back per cluster. The selector inside each
+record still exists and Sveltos still evaluates it, but it now matches exactly
+one cluster, so it has stopped being a fan-out mechanism and become an
+addressing detail.
+
+This is not five copies of one file. Each variant is a clone of a shared base
+and carries only its own departures, so a change made once on the base flows
+down to every variant while each keeps what makes it itself. That is the
+difference between variant management and five directories.
+
 ## Why this chapter exists
 
 Promoting a change through environments is the operation every platform team
@@ -88,6 +115,29 @@ This is why the per-cluster departure is a profile field rather than a chart
 value: the chart values ride in one string field of the profile, so any
 values departure would collide with any values change.
 
+## How a variant has to be stored
+
+A variant inherits from its base only while ConfigHub can align the two stored
+documents resource by resource. Store the base as YAML and then write the
+variant's departures as JSON, and they no longer align: ConfigHub records the
+base resource as deleted and a different resource as added, the upstream
+lineage is gone, and from then on the variant keeps its departures and
+inherits nothing. Every later promotion is a no-op that still reports success.
+
+A live run failed exactly this way, and the symptom appeared a wave after the
+cause, as a values change that had silently not landed. Ask ConfigHub what it
+can still merge and it says so plainly:
+
+```bash
+cub unit get --space <variant-space> clusterprofile -o mutations
+```
+
+A healthy variant lists one resource with field-level updates. A severed one
+lists the base resource deleted and a different one added. So the runner
+writes every stored document as YAML, in the same shape the base is stored
+from, and checks the lineage the moment the departures are stored rather than
+waiting for a wave to fail.
+
 ## The bootstrap boundary
 
 The management cluster has a record too, and it holds one bootstrap profile
@@ -95,8 +145,10 @@ per workload Space, each pointing at that Space on the gateway. That record
 is what lets the management cluster fetch from the gateway at all, so its
 first revision cannot arrive through the gateway. It is applied once with
 kubectl as cluster setup, and ConfigHub governs every revision after that
-under the same approval gate. The receipt records that boundary rather than
-implying the management cluster governed itself from the beginning.
+under the same approval gate. It is stored, gated, and approved exactly like
+every other record, and it is the one record that publishes no release. The
+receipt records that boundary rather than implying the management cluster
+governed itself from the beginning.
 
 ## What this costs
 
