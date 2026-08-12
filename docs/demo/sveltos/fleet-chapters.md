@@ -65,12 +65,9 @@ after it is created. An earlier report here said the gate never appeared;
 that was a misreading in this repository's own observation code, which asked
 the server for a projection it does not return, and it has been withdrawn.
 
-What remains is ours. Chapter four's runner now fetches each approved release
-from the gateway the way chapter three does, and it records with one command,
-listed in its README. Chapter five's runner still carries the delivery path
-the fleet rehearsal replaced, where a GitOps controller moved the artifact
-instead of Sveltos fetching it from the gateway, and it records once it is
-rebuilt on the recorded path.
+What remains is the runs themselves. Chapters four and five now fetch each
+approved release from the gateway the way chapter three does, and each
+records with one command, listed in its README.
 
 Every drafted runner starts with a gate preflight: it creates a throwaway
 record, waits for the approval gate to attach, and refuses in seconds if it
