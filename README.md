@@ -45,15 +45,19 @@ Fleet tools can move configuration to many clusters. The harder question is
 what reached them and who agreed to it. Three answers here are unusual
 enough to be the point of the repository.
 
-- **A variant and a target cluster stand one to one.** Every cluster in the
-  fleet has its own governed record, including the management cluster, and no
-  record ever addresses two clusters. A record covering two clusters cannot be
-  approved for one and held for the other, cannot be rolled back for one
-  alone, and cannot say which of them runs which revision today. The selector
-  inside each record still exists, but it matches exactly one cluster, so it
-  addresses rather than fans out. The records are variants of a shared base
-  carrying only their own departures, so a change made once still flows to all
-  of them.
+- **A variant and a target cluster stand one to one.** Sveltos maps one to
+  many by design, because a `ClusterProfile` carries a label query and every
+  matching cluster gets the add-on, which is what lets it scale to large
+  fleets. This repository narrows that on purpose. Every cluster has its own
+  governed record, including the management cluster, and no record addresses
+  two clusters. A record covering two clusters cannot be approved for one and
+  held for the other, cannot be rolled back for one alone, and cannot say
+  which of them runs which revision today. The selector still exists but
+  matches exactly one cluster, so it addresses rather than fans out, and every
+  label, query, approval, release, hook and check therefore names one cluster
+  instead of being resolved at delivery time and reconstructed afterwards. The
+  records are variants of a shared base carrying only their own departures, so
+  a change made once still flows to all of them.
 - **The rollout definition is itself reviewed configuration.** A wave is a
   label selector inside the record, not a pipeline object beside it, so
   widening a rollout is a diff that goes through the same approval as any

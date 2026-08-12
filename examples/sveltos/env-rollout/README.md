@@ -13,11 +13,25 @@ decompresses gzipped layers, which the ConfigHub gateway serves.
 
 ## One variant per cluster
 
-The rule this chapter follows is that a ConfigHub variant and a Sveltos target
-cluster stand one to one. This fleet runs five clusters, so ConfigHub holds
+Sveltos normally maps one to many, and that is the right design for what it
+does. A `ClusterProfile` carries a label query, every cluster matching that
+query gets the add-on, and one profile can therefore cover ten clusters or a
+thousand. That is why Sveltos scales to large fleets, and for clusters that
+are genuinely identical it is the tool to use exactly as it is designed.
+
+This chapter narrows that deliberately. A ConfigHub variant and a Sveltos
+target cluster stand one to one, so this fleet of five clusters is held as
 five records: one for each of the four workload clusters, and one for the
 management cluster that runs Sveltos itself. No record ever addresses two
 clusters.
+
+The consequence runs further than the records. Because the mapping is
+explicit, everything that derives from the configuration is explicit too. The
+labels each record carries, the queries each wave selects with, the approvals,
+the releases, the lifecycle hooks and the checks all name one cluster and
+resolve to one cluster. Nothing about scope is worked out at delivery time by
+a controller reading labels, so nothing about scope has to be reconstructed
+afterwards from what a controller decided.
 
 The reason is that a record which covers two clusters cannot answer the
 questions an operator is actually asked. You cannot approve a change for one
