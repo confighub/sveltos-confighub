@@ -1,0 +1,10 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosBulkOpsLock
+metadata:
+  name: bulk-ops-prerequisites
+spec:
+  sveltos:
+    version: v1.13.0
+    manifestUrl: https://raw.githubusercontent.com/projectsveltos/sveltos/v1.13.0/manifest/manifest.yaml
+    manifestSha256: 5538558ad428617153f963318f22e70eb32fa949e9e0f07e07f02a0db700e2d7
+    note: This chapter installs the release whose remote fetch path was verified live and recorded in docs/planning/remote-url-oci-probe.md. The management cluster fetches each approved release from the ConfigHub OCI gateway itself, so no other controller takes part. The gateway serves each release as a gzipped tar layer, and the released addon controller does not gunzip, so a run points SVELTOS_ADDON_CONTROLLER_IMAGE at a build carrying the gzip fix. The runner defaults to docker.io/projectsveltos/addon-controller at the pinned version and records the image it actually ran.
