@@ -78,7 +78,7 @@ if (mode === "--generate") {
 } else {
   selfTest();
   console.log(
-    "sveltos env rollout self-test passed: deterministic surfaces, one base with per-cluster variants, the departure and fan-out refusals, self-contained HTML, the superseded receipt, and the receipt-fill path with its refusals",
+    "sveltos env rollout self-test passed: deterministic surfaces, one base with per-cluster variants, the departure and fan-out refusals, self-contained HTML, the receipt compiled against in full or recognized as superseded, and the receipt-fill path with its refusals",
   );
 }
 
@@ -589,12 +589,16 @@ function selfTest() {
         "every matrix row must stay honestly awaiting the live run",
       );
     }
-    // The committed receipt predates this design, so it must be recognized as
-    // superseded rather than compiled against.
+    // A committed receipt is either this design's own recording, in which case
+    // the matrix compiles against it, or a receipt of the earlier three-record
+    // shape, in which case it is recognized as superseded and fills nothing.
+    // What it may never be is half-read, filling some cells from a receipt the
+    // rest of the matrix does not describe.
     check(
       !existsSync(join(fixtureRoot, liveReceiptFile))
-        || (compiled.superseded && compiled.live === null),
-      "the committed receipt must be treated as superseded until the run is recorded again",
+        || (compiled.live !== null && compiled.superseded === false)
+        || (compiled.live === null && compiled.superseded === true),
+      "a committed receipt must be compiled against in full or recognized as superseded",
     );
     const html = first["data/sveltos-env-rollout/matrix.html"];
     check(

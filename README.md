@@ -83,12 +83,12 @@ Chapter three now governs one record per cluster over a shared base, so
 ConfigHub answers which cluster runs which revision from its own records
 rather than from a label query Sveltos resolves at delivery time. Each wave
 selects its variants with one query and approves that set in one operation,
-and ConfigHub still records one approval and one release per cluster. That
-rework awaits a live re-record, so the
-[per-cluster matrix](data/sveltos-env-rollout/matrix.md) keeps its observed
-columns empty and the committed
-[receipt](runs/sveltos-env-rollout-proof/receipt.yaml) is kept as recorded
-against the three environment records it governed.
+and ConfigHub records one approval per cluster and one release for every
+cluster it delivers to. That design is recorded live, so every observed cell
+in the [per-cluster matrix](data/sveltos-env-rollout/matrix.md) comes from the
+committed [receipt](runs/sveltos-env-rollout-proof/receipt.yaml): four
+clusters at four checkpoints, each carrying its own departure through the
+change.
 
 Chapters one and two are recorded in the
 [two-wave proof](data/sveltos-oci-delivery-proof/summary.md): ConfigHub held
@@ -112,8 +112,8 @@ and records its phase timings.
    cluster at a new OCI digest. Recorded live on the earlier delivery path.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
    one reviewed values change pilot to staging to production, with one
-   governed record per cluster. The earlier three-record run is recorded; the
-   per-cluster rework awaits its own live run.
+   governed record per cluster and no record addressing two clusters.
+   Recorded live on the gateway.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
    that proves no cluster was missed. No vulnerability scanning is claimed.
@@ -124,9 +124,8 @@ and records its phase timings.
 
 All five chapters have been recorded live. Every observed cell in every
 matrix comes from a committed receipt, and each receipt records the addon
-controller image its run used. Chapter three has since been reworked to one
-record per cluster and awaits a live run of that shape, which its matrix and
-its verify lane both say plainly.
+controller image its run used. Chapters one and two were recorded on the
+earlier delivery path, and the rest fetch from the gateway.
 
 ## How to run it
 

@@ -28,8 +28,8 @@ matrix, a receipt contract, and deterministic self-tests.
    shared base, and no record addresses two clusters. That is what lets the
    [per-cluster matrix](../../../data/sveltos-env-rollout/matrix.md) show
    which cluster runs which revision at every checkpoint, and what makes
-   approval and rollback per cluster possible at all. The per-cluster rework
-   awaits its own live run.
+   approval and rollback per cluster possible at all. Recorded live on the
+   gateway.
 4. **[CVE patching](../../../examples/sveltos/cve-patch/README.md)** is fleet
    patch day with evidence: one reviewed version bump with digest-bound
    provenance, promoted through the same groups, closed by a coverage audit

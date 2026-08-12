@@ -173,11 +173,11 @@ comes from a live run, and empty cells stay empty until a run earns them.
 
 ## Current status
 
-The per-cluster design awaits a live re-record. The committed receipt at
+The per-cluster design is recorded live. The committed receipt at
 [runs/sveltos-env-rollout-proof/receipt.yaml](../../../runs/sveltos-env-rollout-proof/receipt.yaml)
-records the earlier run, which governed three environment records, so the
-verify lanes name it as superseded and the matrix keeps its observed columns
-empty. The receipt and its summary are kept as recorded rather than rewritten.
+records five governed records over one base, one set approval per wave, and
+the per-cluster observations the matrix compiles from, so every observed cell
+is earned rather than asserted.
 
 Before it builds anything the runner probes the approval gate on a throwaway
 Space and Unit, so a wiring problem refuses in seconds instead of failing
