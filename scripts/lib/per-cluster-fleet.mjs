@@ -232,7 +232,8 @@ export function governedRecords(deps) {
     registrationNamespace,
     remoteFetchInterval,
     workRootFor,
-    valuesOf,
+    changedDocOf,
+    changeInherited,
     now,
     approvalFilterRef,
     approvalGate,
@@ -692,11 +693,9 @@ export function governedRecords(deps) {
       "unit", "get", "--space", space, policyUnit, "-o", "json",
     ]).Unit;
     const documents = parseDocs(storedData(stored));
-    if (canonicalDocs(documents) === canonicalDocs([cluster.changedDoc])) return;
+    if (canonicalDocs(documents) === canonicalDocs([changedDocOf(cluster)])) return;
     const merged = documents[0] ?? {};
-    const inherited =
-      readPath(valuesOf(merged), plan.change.spec.valuesPath)
-      === plan.change.spec.after;
+    const inherited = changeInherited(merged, plan);
     const kept = cluster.departurePaths.filter(
       (path) => readPath(merged, path) === cluster.departures[path],
     );

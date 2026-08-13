@@ -148,7 +148,12 @@ const {
   establishManagement,
 } = governedRecords({
   stableJson: (...args) => stableJson(...args),
-  valuesOf: (...args) => valuesOf(...args),
+  // What this chapter's reviewed change looks like once merged: the values
+  // change carried inside the chart values blob, at the reviewed path.
+  changedDocOf: (cluster) => cluster.changedDoc,
+  changeInherited: (merged, plan) =>
+    readPath(valuesOf(merged), plan.change.spec.valuesPath)
+      === plan.change.spec.after,
   cub: (...args) => cub(...args),
   cubJson: (...args) => cubJson(...args),
   cubTry: (...args) => cubTry(...args),
