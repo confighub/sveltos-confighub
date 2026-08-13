@@ -3889,6 +3889,58 @@ function createFakeConfigHub() {
       }
       return ok("");
     }
+    // One verb clones the Space and every unit in it, links each clone to its
+    // upstream, stamps the Variant label, and copies the approval wiring from
+    // the upstream Space. The release target is deliberately not copied, which
+    // is why the runner sets it afterwards.
+    if (entity === "variant" && verb === "create") {
+      const [variantName, upstreamSlug] = rest;
+      const upstream = spaces.get(upstreamSlug);
+      if (!upstream) return refuse(`upstream space ${upstreamSlug} not found`);
+      const pattern = String(flags["space-pattern"] ?? "");
+      if (!pattern.startsWith("template:") || pattern.includes("{{")) {
+        return refuse(`the self-test fake hub resolves only literal space patterns, not ${pattern || "a derived slug"}`);
+      }
+      const slug = pattern.slice("template:".length);
+      if (spaces.has(slug)) return refuse(`space ${slug} already exists`);
+      spaces.set(slug, {
+        Slug: slug,
+        SpaceID: `self-test-space-${slug}`,
+        TriggerIDs: state.triggerIdOverride ?? [...upstream.TriggerIDs],
+        ReleaseTargetID: null,
+        TriggerFilterID: upstream.TriggerFilterID,
+        Labels: { ...(upstream.Labels ?? {}), Variant: variantName },
+      });
+      for (const [key, row] of [...units.entries()]) {
+        if (row.SpaceSlug !== upstreamSlug) continue;
+        const clone = {
+          Slug: row.Slug,
+          SpaceSlug: slug,
+          UnitID: `self-test-unit-${slug}-${row.Slug}`,
+          UpstreamUnitID: state.refuseUpstreamLink ? null : row.UnitID,
+          UpstreamSpaceID: `self-test-space-${upstreamSlug}`,
+          UpstreamUnitKey: key,
+          UpstreamRevisionNum: row.HeadRevisionNum,
+          TargetID: null,
+          Labels: { ...(row.Labels ?? {}) },
+          history: new Map(),
+          HeadRevisionNum: 1,
+          ApplyGates: { "awaiting/triggers": true },
+          ApprovedBy: [],
+        };
+        store(clone, dataOf(row));
+        units.set(unitKey(slug, row.Slug), clone);
+        pending.add(unitKey(slug, row.Slug));
+      }
+      return ok("");
+    }
+    if (entity === "unit" && verb === "set-target") {
+      const key = unitKey(flags.space, rest[0]);
+      const unit = units.get(key);
+      if (!unit) return refuse(`unit ${key} not found`);
+      unit.TargetID = `self-test-target-${rest[1]}`;
+      return ok("");
+    }
     // ConfigHub reports what it can still merge from the base as a mutation
     // list. A variant stored in a different serialization from its base does
     // not align resource for resource: the base resource is recorded as deleted
@@ -3988,8 +4040,18 @@ function createFakeConfigHub() {
       pending.add(key);
       return ok("");
     }
+    // A label patch on one unit is a metadata change: the labels merge and the
+    // stored revision is untouched, so the gate and approval state stay as
+    // they were.
+    if (entity === "unit" && verb === "update" && flags.patch && flags.space !== "*") {
+      const key = unitKey(flags.space, rest[0]);
+      const unit = units.get(key);
+      if (!unit) return refuse(`unit ${key} not found`);
+      if (flags.upgrade) return refuse("the self-test fake hub upgrades sets, not single units");
+      unit.Labels = { ...(unit.Labels ?? {}), ...labelsFrom(flags.label) };
+      return ok(JSON.stringify({ Unit: projectUnit(unit) }));
+    }
     if (entity === "unit" && verb === "update" && flags.patch) {
-      if (flags.space !== "*") return refuse("bulk patch needs --space \"*\"");
       if (!flags.upgrade) return refuse("the self-test fake hub only patches upgrades");
       const selected = matching(flags.where);
       if (!selected) return refuse(`unsupported where expression ${flags.where}`);
