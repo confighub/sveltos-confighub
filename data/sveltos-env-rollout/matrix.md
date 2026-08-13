@@ -8,6 +8,10 @@ cluster over that base, so the matrix shows exactly which cluster runs
 which revision at every checkpoint, and which departure each cluster keeps
 through the change.
 
+New to this table? The record-per-cluster model and its terms, including
+what a departure is and how a revision id names exact bytes, are
+explained in [Run your own fleet](../../docs/user/run-your-own-fleet.md).
+
 The observed columns come from the committed live receipt in
 `runs/sveltos-env-rollout-proof/receipt.yaml`. The expected columns
 come from the reviewed example files.
