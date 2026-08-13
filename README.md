@@ -1,16 +1,27 @@
 # Sveltos on ConfigHub
 
-This repository shows how a cluster fleet is governed through
-[ConfigHub](https://confighub.com) and delivered by
-[Sveltos](https://projectsveltos.io): the reviewed record stays the input,
-every approved revision is published as an OCI image, and Sveltos fetches
-that image and sends it to the clusters it selects.
+If you run more than a handful of Kubernetes clusters and want every change
+to them reviewed, approved, and answerable afterwards, this repository is a
+working, recorded example of exactly that.
 
-[Sveltos](https://projectsveltos.io) is an open-source Kubernetes add-on
-controller. It runs on one management cluster, selects workload clusters by
-label, and installs and reconciles what those clusters should run. It
-deliberately does not solve the GitOps problem, so it pairs with whatever
-holds the configuration. Here that is ConfigHub.
+It joins two tools. [ConfigHub](https://confighub.com) is a configuration
+database: governed records with revision history and approval gates, where a
+fleet is one shared base plus per-cluster variants, clones of that base
+carrying only their declared differences. [Sveltos](https://projectsveltos.io)
+is an open-source Kubernetes add-on controller: it runs on one management
+cluster, delivers to the others, and keeps them converged, repairing drift
+without being asked. The join is short: every approved revision is published
+as an OCI image on ConfigHub's gateway, and Sveltos fetches that image and
+delivers it to the one cluster its record addresses.
+
+Sixty seconds to watch it check itself, with no account, no cluster, and no
+network:
+
+```bash
+git clone https://github.com/confighub/sveltos-confighub
+cd sveltos-confighub
+npm run verify
+```
 
 The runs in this repository pin **Sveltos v1.13.0**
 ([manifest](examples/sveltos/env-rollout/source-lock.yaml)). Reading a

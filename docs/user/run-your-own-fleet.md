@@ -98,6 +98,38 @@ These were each paid for once so you do not have to.
   Spaces reference must outlive them, or the survivors are stuck with
   dangling references.
 
+## The exact commands, mapped
+
+The runners are the reference implementation, and every recorded run's
+receipt records the commands it used, so nothing here can silently drift:
+when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
+(the record machinery every chapter shares) and any
+`runs/*/receipt.yaml`. The moves, in the order a fleet uses them:
+
+1. **Create the base**: one Space wired to your approval trigger filter,
+   holding one `clusterprofile` record with the shared content. The base
+   gets no target and is never published.
+2. **Clone a cluster's variant**:
+   `cub unit create --upstream-space <base-space> --upstream-unit clusterprofile ...`
+   in that cluster's own Space, then write its three departures (name,
+   address line, removal behaviour).
+3. **Select a wave as a set**: `cub unit list --space "*" --where "<query
+   over your record labels>"`, and assert the match equals exactly the wave
+   you intended before acting on it.
+4. **Upgrade the set in one operation**:
+   `cub unit update --patch --space "*" --where <query> --upgrade`.
+5. **Approve the set in one operation**:
+   `cub unit approve --space "*" --where <query> --revision HeadRevisionNum`.
+   ConfigHub records one approval per record, each bound to that record's
+   revision.
+6. **Publish each record's release**: `cub release publish <space>`. The
+   gateway serves it at `oci://oci.hub.confighub.com/space/<space>:latest`,
+   and publishing is what moves the tag the fleet follows.
+7. **Let Sveltos fetch**: the management cluster carries a Secret of type
+   `addons.projectsveltos.io/cluster-profile` holding a `cub auth get-token`
+   token, and one bootstrap ClusterProfile per workload Space pointing at
+   that Space's gateway address.
+
 ## What keeps this true
 
 One check, part of `npm run verify` and CI, reads every committed

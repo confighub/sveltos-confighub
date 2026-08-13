@@ -129,12 +129,21 @@ function selfTest() {
 }
 
 function verify() {
-  const findings = assess(loadSurfaces(repoRoot), LEGACY);
+  const files = loadSurfaces(repoRoot);
+  const findings = assess(files, LEGACY);
   if (findings.length > 0) {
     for (const f of findings) console.error(`refused: ${f}`);
     process.exit(1);
   }
-  console.log("verified the per-cluster model: every committed profile addresses one cluster, or is listed until its rework lands");
+  let addressed = 0;
+  for (const [path, docs] of files) {
+    if (LEGACY.includes(path)) continue;
+    addressed += docs.filter((d) => PROFILE_KINDS.has(d?.kind)).length;
+  }
+  console.log(
+    `verified the per-cluster model: ${addressed} profiles each address one cluster; ` +
+      `${LEGACY.length} files recorded before the model are expected and listed (issues #3 and #4), nothing is wrong`,
+  );
 }
 
 const mode = process.argv[2];
