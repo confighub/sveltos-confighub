@@ -100,19 +100,15 @@ These were each paid for once so you do not have to.
 
 ## What keeps this true
 
-Two checks enforce this guide instead of trusting it.
+One check, part of `npm run verify` and CI, reads every committed
+`ClusterProfile` and refuses a selector that could match more than one
+cluster. The files recorded before the model are listed inside the check,
+next to the issues that rework them, and fixing one means removing it from
+the list in the same change. That is the whole mechanism.
 
-- **The model gate** (`npm run per-cluster-model:verify`, part of
-  `npm run verify` and CI) refuses any committed `ClusterProfile` whose
-  selector could match more than one cluster. The recorded debt that
-  predates the model is declared in `tests/per-cluster-model-legacy.yaml`
-  with its reason and issue. That register only shrinks: an entry whose file
-  stops violating is itself a refusal, so retiring the debt retires the
-  entry in the same change, and new fan-out surfaces cannot be added at all.
-- **The live preflight** (`npm run fleet:preflight`) refuses a fleet run
-  before any cluster is built if cub is missing, older than the minimum
-  these runners were measured against, or lacking the variant and
-  set-approval surfaces the record machinery depends on.
+Before a live run, update cub; the runners were measured against v0.2.15
+and newer, and each one still checks its own preconditions and stops with a
+named reason.
 
 ## What is not built yet
 
