@@ -427,7 +427,7 @@ function renderMarkdown(compiled) {
     "which revision at every checkpoint, and which departure each cluster keeps",
     "through the change.",
     "",
-    "New to this table? The record-per-cluster model and its terms, including",
+    "New to this table? The per-cluster variant model and its terms, including",
     "what a departure is and how a revision id names exact bytes, are",
     "explained in [Run your own fleet](../../docs/user/run-your-own-fleet.md).",
     "",

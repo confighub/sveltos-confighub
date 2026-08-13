@@ -48,7 +48,7 @@ profiles come straight from the reviewed example files instead of an
 approved ConfigHub revision, and the bootstrap profile is applied with
 kubectl as cluster setup. The rehearsal keeps its own three environment
 profiles here, because it exercises fan-out by environment label, while
-chapter three governs one record per cluster and addresses each cluster by
+chapter three governs one variant per cluster and addresses each cluster by
 name. The receipt states these differences, its verifier
 refuses a receipt that claims governance, and no chapter matrix cell is ever
 filled by a rehearsal.

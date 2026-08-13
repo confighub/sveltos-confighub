@@ -2,7 +2,7 @@
 
 One reviewed values change moves from pilot to staging to production, and
 every wave is approved before any cluster in it sees the change. ConfigHub
-holds one record per cluster, so it can answer which cluster runs which
+holds one variant per cluster, so it can answer which cluster runs which
 revision from its own records.
 
 [Sveltos](https://projectsveltos.io) delivers the change and keeps each
@@ -41,7 +41,7 @@ resolve to one cluster. Nothing about scope is worked out at delivery time by
 a controller reading labels, so nothing about scope has to be reconstructed
 afterwards from what a controller decided.
 
-One record per cluster puts that mapping in ConfigHub, where it can be
+One variant per cluster puts that mapping in ConfigHub, where it can be
 queried, approved, and rolled back per cluster. The selector inside each
 record still exists and Sveltos still evaluates it, but it now matches exactly
 one cluster, so it has stopped being a fan-out mechanism and become an

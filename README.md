@@ -46,16 +46,16 @@ across many clusters.
    reviewed profile to the one cluster its selector addresses.
 4. Sveltos keeps that cluster aligned and repairs drift.
 
-Each cluster's lane runs the whole way on its own record, its own approval,
+Each cluster's lane runs the whole way on its own variant, its own approval,
 its own gateway address, and its own digest. Sveltos on the management
 cluster is the carrier for every lane:
 
 ```mermaid
 flowchart LR
-  b["base record"] -->|"change made once"| p["pilot record"]
-  b --> s["staging record"]
-  b --> pa["prod-a record"]
-  b --> pb["prod-b record"]
+  b["base record"] -->|"change made once"| p["pilot variant"]
+  b --> s["staging variant"]
+  b --> pa["prod-a variant"]
+  b --> pb["prod-b variant"]
   p -->|"approve, publish"| gp["gateway address"] -->|"Sveltos fetches"| cp["pilot cluster"]
   s --> gs["gateway address"] --> cs["staging cluster"]
   pa --> ga["gateway address"] --> ca["prod-a cluster"]
@@ -85,7 +85,7 @@ enough to be the point of the repository.
   receipt says which shape its recording used.
 - **The rollout definition is itself reviewed configuration.** A wave is a
   label query over the per-cluster records, not a pipeline object beside
-  them, and widening a rollout means approving the next cluster's record.
+  them, and widening a rollout means approving the next cluster's variant.
   Each approval goes through the same gate as any other change and lands
   that record at its own new digest.
 - **Approval binds to an exact revision.** It is not a sync button and not a
@@ -98,25 +98,25 @@ enough to be the point of the repository.
 ## See the result first
 
 This is the recorded chapter-three fleet as ConfigHub shows it: one base
-record on the left, one deployment record per cluster on the right, four
+record on the left, one variant per cluster on the right, four
 workload clusters and the management record, every record at its second
 release after one reviewed change to the base. The base and management
 records carry armed gates:
 
-![One base record fanning out to one record per cluster](docs/images/sveltos/sveltos-flow-graph.png)
+![One base record fanning out to one variant per cluster](docs/images/sveltos/sveltos-flow-graph.png)
 
 The "Not reported yet" chips are the honest part: ConfigHub publishes and
 never connects to the clusters, so live state is not its claim to make.
 Sveltos knows the answer per cluster, and teaching ConfigHub to show
 Sveltos's reading in Sveltos's own words is proposed upstream.
 
-One record up close, the pilot cluster's, with the whole story in its
+One variant up close, the pilot cluster's, with the whole story in its
 activity: cloned from the base behind the approval gate, departed in
 exactly three fields (its name, the selector line that addresses its
 cluster, its removal behaviour), then inheriting the reviewed base change.
 The approval binds to that record's exact revision:
 
-![The pilot cluster's record: clone, three departures, inherited change, approval](docs/images/sveltos/sveltos-record-history.png)
+![The pilot cluster's variant: clone, three departures, inherited change, approval](docs/images/sveltos/sveltos-record-history.png)
 
 Chapter four is fleet patch day with evidence: the patched chart's
 provenance was checked against the reviewed digest before anything was
@@ -130,7 +130,7 @@ receipt records the shape of that fan-out honestly: one reviewed edit, three
 record updates, three approvals, and three release publishes, because each
 Space publishes its own release.
 
-Chapter three now governs one record per cluster over a shared base, so
+Chapter three now governs one variant per cluster over a shared base, so
 ConfigHub answers which cluster runs which revision from its own records
 rather than from a label query Sveltos resolves at delivery time. Each wave
 selects its variants with one query and approves that set in one operation,
@@ -142,7 +142,7 @@ clusters at four checkpoints, each carrying its own departure through the
 change.
 
 Chapters one and two now hold the same shape: the canary is two records,
-and widening the rollout means approving the second cluster's record while
+and widening the rollout means approving the second cluster's variant while
 it sits complete, addressed, and gate-armed with no approval on file. The
 committed [two-wave recording](data/sveltos-oci-delivery-proof/summary.md)
 predates this: it widened one profile with an approved selector change and
@@ -157,17 +157,17 @@ and records its phase timings.
 ## The five chapters
 
 1. **[Kyverno across the fleet](examples/sveltos/kyverno-fleet/README.md)**
-   installs admission policy through one reviewed record per cluster, each
+   installs admission policy through one reviewed variant per cluster, each
    behind the approval gate, because policy is the clearest case for review
    before a change reaches any cluster. The first recording stands as
    recorded and the gateway re-record is pending.
-2. **The canary**, in the same example: the pilot cluster's record approved
-   and delivered first, the second cluster's record complete, addressed,
+2. **The canary**, in the same example: the pilot cluster's variant approved
+   and delivered first, the second cluster's variant complete, addressed,
    and gate-armed until its own approval widens the rollout. No selector is
    edited anywhere. Awaits its re-record on the gateway.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
    one reviewed values change pilot to staging to production, with one
-   governed record per cluster and no record addressing two clusters.
+   governed variant per cluster and no variant addressing two clusters.
    Recorded live on the gateway.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
@@ -187,7 +187,7 @@ its run used.
 ## How to run it
 
 To stand this shape up for your own fleet, at any size, read
-[Run your own fleet on one record per cluster](docs/user/run-your-own-fleet.md):
+[Run your own fleet on one variant per cluster](docs/user/run-your-own-fleet.md):
 the shape, what a change costs at N clusters, adding and removing a cluster,
 and the operational limits this repository already measured.
 
