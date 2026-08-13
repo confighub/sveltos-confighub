@@ -164,11 +164,12 @@ export function waveUnlockEvidence({
     checkpoint?.id === expectedId,
     `wave ${wave} cannot request its approval: the preceding checkpoint is ${checkpoint?.id ?? "missing"} rather than ${expectedId}`,
   );
-  const scope = wave === 1
-    ? checkpoint.observations
-    : checkpoint.observations.filter(
-      (row) => row.environment === previousEnvironment,
-    );
+  // The scope is the named cluster set the wave depends on, not a label
+  // filter: chapters whose waves share one environment still gate on exactly
+  // the clusters the previous wave promoted.
+  const scope = checkpoint.observations.filter(
+    (row) => expectedClusters.includes(row.logicalCluster),
+  );
   const seen = scope.map((row) => row.logicalCluster);
   check(
     sameSet(seen, expectedClusters),
