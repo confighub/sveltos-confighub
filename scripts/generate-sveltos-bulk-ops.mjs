@@ -13,6 +13,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import {
+  applyDepartures,
+  readPath,
+  writePath,
+} from "./lib/per-cluster-fleet.mjs";
+
+import {
   check,
   parseDocs,
   readYaml,
@@ -32,12 +38,11 @@ if (!["--generate", "--verify", "--self-test"].includes(mode)) {
 }
 
 const exampleFiles = [
-  "examples/sveltos/bulk-ops/clusterprofile-pilot.yaml",
-  "examples/sveltos/bulk-ops/clusterprofile-staging.yaml",
-  "examples/sveltos/bulk-ops/clusterprofile-prod.yaml",
+  "examples/sveltos/bulk-ops/clusterprofile-base.yaml",
+  "examples/sveltos/bulk-ops/variants.yaml",
   "examples/sveltos/bulk-ops/bulk-change.yaml",
   "examples/sveltos/env-rollout/fleet.yaml",
-  "examples/sveltos/cve-patch/clusterprofile-pilot.yaml",
+  "examples/sveltos/cve-patch/clusterprofile-base.yaml",
   "examples/sveltos/cve-patch/patch-candidate.yaml",
 ];
 // The committed live receipt fills the observed columns, so the fixture
@@ -74,7 +79,7 @@ if (mode === "--generate") {
 } else {
   selfTest();
   console.log(
-    "sveltos bulk ops self-test passed: deterministic surfaces, continuity and fan-out refusals, self-contained HTML, and the receipt-fill path with its refusals",
+    "sveltos bulk ops self-test passed: deterministic surfaces, continuity and fan-out refusals, self-contained HTML, the receipt compiled against in full or recognized as superseded, and the receipt-fill path with its refusals",
   );
 }
 
@@ -114,67 +119,59 @@ function compileBulk(root) {
     change.spec.before !== change.spec.after,
     "the bulk change candidate does not change anything",
   );
-  const records = change.spec?.fanOut?.records ?? [];
   check(
-    records.length === 3
-      && records.map((row) => row.environment).join(",")
-      === environments.join(","),
-    "the fan-out must cover pilot, staging, and prod exactly once each",
+    change.spec?.editedRecord === "base",
+    "the bulk change candidate must edit the base record",
   );
   check(
     String(change.spec?.fanOut?.approvals ?? "").includes("its own approval gate"),
     "the fan-out must state that each record keeps its own approval gate",
   );
   check(
+    String(change.spec?.fanOut?.selection?.whereTemplate ?? "").includes("{run}"),
+    "the fan-out lost the reviewed set query it selects with",
+  );
+  check(
     String(change.spec?.audit?.gateQuery ?? "").includes("LEN(ApplyGates) > 0"),
     "the audit lost its set-aware gate query",
   );
 
-  const profiles = {};
-  for (const record of records) {
-    const profilePath = join(bulkRoot, record.profile);
-    const text = readFileSync(profilePath, "utf8");
-    const docs = parseDocs(text);
-    check(docs.length === 1, `${record.profile} must contain one object`);
-    const doc = docs[0];
-    check(
-      doc.kind === "ClusterProfile"
-        && doc.metadata?.name === `kyverno-bulk-${record.environment}`,
-      `${record.profile} identity changed`,
-    );
-    check(
-      doc.spec?.clusterSelector?.matchLabels?.environment === record.environment
-        && Object.keys(doc.spec.clusterSelector.matchLabels).length === 1,
-      `${record.profile} must select exactly environment=${record.environment}`,
-    );
-    check(
-      doc.spec?.syncMode === "ContinuousWithDriftDetection",
-      `${record.profile} drift mode changed`,
-    );
-    check(
-      doc.spec?.helmCharts?.length === 1
-        && doc.spec.helmCharts[0].chartName === change.spec.chart
-        && String(doc.spec.helmCharts[0].chartVersion)
-        === String(change.spec.chartVersion),
-      `${record.profile} chart pin changed`,
-    );
-    profiles[record.environment] = {
-      doc,
-      path: `examples/sveltos/bulk-ops/${record.profile}`,
-    };
-  }
-  const baselineValues = profiles.pilot.doc.spec.helmCharts[0].values;
+  // One base record and one variant per cluster, exactly as the earlier
+  // chapters hold the same fleet. The base carries what every cluster shares
+  // and reaches no cluster; each variant departs only where its own cluster
+  // does.
+  const variants = readYaml(join(bulkRoot, "variants.yaml"));
+  const basePath = join(bulkRoot, variants.spec?.base?.profile ?? "");
+  const baseDocs = parseDocs(readFileSync(basePath, "utf8"));
   check(
-    environments.every(
-      (environment) =>
-        profiles[environment].doc.spec.helmCharts[0].values === baselineValues,
-    ),
-    "the three bulk profiles no longer share one baseline values document",
+    variants.kind === "SveltosBulkOpsVariants"
+      && variants.spec?.base?.reachesCluster === false
+      && baseDocs.length === 1,
+    "the variants record lost its base declaration",
+  );
+  const baseDoc = baseDocs[0];
+  const baseSelector = baseDoc.spec?.clusterSelector?.matchLabels ?? {};
+  check(
+    baseDoc.kind === "ClusterProfile"
+      && Object.keys(baseSelector).join(",") === "cluster"
+      && !workloads.some((row) => row.cluster === baseSelector.cluster),
+    "the base profile must carry a cluster selector that addresses no registered cluster",
+  );
+  check(
+    baseDoc.spec?.syncMode === "ContinuousWithDriftDetection",
+    "the base profile drift mode changed",
+  );
+  check(
+    baseDoc.spec?.helmCharts?.length === 1
+      && baseDoc.spec.helmCharts[0].chartName === change.spec.chart
+      && String(baseDoc.spec.helmCharts[0].chartVersion)
+      === String(change.spec.chartVersion),
+    "the base profile chart pin changed",
   );
 
-  // Chapter continuity: this baseline must equal chapter four's outcome,
-  // the patched chart version carrying the chapter-three values unchanged.
-  const patchProfile = readYaml(join(patchRoot, "clusterprofile-pilot.yaml"));
+  // Chapter continuity: this baseline must equal chapter four's outcome, the
+  // patched chart version carrying the values the earlier chapters promoted.
+  const patchProfile = readYaml(join(patchRoot, "clusterprofile-base.yaml"));
   const patchCandidate = readYaml(join(patchRoot, "patch-candidate.yaml"));
   check(
     String(change.spec.chartVersion)
@@ -182,7 +179,7 @@ function compileBulk(root) {
     "the bulk baseline chart version no longer matches the chapter-four outcome",
   );
   const patchValues = parseDocs(patchProfile.spec.helmCharts[0].values)[0];
-  const bulkValues = parseDocs(baselineValues)[0];
+  const bulkValues = parseDocs(baseDoc.spec.helmCharts[0].values)[0];
   check(
     stableJson(bulkValues) === stableJson(patchValues),
     "the bulk baseline values no longer match the chapter-four outcome",
@@ -196,20 +193,31 @@ function compileBulk(root) {
   writePath(changedValuesObject, change.spec.valuesPath, change.spec.after);
   const changedValues = `${toYaml(changedValuesObject)}\n`;
 
+  // Every cluster has its own record, so every cluster has its own revision
+  // identity. The edit is made once on the base and inherited by every
+  // variant in one operation.
+  const declaredVariants = variants.spec?.workloads ?? [];
+  check(
+    declaredVariants.length === workloads.length
+      && declaredVariants.every((row, index) =>
+        row.cluster === workloads[index].cluster
+        && row.environment === workloads[index].environment),
+    "the variants record must declare one variant per fleet cluster, in fleet order",
+  );
+  const variantByCluster = {};
   const revisions = {};
-  for (const environment of environments) {
-    const baselineDoc = profiles[environment].doc;
+  for (const row of declaredVariants) {
+    const departures = row.departures ?? {};
+    const baselineDoc = applyDepartures(baseDoc, departures);
     const changedDoc = structuredClone(baselineDoc);
     changedDoc.spec.helmCharts[0].values = changedValues;
-    revisions[environment] = {
+    variantByCluster[row.cluster] = { ...row, departures, baselineDoc, changedDoc };
+    revisions[row.cluster] = {
       baseline: `r1-${sha256(stableJson(baselineDoc)).slice(0, 12)}`,
       changed: `r2-${sha256(stableJson(changedDoc)).slice(0, 12)}`,
     };
   }
 
-  const spaceByEnvironment = Object.fromEntries(
-    records.map((row) => [row.environment, row.space]),
-  );
   const checkpoints = [
     {
       id: "baseline",
@@ -219,7 +227,7 @@ function compileBulk(root) {
     },
     {
       id: "after-fanout",
-      title: "After the fan-out, one pass over every record",
+      title: "After the fan-out, one edit inherited by every variant in one operation",
       changed: true,
       driftCheck: "none",
     },
@@ -237,10 +245,11 @@ function compileBulk(root) {
         checkpoint: checkpoint.id,
         cluster: workload.cluster,
         environment: workload.environment,
-        space: spaceByEnvironment[workload.environment],
+        space: variantByCluster[workload.cluster].space,
+        upstream: variants.spec.base.space,
         expectedRevision: checkpoint.changed
-          ? revisions[workload.environment].changed
-          : revisions[workload.environment].baseline,
+          ? revisions[workload.cluster].changed
+          : revisions[workload.cluster].baseline,
         expectedBackgroundReplicas: checkpoint.changed
           ? change.spec.after
           : change.spec.before,
@@ -251,7 +260,8 @@ function compileBulk(root) {
         proofStatus,
         blocker,
         evidence: [
-          profiles[workload.environment].path,
+          "examples/sveltos/bulk-ops/clusterprofile-base.yaml",
+          "examples/sveltos/bulk-ops/variants.yaml",
           "examples/sveltos/bulk-ops/bulk-change.yaml",
         ].join(";"),
       });
@@ -260,11 +270,14 @@ function compileBulk(root) {
   const compiled = {
     fleet,
     change,
-    profiles,
+    variants,
+    variantByCluster,
+    baseDoc,
     revisions,
     checkpoints,
     rows,
     live: null,
+    superseded: false,
   };
   fillObservedColumns(compiled, root);
   return compiled;
@@ -279,12 +292,21 @@ function fillObservedColumns(compiled, root) {
   );
   if (!existsSync(liveReceiptPath)) return;
   const receipt = readYaml(liveReceiptPath);
-  for (const environment of environments) {
+  // The committed receipt records three environment records and predates the
+  // per-cluster variant design this chapter now uses. It is recognised as
+  // superseded and fills nothing, rather than being read half way and filling
+  // cells the rest of the matrix does not describe.
+  if (!Array.isArray(receipt?.spec?.variants)) {
+    compiled.superseded = true;
+    return;
+  }
+  const recordedRevisions = receipt.spec?.revisions?.clusters ?? {};
+  for (const cluster of Object.keys(compiled.revisions)) {
     check(
-      receipt.spec?.revisions?.[environment]?.baseline
-        === compiled.revisions[environment].baseline
-        && receipt.spec.revisions[environment].changed
-        === compiled.revisions[environment].changed,
+      recordedRevisions[cluster]?.baseline
+        === compiled.revisions[cluster].baseline
+        && recordedRevisions[cluster].changed
+        === compiled.revisions[cluster].changed,
       "the live receipt disagrees with the reviewed expected revisions",
     );
   }
@@ -329,7 +351,7 @@ function buildOutputs(compiled) {
 
 function renderCsv(compiled) {
   const header = [
-    "checkpoint", "cluster", "environment", "space",
+    "checkpoint", "cluster", "environment", "space", "upstream",
     "expected_revision", "expected_background_replicas",
     "expected_drift_check",
     "observed_release", "observed_background_replicas",
@@ -339,7 +361,7 @@ function renderCsv(compiled) {
   const lines = [header.join(",")];
   for (const row of compiled.rows) {
     lines.push([
-      row.checkpoint, row.cluster, row.environment, row.space,
+      row.checkpoint, row.cluster, row.environment, row.space, row.upstream,
       row.expectedRevision, row.expectedBackgroundReplicas,
       row.expectedDriftCheck,
       row.observedRelease, row.observedBackgroundReplicas,
@@ -357,11 +379,11 @@ function renderMarkdown(compiled) {
     "",
     "Chapter five of the Sveltos fleet example is the change-it-once claim:",
     `one reviewed edit raises \`${change.spec.valuesPath}\` from ${change.spec.before}`,
-    `to ${change.spec.after} and fans out to every environment record in one pass.`,
-    "Each record still enforces its own approval gate. The chapter closes with a",
-    "zero-drift audit: a set-aware query across the Spaces must find no armed",
-    "gates, no record may have changed out of band, and drift injected on every",
-    "cluster must be repaired.",
+    `to ${change.spec.after} once on the base record, and one set operation`,
+    "inherits it into every per-cluster variant. Each record still enforces its",
+    "own approval gate. The chapter closes with a zero-drift audit: a set-aware",
+    "query across the Spaces must find no armed gates, no record may have",
+    "changed out of band, and drift injected on every cluster must be repaired.",
     "",
     ...(compiled.live
       ? [
@@ -370,18 +392,17 @@ function renderMarkdown(compiled) {
         "come from the reviewed example files.",
       ]
       : [
-        "No live run has been recorded yet. The runner delivers through the",
-        "ConfigHub OCI gateway, and every observed cell below stays empty until a",
-        "live run earns it. The expected columns come from the reviewed example",
-        "files.",
+        "No live run of this design has been recorded yet, so every observed",
+        "cell below stays empty until a live run earns it. The expected columns",
+        "come from the reviewed example files.",
       ]),
     "",
   ];
   for (const checkpoint of compiled.checkpoints) {
     lines.push(`## ${checkpoint.title}`);
     lines.push("");
-    lines.push("| Cluster | Environment | Expected revision | Background replicas | Drift check | Observed | Status |");
-    lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+    lines.push("| Cluster | Environment | Space | Expected revision | Background replicas | Drift check | Observed | Status |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const row of compiled.rows.filter((item) => item.checkpoint === checkpoint.id)) {
       const observedCell = row.observedBackgroundReplicas === ""
         ? ""
@@ -390,16 +411,15 @@ function renderMarkdown(compiled) {
         ? `${row.proofStatus} (${row.blocker})`
         : row.proofStatus;
       lines.push(
-        `| ${row.cluster} | ${row.environment} | \`${row.expectedRevision}\` | ${row.expectedBackgroundReplicas} | ${row.expectedDriftCheck} | ${observedCell} | ${statusCell} |`,
+        `| ${row.cluster} | ${row.environment} | ${row.space} | \`${row.expectedRevision}\` | ${row.expectedBackgroundReplicas} | ${row.expectedDriftCheck} | ${observedCell} | ${statusCell} |`,
       );
     }
     lines.push("");
   }
   lines.push("## Sources");
   lines.push("");
-  lines.push("- [Pilot profile](../../examples/sveltos/bulk-ops/clusterprofile-pilot.yaml)");
-  lines.push("- [Staging profile](../../examples/sveltos/bulk-ops/clusterprofile-staging.yaml)");
-  lines.push("- [Production profile](../../examples/sveltos/bulk-ops/clusterprofile-prod.yaml)");
+  lines.push("- [Base profile](../../examples/sveltos/bulk-ops/clusterprofile-base.yaml)");
+  lines.push("- [Per-cluster variants](../../examples/sveltos/bulk-ops/variants.yaml)");
   lines.push("- [Bulk change candidate](../../examples/sveltos/bulk-ops/bulk-change.yaml)");
   lines.push("- [Shared fleet design](../../examples/sveltos/env-rollout/fleet.yaml)");
   return `${lines.join("\n")}\n`;
@@ -412,7 +432,7 @@ function renderHtml(compiled) {
     '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sveltos bulk operations matrix</title>',
     "<style>:root{color-scheme:light dark}body{font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;margin:24px;background:#fff;color:#17212b}h1{font-size:1.7rem;margin-bottom:.25rem}.lede{max-width:95ch;color:#3f4d5a}.legend{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0}.key{border-radius:.25rem;padding:.3rem .5rem;font-weight:700}.baseline{background:#dce9ff;color:#173b75}.changed{background:#d7f2df;color:#14532d}.awaiting{background:#fff0bd;color:#634b00}.observed{background:#d7f2df;color:#14532d}.failed{background:#fadbd8;color:#7b241c}table{border-collapse:collapse;width:100%;margin:1.25rem 0;font-size:.84rem}caption{text-align:left;font-size:1rem;font-weight:700;padding:.5rem 0}th,td{border:1px solid #aeb8c2;padding:.5rem;text-align:left;vertical-align:top}thead th{background:#edf1f5;color:#17212b}code{white-space:normal;overflow-wrap:anywhere}@media(prefers-color-scheme:dark){body{background:#10161d;color:#eef4fa}.lede{color:#c6d1dc}thead th{background:#25313d;color:#fff}.baseline{background:#173b75;color:#fff}.changed{background:#14532d;color:#fff}.awaiting{background:#634b00;color:#fff}.observed{background:#14532d;color:#fff}.failed{background:#7b241c;color:#fff}}</style></head>",
     "<body><main><h1>Sveltos bulk operations, the per-cluster matrix</h1>",
-    `<p class="lede">The change-it-once claim: one reviewed edit raises <code>${change.spec.valuesPath}</code> from ${change.spec.before} to ${change.spec.after} and fans out to every environment record in one pass, each record still enforcing its own approval gate. The chapter closes with a zero-drift audit: a set-aware query across the Spaces must find no armed gates, no record may have changed out of band, and drift injected on every cluster must be repaired. ${compiled.live ? "The observed columns come from the committed live receipt in <code>runs/sveltos-bulk-ops-proof/receipt.yaml</code>." : "No live run has been recorded yet, so every observed cell stays empty until a live run earns it."}</p>`,
+    `<p class="lede">The change-it-once claim: one reviewed edit raises <code>${change.spec.valuesPath}</code> from ${change.spec.before} to ${change.spec.after} once on the base record, and one set operation inherits it into every per-cluster variant, each record still enforcing its own approval gate. The chapter closes with a zero-drift audit: a set-aware query across the Spaces must find no armed gates, no record may have changed out of band, and drift injected on every cluster must be repaired. ${compiled.live ? "The observed columns come from the committed live receipt in <code>runs/sveltos-bulk-ops-proof/receipt.yaml</code>." : "No live run of this design has been recorded yet, so every observed cell stays empty until a live run earns it."}</p>`,
     `<div class="legend"><span class="key baseline">baseline revision</span><span class="key changed">changed revision</span>${compiled.live ? '<span class="key observed">observed live</span>' : '<span class="key awaiting">awaiting live run</span>'}</div>`,
   ];
   const tables = [];
@@ -424,39 +444,17 @@ function renderHtml(compiled) {
         const observedCell = row.observedBackgroundReplicas === ""
           ? '<span class="key awaiting">awaiting live run</span>'
           : `<span class="key ${row.proofStatus === "observed-pass" ? "observed" : "failed"}">${row.observedRelease} with ${row.observedBackgroundReplicas} background replicas, drift ${row.observedDriftCheck}</span>`;
-        return `<tr><td>${row.cluster}</td><td>${row.environment}</td><td><span class="key ${revisionClass}"><code>${row.expectedRevision}</code></span></td><td>${row.expectedBackgroundReplicas}</td><td>${row.expectedDriftCheck}</td><td>${observedCell}</td></tr>`;
+        return `<tr><td>${row.cluster}</td><td>${row.environment}</td><td>${row.space}</td><td><span class="key ${revisionClass}"><code>${row.expectedRevision}</code></span></td><td>${row.expectedBackgroundReplicas}</td><td>${row.expectedDriftCheck}</td><td>${observedCell}</td></tr>`;
       });
     tables.push(
-      `<table><caption>${checkpoint.title}</caption><thead><tr><th>Cluster</th><th>Environment</th><th>Expected revision</th><th>Background replicas</th><th>Drift check</th><th>Observed</th></tr></thead><tbody>${rows.join("")}</tbody></table>`,
+      `<table><caption>${checkpoint.title}</caption><thead><tr><th>Cluster</th><th>Environment</th><th>Space</th><th>Expected revision</th><th>Background replicas</th><th>Drift check</th><th>Observed</th></tr></thead><tbody>${rows.join("")}</tbody></table>`,
     );
   }
   const tail = [
-    `<p class="lede">Sources: the three environment profiles and the bulk change candidate live in <code>examples/sveltos/bulk-ops/</code>; the shared fleet design lives in <code>examples/sveltos/env-rollout/</code>. The matrix is generated by <code>scripts/generate-sveltos-bulk-ops.mjs</code>.</p>`,
+    `<p class="lede">Sources: the base profile, the per-cluster variants and the bulk change candidate live in <code>examples/sveltos/bulk-ops/</code>; the shared fleet design lives in <code>examples/sveltos/env-rollout/</code>. The matrix is generated by <code>scripts/generate-sveltos-bulk-ops.mjs</code>.</p>`,
     "</main></body></html>",
   ];
   return `${[...head, ...tables, ...tail].join("\n")}\n`;
-}
-
-function readPath(value, path) {
-  let current = value;
-  for (const key of path.split(".")) {
-    if (!current || typeof current !== "object") return undefined;
-    current = current[key];
-  }
-  return current;
-}
-
-function writePath(value, path, next) {
-  const keys = path.split(".");
-  let current = value;
-  for (const key of keys.slice(0, -1)) {
-    check(
-      current[key] && typeof current[key] === "object",
-      `values path ${path} does not exist in the baseline values`,
-    );
-    current = current[key];
-  }
-  current[keys.at(-1)] = next;
 }
 
 function stableJson(value) {
@@ -480,7 +478,8 @@ function selfTest() {
       mkdirSync(dirname(destination), { recursive: true });
       cpSync(source, destination);
     }
-    const first = buildOutputs(compileBulk(fixtureRoot));
+    const compiledFirst = compileBulk(fixtureRoot);
+    const first = buildOutputs(compiledFirst);
     const second = buildOutputs(compileBulk(fixtureRoot));
     check(
       JSON.stringify(first) === JSON.stringify(second),
@@ -501,7 +500,7 @@ function selfTest() {
     // Before the live run every row must stay honestly empty. After it, every
     // row must carry an observation, because a recorded run that leaves cells
     // blank is the same dishonesty pointing the other way.
-    if (existsSync(join(repoRoot, liveReceiptFile))) {
+    if (existsSync(join(repoRoot, liveReceiptFile)) && !compiledFirst.superseded) {
       check(
         csv.split("observed-pass").length === 13 && !csv.includes(proofStatus),
         "every matrix row must carry its observation once the live run is recorded",
@@ -516,7 +515,7 @@ function selfTest() {
     // also reports it, so the token appears in the observed column too.
     check(
       csv.split("injected-and-restored").length
-        === (existsSync(join(repoRoot, liveReceiptFile)) ? 9 : 5),
+        === (existsSync(join(repoRoot, liveReceiptFile)) && !compiledFirst.superseded ? 9 : 5),
       "the audit checkpoint must expect drift repair on all four clusters, and report it once recorded",
     );
     const html = first["data/sveltos-bulk-ops/matrix.html"];
@@ -527,26 +526,22 @@ function selfTest() {
 
     const tampers = [
       [
-        "shared baseline",
-        (root) => editFile(root, "bulk-ops/clusterprofile-staging.yaml", (text) =>
-          text.replace("replicas: 2", "replicas: 4")),
-        /(no longer share one baseline values document|no longer match the chapter-four outcome)/,
+        "a cluster left without a variant",
+        (root) => editFile(root, "bulk-ops/variants.yaml", (text) =>
+          text.replace(/    - cluster: hx-sveltos-env-prod-b\n(?:      [^\n]*\n|        [^\n]*\n)+/, "")),
+        /one variant per fleet cluster/,
       ],
       [
         "chapter-four values drift",
-        (root) => {
-          for (const name of ["bulk-ops/clusterprofile-pilot.yaml", "bulk-ops/clusterprofile-staging.yaml", "bulk-ops/clusterprofile-prod.yaml"]) {
-            editFile(root, name, (text) => text.replace("replicas: 2", "replicas: 4"));
-          }
-        },
-        /values no longer match the chapter-four outcome/,
+        (root) => editFile(root, "bulk-ops/clusterprofile-base.yaml", (text) =>
+          text.replace("replicas: 2", "replicas: 4")),
+        /(no longer match the chapter-four outcome|before-value does not match)/,
       ],
       [
         "chapter-four version drift",
         (root) => {
-          for (const name of ["bulk-ops/clusterprofile-pilot.yaml", "bulk-ops/clusterprofile-staging.yaml", "bulk-ops/clusterprofile-prod.yaml"]) {
-            editFile(root, name, (text) => text.replace("chartVersion: 3.8.2", "chartVersion: 3.8.1"));
-          }
+          editFile(root, "bulk-ops/clusterprofile-base.yaml", (text) =>
+            text.replace("chartVersion: 3.8.2", "chartVersion: 3.8.1"));
           editFile(root, "bulk-ops/bulk-change.yaml", (text) =>
             text.replace('chartVersion: "3.8.2"', 'chartVersion: "3.8.1"'));
         },
@@ -559,16 +554,22 @@ function selfTest() {
         /does not change anything/,
       ],
       [
-        "fan-out coverage",
+        "edited record",
         (root) => editFile(root, "bulk-ops/bulk-change.yaml", (text) =>
-          text.replace("- environment: staging", "- environment: prod")),
-        /fan-out must cover pilot, staging, and prod exactly once each/,
+          text.replace("editedRecord: base", "editedRecord: variants")),
+        /must edit the base record/,
       ],
       [
         "per-record approvals statement",
         (root) => editFile(root, "bulk-ops/bulk-change.yaml", (text) =>
-          text.replace("each environment record still enforces its own approval gate", "one approval covers everything")),
+          text.replace("each per-cluster record still enforces its own approval gate", "one approval covers everything")),
         /must state that each record keeps its own approval gate/,
+      ],
+      [
+        "set query",
+        (root) => editFile(root, "bulk-ops/bulk-change.yaml", (text) =>
+          text.replace("AND Labels.Run = '{run}' AND Labels.Wave = '1'", "AND Labels.Wave = '1'")),
+        /lost the reviewed set query/,
       ],
       [
         "gate query",
@@ -577,10 +578,10 @@ function selfTest() {
         /audit lost its set-aware gate query/,
       ],
       [
-        "selector scope",
-        (root) => editFile(root, "bulk-ops/clusterprofile-pilot.yaml", (text) =>
-          text.replace("      environment: pilot", "      environment: pilot\n      region: east")),
-        /must select exactly environment=pilot/,
+        "base selector scope",
+        (root) => editFile(root, "bulk-ops/clusterprofile-base.yaml", (text) =>
+          text.replace("      cluster: unassigned", "      cluster: unassigned\n      region: east")),
+        /must carry a cluster selector that addresses no registered cluster/,
       ],
       [
         "fleet prod group",
@@ -630,7 +631,13 @@ function selfTestReceiptFill() {
       kind: "SveltosBulkOpsProofReceipt",
       spec: {
         recordedAt: "self-test",
-        revisions: planned.revisions,
+        variants: Object.values(planned.variantByCluster).map((row) => ({
+          cluster: row.cluster,
+          space: row.space,
+        })),
+        revisions: {
+          clusters: planned.revisions,
+        },
         checkpoints: planned.checkpoints.map((checkpoint) => ({
           id: checkpoint.id,
           observations: planned.rows
@@ -677,8 +684,20 @@ function selfTestReceiptFill() {
       "the matrix views did not carry the observed drift repair",
     );
 
+    const superseded = structuredClone(fakeReceipt);
+    delete superseded.spec.variants;
+    write(receiptFile, `${toYaml(superseded)}\n`);
+    const untouched = compileBulk(receiptRoot);
+    check(
+      untouched.superseded === true
+        && untouched.live === null
+        && untouched.rows.every((row) => row.proofStatus === proofStatus),
+      "a receipt that predates the per-cluster design must fill nothing and say so",
+    );
+
     const revisionDrift = structuredClone(fakeReceipt);
-    revisionDrift.spec.revisions.pilot.changed = "r2-000000000000";
+    revisionDrift.spec.revisions.clusters["hx-sveltos-env-pilot"].changed =
+      "r2-000000000000";
     write(receiptFile, `${toYaml(revisionDrift)}\n`);
     expectFailure(
       () => compileBulk(receiptRoot),
