@@ -1,0 +1,36 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosKyvernoFleetVariants
+metadata:
+  name: kyverno-fleet-variants
+spec:
+  base:
+    profile: clusterprofile-base.yaml
+    unit: clusterprofile
+    space: sveltos-kyverno-fleet-base
+    reachesCluster: false
+    note: The base holds the reviewed content every cluster shares. It carries a selector that matches no registered cluster, it is given no target, and its Space is never published, so nothing reaches a cluster from the base itself.
+  workloads:
+    - cluster: hx-sveltos-fleet-pilot
+      environment: staging
+      wave: 1
+      space: sveltos-kyverno-fleet-pilot
+      departures:
+        metadata.name: kyverno-hx-sveltos-fleet-pilot
+        spec.clusterSelector.matchLabels.cluster: hx-sveltos-fleet-pilot
+        spec.stopMatchingBehavior: WithdrawPolicies
+    - cluster: hx-sveltos-fleet-second
+      environment: staging
+      wave: 2
+      space: sveltos-kyverno-fleet-second
+      departures:
+        metadata.name: kyverno-hx-sveltos-fleet-second
+        spec.clusterSelector.matchLabels.cluster: hx-sveltos-fleet-second
+        spec.stopMatchingBehavior: WithdrawPolicies
+  management:
+    cluster: hx-sveltos-fleet-mgmt
+    space: sveltos-kyverno-fleet-mgmt
+    holds: one bootstrap ClusterProfile per workload Space, each pointing at that Space on the ConfigHub OCI gateway
+    appliedOutOfBandWith: kubectl
+    reason: This record is what lets the management cluster fetch from the gateway, so its first revision cannot arrive through the gateway. It is applied once as cluster setup, and ConfigHub governs every revision after that under the same approval gate.
+  canary:
+    note: The rollout order is reviewed configuration, carried as the wave number on each cluster's record. Wave one approves and delivers the pilot cluster's record alone. The second cluster's record is complete, addressed, and gate-armed the whole time, and nothing reaches its cluster until its own revision is approved in wave two. Widening the rollout is approving the next cluster's record, never editing a selector.
