@@ -32,8 +32,8 @@ across many clusters.
 2. A named person approves one exact revision, and ConfigHub publishes it as
    an OCI image on its OCI gateway.
 3. Sveltos on the management cluster fetches that image and sends the
-   reviewed profile to every cluster its selector matches.
-4. Sveltos keeps those clusters aligned and repairs drift.
+   reviewed profile to the one cluster its selector addresses.
+4. Sveltos keeps that cluster aligned and repairs drift.
 
 No GitOps controller and no intermediate registry take part. Promotion does
 not change the delivery wiring at all: publishing the approved release moves
@@ -62,9 +62,10 @@ enough to be the point of the repository.
   records are variants of a shared base carrying only their own departures, so
   a change made once still flows to all of them.
 - **The rollout definition is itself reviewed configuration.** A wave is a
-  label selector inside the record, not a pipeline object beside it, so
-  widening a rollout is a diff that goes through the same approval as any
-  other change and lands at a new digest.
+  label query over the per-cluster records, not a pipeline object beside
+  them, and widening a rollout means approving the next cluster's record.
+  Each approval goes through the same gate as any other change and lands
+  that record at its own new digest.
 - **Approval binds to an exact revision.** It is not a sync button and not a
   paused bundle. Approving yesterday's revision authorises nothing about
   today's, and the bytes that shipped are the bytes that were approved.
@@ -135,6 +136,11 @@ controller image its run used. Chapters one and two were recorded on the
 earlier delivery path, and the rest fetch from the gateway.
 
 ## How to run it
+
+To stand this shape up for your own fleet, at any size, read
+[Run your own fleet on one record per cluster](docs/user/run-your-own-fleet.md):
+the shape, what a change costs at N clusters, adding and removing a cluster,
+and the operational limits this repository already measured.
 
 Every check runs with no account, no cluster, and no network, and the
 repository has no npm dependencies:
