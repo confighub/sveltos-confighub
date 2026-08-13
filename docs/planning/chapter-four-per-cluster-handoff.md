@@ -1,113 +1,101 @@
-# Finishing chapter four
+# Chapters four and five: reworked, verified, awaiting their live recordings
 
-Chapter three holds its fleet as one base record plus one variant per cluster,
-five clusters and five records including the management cluster, and it is
-recorded live. Chapter four is most of the way to the same shape on the branch
-`chapter-four-per-cluster`. Chapter five has not been started.
+Chapters four and five both hold their fleet the way chapter three does: one
+base record plus one variant per cluster, five records including the
+management cluster. The branch `chapter-four-per-cluster` carries both
+reworks and `npm run verify` is green on it at eighteen lanes. Neither
+chapter has been recorded live on this design yet, and that is the only work
+left.
 
-Work in `~/code/sveltos-confighub-work`. The `main` branch is green at eighteen
-lanes and must stay that way, so keep this work on its branch until it passes.
+## What was finished offline
 
-## What is already done
+Chapter four's fake ConfigHub gained the bulk patch handler, and everything
+that still spoke the three-environment shape was moved to base plus
+variants: the run flow, the wave promotion, the checkpoints and coverage
+audit, the receipt, its verifier, the summary, and the tamper battery. The
+registrations now carry each cluster's own `cluster` label, because a
+variant's selector addresses one cluster by name and would otherwise match
+nothing live.
 
-The per-cluster machinery lives in `scripts/lib/per-cluster-fleet.mjs` and both
-chapters call it. It creates a governed Space, stores a base, clones a variant
-and writes its departures, checks the upstream lineage survived, selects a wave
-as a set, approves that set in one operation, publishes each release, builds the
-management record, and refuses a promotion that did not inherit the change.
+Chapter five got the whole treatment in one pass: base and variants example
+files replace the three per-environment profiles, the reviewed edit lands
+once on the base and is approved there, and one set upgrade inherits it into
+every variant in one operation. The zero-drift audit now also demands that
+no record anywhere under the proof label carries an armed gate, which is why
+the base's edited revision is approved rather than left pending.
 
-For chapter four specifically:
+Both committed receipts predate this design. They are recognised as
+superseded, kept as recorded, and fill nothing; the verify lanes say so and
+pass. The matrices compile per cluster with observed cells honestly awaiting
+a live run.
 
-- `examples/sveltos/cve-patch/clusterprofile-base.yaml` and `variants.yaml`
-  replace the three per-environment profiles, which are deleted.
-- `patch-candidate.yaml` declares waves by cluster and carries the set query.
-- `loadPatchPlan` builds a base and four variants, refusing a departure that
-  collides with the version field.
-- The matrix generator compiles per cluster and passes its own self-test,
-  including the retargeted tamper tests.
-- `--verify` recognises the committed receipt as superseded, because it records
-  three environment records and predates this design.
-- The run flow and the self-test walk are written against base and variants.
+## The one blocker
 
-## The one thing left before it runs
-
-Chapter four's fake ConfigHub still has the simple `unit update` handler. It
-needs the branch chapter three uses, which understands
-`unit update --patch --space "*" --where <query> --upgrade`. That is how a wave
-inherits the version bump from the base, so without it the self-test stops at
-wave one with `unit */undefined not found`.
-
-Take the handler from `scripts/run-sveltos-env-rollout-proof.mjs`. Everything it
-depends on is already ported into chapter four's fake: cloning from an upstream
-unit, the label-conjunction query evaluator, set-aware approval, revision
-history, `projectUnit`, `store` and `dataOf`.
-
-After that, run `node scripts/run-sveltos-cve-patch-proof.mjs --self-test` and
-fix what it names, then `npm run verify`, then record live.
-
-## Recording it live
+The `river-bear` context (the helm-catalog organization, which owns the
+approval policy) has an expired token. `cub space list` under it fails with
+"token is expired". Re-authenticate with `cub auth login` on river-bear,
+then record chapter four, then chapter five:
 
 ```bash
 HELM_EXPT_ALLOW_LIVE_SVELTOS_CVE_PATCH=1 HELM_EXPT_KEEP_SVELTOS_ARTIFACTS=1 \
-CUB_CONTEXT=<your-context> \
+CUB_CONTEXT=river-bear \
 SVELTOS_ADDON_CONTROLLER_IMAGE=docker.io/projectsveltos/addon-controller:v1.13.0-ch \
 npm run sveltos-cve-patch-proof:run
 ```
 
-Check the context lands in the organization that owns the approval policy, and
-that its token has not expired. A run builds five kind clusters and takes about
-twelve minutes. Delete the clusters and Spaces from a failed run before
-retrying, because stale kind clusters starve the next one.
+```bash
+HELM_EXPT_ALLOW_LIVE_SVELTOS_BULK_OPS=1 HELM_EXPT_KEEP_SVELTOS_ARTIFACTS=1 \
+CUB_CONTEXT=river-bear \
+SVELTOS_ADDON_CONTROLLER_IMAGE=docker.io/projectsveltos/addon-controller:v1.13.0-ch \
+npm run sveltos-bulk-ops-proof:run
+```
+
+Each run builds five kind clusters and takes about twelve minutes. Both
+chapters now honor `HELM_EXPT_KEEP_SVELTOS_ARTIFACTS=1` the way chapter
+three does, recording what was kept and how to remove it. After each run,
+refresh the observed matrix columns:
+
+```bash
+npm run sveltos-cve-patch-proof:generate && npm run sveltos-cve-patch:generate
+```
+
+```bash
+npm run sveltos-bulk-ops-proof:generate && npm run sveltos-bulk-ops:generate
+```
 
 ## Traps already paid for
 
-A variant stored in a different serialisation from its base loses its upstream
-lineage. ConfigHub records the base resource as deleted and a different one
-added, the variant then inherits nothing, and every later promotion is a no-op
-that still reports success. Stored documents are written as YAML for this
-reason, and the lineage is checked as soon as the departures land. Ask ConfigHub
-which case you are in:
+Everything in the previous version of this note still holds: stored
+documents are written as YAML because a serialisation change severs a
+variant's upstream lineage; the lineage is checked the moment departures
+land (`cub unit get --space <variant-space> clusterprofile -o mutations` —
+one resource with field-level updates is healthy, a delete-and-add pair is
+severed); the management record publishes no release; a publish arriving
+while an apply gate is still queued is a race to wait out, any other gate
+message is a refusal; every Space needs `Component` and `Owner` labels to be
+visible in the component view; and the shared fleet example files must not
+move, because committed receipts record the paths they read.
 
-```bash
-cub unit get --space <variant-space> clusterprofile -o mutations
-```
-
-A healthy variant lists one resource with field-level updates. A severed one
-lists the base resource deleted and a different one added.
-
-The management record publishes no release, because it holds the bootstrap
-profiles that let the management cluster reach the gateway at all.
-
-A release publish can arrive while an apply gate is still queued. The server
-says the triggers were re-queued, which is a race worth waiting out. Any other
-gate message is a refusal and must stop the run.
-
-Every Space needs `Component` and `Owner` labels or it is invisible in the
-ConfigHub component view, which is the one view that shows a base and its
-variants together.
-
-Do not move the shared fleet example files into their own directory. It was
-tried and reverted, because the committed receipts record the paths they read,
-so moving those files makes a receipt of a real run fail its own source check.
-
-## After chapter four
-
-Chapter five needs the same treatment, and it is the same shape of work. Its
-change-it-once claim and its zero-drift audit both get stronger over five
-records than three.
+New since then: chapter five's fan-out query selects `Labels.Wave = '1'` —
+the whole fleet is one wave — and the base record's edit is approved on the
+base so the audit's gate query finds nothing armed. Delete the clusters and
+Spaces from a failed run before retrying, because stale kind clusters starve
+the next one. Chapter three's five kept clusters and six Spaces
+(`*-20260812195312`) are still up for screenshots and were left alone.
 
 ## One open question worth raising separately
 
-The ConfigHub component view shows "Not reported yet" against every card in this
-example. That is not a missing connection. Live status is published by a
-recognised reporter, and `ui/src/pages/x/apps/liveStatus.ts` defines exactly
-two:
+The ConfigHub component view shows "Not reported yet" against every card in
+this example. That is not a missing connection. Live status is published by
+a recognised reporter, and `ui/src/pages/x/apps/liveStatus.ts` defines
+exactly two:
 
 ```ts
 export type LiveStatusProvider = 'argocd' | 'flux' | 'unknown';
 ```
 
-Sveltos is not one of them, so its status has nowhere to go even though Sveltos
-knows the answer and publishes it as a `ClusterSummary` per cluster per profile.
-Adding Sveltos as a third provider is the native fix and would light up this
-example without changing who delivers.
+Sveltos is not one of them, so its status has nowhere to go even though
+Sveltos knows the answer and publishes it as a `ClusterSummary` per cluster
+per profile. Adding Sveltos as a third provider is the native fix and would
+light up this example without changing who delivers. Raise it with the
+ConfigHub team on its own, not bundled into the Sveltos work.
