@@ -16,15 +16,16 @@ matrix, a receipt contract, and deterministic self-tests.
 1. **[Kyverno across the fleet](../../../examples/sveltos/kyverno-fleet/README.md)**
    installs admission policy through one reviewed variant per cluster, each
    behind an approval gate, because policy is the clearest case for review
-   before a change reaches any cluster. The first recording stands as
-   recorded and the gateway re-record is pending.
+   before a change reaches any cluster. Recorded live on the gateway; the
+   first, partial recording remains a historical result.
 2. **The canary, in the same example**: the pilot cluster's variant approved
    and delivered first, the second cluster's variant complete, addressed, and
    gate-armed with no approval until wave two approves its own revision.
    Widening the rollout is approving the next cluster's variant, never editing
-   a selector. The committed
-   [two-wave recording](../../../data/sveltos-oci-delivery-proof/summary.md)
-   predates this shape and awaits its re-record on the gateway.
+   a selector. Recorded live on the gateway in the
+   [two-wave canary](../../../data/sveltos-oci-delivery-proof/summary.md):
+   two records, two approvals, two release digests, and the held record's
+   inert state kept as evidence.
 3. **[Environment rollout](../../../examples/sveltos/env-rollout/README.md)**
    promotes one reviewed values change pilot to staging to production. Sveltos
    maps one to many by design, through a label query that fans a profile out
@@ -57,13 +58,14 @@ four's, and the repository gate enforces that continuity mechanically.
 
 ## What is proven today and what is not
 
-Every chapter holds its fleet as one variant per cluster, and every chapter
-has a live recording committed. Chapter three's recording is on that design
-over the gateway; the other chapters' recordings predate it, their verifiers
-recognize them as recorded and fill nothing from them, and each awaits its
-re-record. The same governance logic also runs offline against fake ConfigHub
-and cluster surfaces in the repository gate, in seconds, with no account or
-cluster.
+Every chapter holds its fleet as one variant per cluster and is recorded
+live on that design over the gateway, with every wave's approval carrying
+the checkpoint evidence that unlocked it. The two recordings that predate
+the design — chapter one's first manual run and the selector-widening
+two-wave proof — are kept as recorded, recognized by the verifiers, and
+filled from by nothing. The same governance logic also runs offline against
+fake ConfigHub and cluster surfaces in the repository gate, in seconds, with
+no account or cluster.
 
 ## What the chapters still wait on
 
@@ -80,18 +82,14 @@ after it is created. An earlier report here said the gate never appeared;
 that was a misreading in this repository's own observation code, which asked
 the server for a projection it does not return, and it has been withdrawn.
 
-Every chapter's runner now fetches each approved release from the gateway
-and holds its fleet per-cluster, and no wave's approval is requested until
-the preceding checkpoint shows the clusters it depends on reporting healthy.
-Chapter three's recording is on the per-cluster gateway design and predates
-only that last guard. The other chapters' recordings predate the design
-itself — chapters one and two on the earlier delivery path that carried the
-OCI through a GitOps controller and a temporary registry, chapters four and
-five on the three-environment shape — and every recording awaits its
-re-record. What remains otherwise is not a run but a release: the gateway
-serves gzipped layers, so these recordings used an addon controller build
-that decompresses them, and each receipt names the image it used. When that
-fix ships in a Sveltos release, the chapters re-record against it.
+Every chapter's runner fetches each approved release from the gateway and
+holds its fleet per-cluster, no wave's approval is requested until the
+preceding checkpoint shows the clusters it depends on reporting healthy, and
+every chapter is recorded live on exactly that design. What remains is not a
+run but a release: the gateway serves gzipped layers, so these recordings
+used an addon controller build that decompresses them, and each receipt
+names the image it used. When that fix ships in a Sveltos release, the
+chapters re-record against it.
 
 Every drafted runner starts with a gate preflight: it creates a throwaway
 record, waits for the approval gate to attach, and refuses in seconds if it

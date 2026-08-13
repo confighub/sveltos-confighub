@@ -45,18 +45,24 @@ any point, so there is no moment where one approval covers a set.
 
 ## What the recorded receipts show
 
-Two receipts are committed, and both predate this per-cluster shape. The
-[first live receipt](live-receipt.yaml) records the v1.12.0 manual run:
-ConfigHub stored and gated the reviewed profile, Sveltos installed Kyverno on
-one staging cluster, and a replica change was repaired. It remains a partial,
-historical result. The
-[OCI delivery receipt](../../../runs/sveltos-oci-delivery-proof/receipt.yaml)
-records the two-wave canary as it was first recorded: one profile widened by
-a selector change, delivered through a GitOps controller and a temporary
-registry. Its governance claim stands as recorded, and its delivery shape is
-superseded by this design. The verifiers recognize both receipts as recorded
-and fill nothing from them; the re-record on the gateway path replaces the
-OCI delivery receipt and its summary.
+The [canary receipt](../../../runs/sveltos-oci-delivery-proof/receipt.yaml)
+records this design live on the gateway: two records, two approvals, two
+release digests. Wave one approved and delivered the pilot cluster's variant
+alone. Through all of wave one the second cluster's variant was held with
+its gate armed and zero approvals, the gateway served nothing for its Space,
+and its cluster observed untouched — the receipt keeps that held state as
+evidence. Wave two's approval was unlocked by the checkpoint that showed the
+pilot healthy, the second variant converged at its own digest, and injected
+drift was repaired on both clusters. The
+[summary](../../../data/sveltos-oci-delivery-proof/summary.md) renders the
+whole run.
+
+One earlier receipt is kept as recorded: the
+[first live receipt](live-receipt.yaml) from the v1.12.0 manual run, where
+ConfigHub stored and gated the reviewed profile, Sveltos installed Kyverno
+on one staging cluster, and a replica change was repaired. It remains a
+partial, historical result, and the verifier recognizes it rather than
+filling from it.
 
 ## Repeat and verify
 

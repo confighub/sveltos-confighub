@@ -66,33 +66,38 @@ Sveltos restored it to three. The
 [live receipt](../../../examples/sveltos/kyverno-fleet/live-receipt.yaml) records
 the ConfigHub IDs and hashes, cluster result, deployment counts, and drift test.
 
-## What the OCI delivery run proved, and what supersedes it
+## What the recorded canary proved
 
-The [OCI delivery receipt](../../../runs/sveltos-oci-delivery-proof/receipt.yaml)
-records the canary as it was first run: ConfigHub blocked a pilot profile until
-its exact revision was approved, published it, and a second approved revision
-removed one selector line to add the second cluster at a new OCI digest. That
-recording carried its OCI through a GitOps controller and a temporary registry,
-and it widened a selector, which this example no longer does anywhere. Its
-governance claim stands as recorded: nothing reached either cluster except an
-exactly approved revision, and Sveltos repaired a deliberate replica change on
-both clusters.
+The [canary receipt](../../../runs/sveltos-oci-delivery-proof/receipt.yaml)
+records the per-cluster canary live on the ConfigHub OCI gateway:
 
-The reworked proof replaces the selector edit with the per-cluster canary: wave
-one approves and delivers the pilot cluster's variant through the ConfigHub OCI
-gateway; the second cluster's variant is complete, addressed, and gate-armed
-with no approval the whole time, and the run records that held state as
-evidence; wave two's approval is refused until the checkpoint after wave one
-shows the pilot healthy. The committed receipt is recognized as recorded on the
-earlier path, and the re-record on the gateway path replaces it and its
-summary.
+1. ConfigHub held one base record and one variant per cluster, each variant
+   behind its own approval gate.
+2. Wave one approved the pilot cluster's variant at its exact head revision,
+   published it as a release, and Sveltos fetched it from the gateway.
+3. Through all of wave one the second cluster's variant was complete,
+   addressed by its bootstrap profile, and gate-armed with zero approvals;
+   the gateway served nothing for its Space and its cluster observed
+   untouched. The receipt records that held state as evidence.
+4. Wave two's approval was requested only after the checkpoint following
+   wave one showed the pilot healthy, and the second variant converged at
+   its own release digest.
+5. Sveltos repaired a deliberate replica change on both clusters.
+
+Two records, two approvals, two distinct release digests, and no selector
+edited anywhere. An earlier recording of this chapter widened a selector and
+carried its OCI through a GitOps controller and a temporary registry; it is
+superseded, and its governance claim stands as recorded in the repository
+history.
 
 ## What remains
 
-The re-record on the gateway path, run serially like every fleet proof. A
-larger fleet is chapter three's story, and a rollout that pauses after a failed
-target is now built into every wave: the next approval is not requested until
-the previous wave's clusters report healthy.
+A rollout that pauses after a failed target is built into every wave — the
+next approval is not requested until the previous wave's clusters report
+healthy — and a larger fleet is chapter three's story. What this chapter
+still waits on is an upstream release: the recording used the gzip-capable
+addon controller build, and it re-records when that fix ships in a Sveltos
+release.
 
 ## Check the evidence
 

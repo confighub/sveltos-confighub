@@ -22,8 +22,8 @@ spec:
     readme:
       slug: "readme"
       id: "e95a1f66-dca3-44d7-a9a7-74454a5cec03"
-      dataHash: "eac965b2455f88893c03e7298eccb078d68dd7ee6bab88b8b9d685b0caa2193c"
-      headRevision: 10
+      dataHash: "67d24718f9aaeac2018c72f3f81f7f34564ce064cb95b20528188ba8ba2883f1"
+      headRevision: 16
       source: "data/helm-catalog-readmes/units/sveltos-kyverno-fleet-3-8-1-staging/readme.yaml"
     space:
       id: "91e44027-14da-4725-9717-3a0d0b5b4a20"
@@ -63,7 +63,7 @@ spec:
     rawSha256: "1fba789198af3d5cba564ba9777b86ec8e5db8aaf07f4f25e8bc2766c0317396"
     serverSideDryRun: "pass"
     sourceLock: "examples/sveltos/kyverno-fleet/source-lock.yaml"
-  verifiedAt: "2026-07-27T21:00:14.961Z"
+  verifiedAt: "2026-08-13T16:21:25.840Z"
   workload:
     cluster: "helm-expt-sveltos-workload"
     deployments:
