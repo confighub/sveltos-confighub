@@ -35,6 +35,22 @@ across many clusters.
    reviewed profile to the one cluster its selector addresses.
 4. Sveltos keeps that cluster aligned and repairs drift.
 
+Each cluster's lane runs the whole way on its own record, its own approval,
+its own gateway address, and its own digest. Sveltos on the management
+cluster is the carrier for every lane:
+
+```mermaid
+flowchart LR
+  b["base record"] -->|"change made once"| p["pilot record"]
+  b --> s["staging record"]
+  b --> pa["prod-a record"]
+  b --> pb["prod-b record"]
+  p -->|"approve, publish"| gp["gateway address"] -->|"Sveltos fetches"| cp["pilot cluster"]
+  s --> gs["gateway address"] --> cs["staging cluster"]
+  pa --> ga["gateway address"] --> ca["prod-a cluster"]
+  pb --> gb["gateway address"] --> cb["prod-b cluster"]
+```
+
 No GitOps controller and no intermediate registry take part. Promotion does
 not change the delivery wiring at all: publishing the approved release moves
 the tag, and the fleet follows, so approval alone moves the fleet.
@@ -45,22 +61,17 @@ Fleet tools can move configuration to many clusters. The harder question is
 what reached them and who agreed to it. Three answers here are unusual
 enough to be the point of the repository.
 
-- **A variant and a target cluster stand one to one.** Sveltos maps one to
-  many by design, because a `ClusterProfile` carries a label query and every
-  matching cluster gets the add-on, which is what lets it scale to large
-  fleets. This repository narrows that on purpose. Every cluster has its own
-  governed record, including the management cluster, and no record addresses
-  two clusters. Chapter three is built and recorded that way. Chapters four
-  and five still govern one record per environment, so their production
-  record covers two clusters, and they are being reworked to match; their
-  matrices and receipts say which shape each one recorded. A record covering two clusters cannot be approved for one and
-  held for the other, cannot be rolled back for one alone, and cannot say
-  which of them runs which revision today. The selector still exists but
-  matches exactly one cluster, so it addresses rather than fans out, and every
-  label, query, approval, release, hook and check therefore names one cluster
-  instead of being resolved at delivery time and reconstructed afterwards. The
-  records are variants of a shared base carrying only their own departures, so
-  a change made once still flows to all of them.
+- **A record and a cluster stand one to one.** Sveltos maps one profile to
+  many clusters by design, which is what lets it scale. This repository
+  narrows that on purpose: every cluster has its own governed record,
+  including the management cluster, and the selector inside each record
+  addresses exactly one cluster. A record covering two clusters cannot be
+  approved for one and held for the other, cannot be rolled back for one
+  alone, and cannot say which of them runs which revision today. The records
+  are variants of a shared base carrying only their own departures, so a
+  change made once still flows to all of them. Chapter three is recorded
+  this way; the other chapters are being reworked to match, and their
+  receipts say which shape each one recorded.
 - **The rollout definition is itself reviewed configuration.** A wave is a
   label query over the per-cluster records, not a pipeline object beside
   them, and widening a rollout means approving the next cluster's record.
@@ -74,6 +85,27 @@ enough to be the point of the repository.
   was published, what the controller fetched, and what Kubernetes reports.
 
 ## See the result first
+
+This is the recorded chapter-three fleet as ConfigHub shows it: one base
+record on the left, one deployment record per cluster on the right, four
+workload clusters and the management record, every record at its second
+release after one reviewed change to the base. The base and management
+records carry armed gates:
+
+![One base record fanning out to one record per cluster](docs/images/sveltos/sveltos-flow-graph.png)
+
+The "Not reported yet" chips are the honest part: ConfigHub publishes and
+never connects to the clusters, so live state is not its claim to make.
+Sveltos knows the answer per cluster, and teaching ConfigHub to show
+Sveltos's reading in Sveltos's own words is proposed upstream.
+
+One record up close, the pilot cluster's, with the whole story in its
+activity: cloned from the base behind the approval gate, departed in
+exactly three fields (its name, the selector line that addresses its
+cluster, its removal behaviour), then inheriting the reviewed base change.
+The approval binds to that record's exact revision:
+
+![The pilot cluster's record: clone, three departures, inherited change, approval](docs/images/sveltos/sveltos-record-history.png)
 
 Chapter four is fleet patch day with evidence: the patched chart's
 provenance was checked against the reviewed digest before anything was
