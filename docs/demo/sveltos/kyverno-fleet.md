@@ -11,32 +11,36 @@ management cluster, fetches the configuration from that gateway, and sends it to
 clusters it selects by label. ConfigHub keeps the reviewed record; Sveltos handles
 cluster selection and reconciliation.
 
-The runs recorded below used a GitOps controller to carry the OCI artifact to the
-management cluster, because Sveltos could not yet fetch it directly. It can now, and
-the [live probe](../../planning/remote-url-oci-probe.md) records what that path
-accepts. The steps below stay as they were recorded, and the re-recordings will
-follow the direct path.
-
 ## The reviewed configuration
 
-The [ClusterProfile](../../../examples/sveltos/kyverno-fleet/clusterprofile.yaml)
+The example holds its fleet the way every chapter in this repository does: one
+ConfigHub record per Sveltos cluster over a shared base.
+
+The [base record](../../../examples/sveltos/kyverno-fleet/clusterprofile-base.yaml)
 contains the decisions a reviewer needs to see:
 
-- select clusters labeled `environment=staging`;
 - install `kyverno/kyverno` chart version `3.8.1`;
 - run three admission-controller replicas;
-- use `ContinuousWithDriftDetection` so Sveltos restores the reviewed settings.
+- use `ContinuousWithDriftDetection` so Sveltos restores the reviewed settings;
+- carry a selector that matches no registered cluster, so the base itself
+  reaches nothing.
 
-The
-[pilot profile](../../../examples/sveltos/kyverno-fleet/clusterprofile-pilot.yaml)
-adds one selector, `rollout=pilot`. The two-wave test begins with that file and
-then removes only the rollout selector to add the second staging cluster.
+The [variants declaration](../../../examples/sveltos/kyverno-fleet/variants.yaml)
+gives each workload cluster its own record, departing from the base in exactly
+three fields: its name, the selector line that addresses its own cluster and
+nothing else, and its removal behaviour. The rollout order is part of the
+reviewed declaration: the pilot cluster carries wave one and the second cluster
+wave two, so the canary is two records and two approvals, and widening the
+rollout means approving the second cluster's record. No selector is edited
+anywhere.
 
 The [source lock](../../../examples/sveltos/kyverno-fleet/source-lock.yaml) pins
-Sveltos v1.12.0, the upstream commits, downloaded manifest checksums, kind version,
-and Kubernetes versions used by the test.
+Sveltos v1.13.0, its manifest checksum, and the workload chart version the
+proof installs.
 
 ## What the first live run proved
+
+This run predates the per-cluster shape and stays exactly as recorded.
 
 The test created separate kind management and workload clusters. It installed
 Sveltos v1.12.0 on the management cluster and registered the workload cluster with
@@ -62,44 +66,33 @@ Sveltos restored it to three. The
 [live receipt](../../../examples/sveltos/kyverno-fleet/live-receipt.yaml) records
 the ConfigHub IDs and hashes, cluster result, deployment counts, and drift test.
 
-## What the OCI delivery run proved
+## What the OCI delivery run proved, and what supersedes it
 
 The [OCI delivery receipt](../../../runs/sveltos-oci-delivery-proof/receipt.yaml)
-records a separate run with one management cluster and two workload clusters:
+records the canary as it was first run: ConfigHub blocked a pilot profile until
+its exact revision was approved, published it, and a second approved revision
+removed one selector line to add the second cluster at a new OCI digest. That
+recording carried its OCI through a GitOps controller and a temporary registry,
+and it widened a selector, which this example no longer does anywhere. Its
+governance claim stands as recorded: nothing reached either cluster except an
+exactly approved revision, and Sveltos repaired a deliberate replica change on
+both clusters.
 
-1. ConfigHub stored the exact pilot `ClusterProfile` under the catalog's
-   system-configuration policy.
-2. A dry-run apply was blocked until the pilot revision was approved.
-3. ConfigHub published the approved revision as a private release.
-4. The runner packaged the approved Unit data as a portable OCI using a local,
-   no-server step.
-5. The package was pulled back without a ConfigHub account and compared with the
-   approved data.
-6. Argo CD reconciled that exact OCI digest on the Sveltos management cluster.
-7. Sveltos selected the pilot cluster, installed Kyverno, and left the second
-   cluster unchanged.
-8. The next ConfigHub revision removed only
-   `spec.clusterSelector.matchLabels.rollout`.
-9. ConfigHub blocked that revision until approval and published it at a different
-   OCI digest.
-10. Argo CD reconciled the new digest. Sveltos kept the pilot healthy and
-    installed Kyverno on the second staging cluster.
-11. Sveltos repaired a deliberate replica change on both clusters.
-
-The receipt lists the controller-managed fields added to each live
-`ClusterProfile` revision and confirms that every approved field kept its value.
-It also records the OCI digest and Kyverno result for each workload cluster.
-
-The same flow does not require ConfigHub at every step. In this run, ConfigHub
-stored and approved the revisions. A local no-server step created the portable
-OCI, and the cluster pulled it without a ConfigHub account.
+The reworked proof replaces the selector edit with the per-cluster canary: wave
+one approves and delivers the pilot cluster's record through the ConfigHub OCI
+gateway; the second cluster's record is complete, addressed, and gate-armed
+with no approval the whole time, and the run records that held state as
+evidence; wave two's approval is refused until the checkpoint after wave one
+shows the pilot healthy. The committed receipt is recognized as recorded on the
+earlier path, and the re-record on the gateway path replaces it and its
+summary.
 
 ## What remains
 
-The runner installed Sveltos itself directly from its pinned manifest as a
-management-cluster prerequisite. It used a temporary registry for the portable OCI
-and two local kind workload clusters. A permanent public package, a larger fleet,
-and a rollout that pauses after a failed target still need their own evidence.
+The re-record on the gateway path, run serially like every fleet proof. A
+larger fleet is chapter three's story, and a rollout that pauses after a failed
+target is now built into every wave: the next approval is not requested until
+the previous wave's clusters report healthy.
 
 ## Check the evidence
 
@@ -111,7 +104,8 @@ npm run sveltos-oci-delivery:verify
 ```
 
 While logged into the `helm-catalog` ConfigHub organization, also check that the
-live Space still contains the same profile and README under the recorded policy:
+live Space still contains the reviewed base record and README under the recorded
+policy:
 
 ```bash
 CUB_CONTEXT=<your-helm-catalog-context> npm run sveltos-example:hub-verify

@@ -80,9 +80,9 @@ enough to be the point of the repository.
   approved for one and held for the other, cannot be rolled back for one
   alone, and cannot say which of them runs which revision today. The records
   are variants of a shared base carrying only their own departures, so a
-  change made once still flows to all of them. Chapter three is recorded
-  this way; the other chapters are being reworked to match, and their
-  receipts say which shape each one recorded.
+  change made once still flows to all of them. Every chapter now holds its
+  fleet this way. Chapter three is recorded live on it, and each committed
+  receipt says which shape its recording used.
 - **The rollout definition is itself reviewed configuration.** A wave is a
   label query over the per-cluster records, not a pipeline object beside
   them, and widening a rollout means approving the next cluster's record.
@@ -141,13 +141,14 @@ committed [receipt](runs/sveltos-env-rollout-proof/receipt.yaml): four
 clusters at four checkpoints, each carrying its own departure through the
 change.
 
-Chapters one and two are recorded in the
-[two-wave proof](data/sveltos-oci-delivery-proof/summary.md): ConfigHub held
-a pilot profile until its exact revision was approved, and one approved
-selector change added the second cluster at a new digest. That recording
-predates the gateway and carried its OCI through a GitOps controller and a
-temporary registry, which its receipt states. The governance half stands as
-recorded, and the delivery half awaits a gateway re-record.
+Chapters one and two now hold the same shape: the canary is two records,
+and widening the rollout means approving the second cluster's record while
+it sits complete, addressed, and gate-armed with no approval on file. The
+committed [two-wave recording](data/sveltos-oci-delivery-proof/summary.md)
+predates this: it widened one profile with an approved selector change and
+carried its OCI through a GitOps controller and a temporary registry, which
+its receipt states. Its governance half stands as recorded, and the
+per-cluster re-record on the gateway replaces it.
 
 The [fleet rehearsal](examples/sveltos/fleet-rehearsal/README.md) proves the
 delivery machinery on a five-cluster fleet with no ConfigHub account at all,
@@ -156,11 +157,14 @@ and records its phase timings.
 ## The five chapters
 
 1. **[Kyverno across the fleet](examples/sveltos/kyverno-fleet/README.md)**
-   installs admission policy through a reviewed record with an approval
-   gate. Recorded live on the earlier delivery path.
-2. **The canary**, in the same example: the reviewed profile selected only
-   the pilot cluster, and one approved selector change added the second
-   cluster at a new OCI digest. Recorded live on the earlier delivery path.
+   installs admission policy through one reviewed record per cluster, each
+   behind the approval gate, because policy is the clearest case for review
+   before a change reaches any cluster. The first recording stands as
+   recorded and the gateway re-record is pending.
+2. **The canary**, in the same example: the pilot cluster's record approved
+   and delivered first, the second cluster's record complete, addressed,
+   and gate-armed until its own approval widens the rollout. No selector is
+   edited anywhere. Awaits its re-record on the gateway.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
    one reviewed values change pilot to staging to production, with one
    governed record per cluster and no record addressing two clusters.
@@ -168,15 +172,17 @@ and records its phase timings.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
    that proves no cluster was missed. No vulnerability scanning is claimed.
-   Recorded live.
+   Recorded live before the per-cluster rework; awaits its re-record.
 5. **[Bulk operations](examples/sveltos/bulk-ops/README.md)**: one reviewed
    edit written to every record in one pass, closed by a zero-drift audit.
-   Recorded live.
+   Recorded live before the per-cluster rework; awaits its re-record.
 
-All five chapters have been recorded live. Every observed cell in every
-matrix comes from a committed receipt, and each receipt records the addon
-controller image its run used. Chapters one and two were recorded on the
-earlier delivery path, and the rest fetch from the gateway.
+Every chapter has a live recording committed, and every observed matrix
+cell comes from a committed receipt. Chapter three's recording is on the
+current per-cluster design over the gateway. The other chapters' recordings
+predate the design; their verifiers say so, fill nothing from them, and
+each awaits its re-record. Every receipt records the addon controller image
+its run used.
 
 ## How to run it
 

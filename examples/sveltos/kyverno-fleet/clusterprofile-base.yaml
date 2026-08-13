@@ -1,12 +1,11 @@
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: kyverno-staging
+  name: kyverno-staging-base
 spec:
   clusterSelector:
     matchLabels:
-      environment: staging
-      rollout: pilot
+      cluster: unassigned
   syncMode: ContinuousWithDriftDetection
   helmCharts:
     - repositoryURL: https://kyverno.github.io/kyverno/

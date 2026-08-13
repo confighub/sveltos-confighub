@@ -29,6 +29,7 @@ import {
   sameSet,
   spaceName,
   storedData,
+  waveUnlockEvidence,
   writeDocuments,
   writePath,
   writeStoredDocuments,
@@ -507,6 +508,7 @@ function run() {
         spaceFor,
         runId,
         variantRecords,
+        checkpoints,
       }));
       checkpoints.push(recordCheckpoint({
         id: `after-wave-${wave.wave}`,
@@ -1091,7 +1093,24 @@ function promoteWave({
   spaceFor,
   runId,
   variantRecords,
+  checkpoints,
 }) {
+  // Before this wave touches anything, the preceding checkpoint must show the
+  // clusters it depends on reporting healthy: the whole fleet at the baseline
+  // for wave one, the environment the previous wave promoted after that. An
+  // unhealthy cluster refuses the wave here, before its set is even listed,
+  // and the record of what unlocked the wave goes into the receipt.
+  const previous = wave.wave === 1
+    ? null
+    : plan.waves.find((row) => row.wave === wave.wave - 1);
+  const unlockedBy = waveUnlockEvidence({
+    wave: wave.wave,
+    previousEnvironment: previous?.environment ?? null,
+    expectedClusters: previous
+      ? previous.clusters
+      : plan.clusters.map((row) => row.cluster),
+    checkpoints,
+  });
   const query = waveQuery(plan, runId, wave.environment);
   const clusters = wave.clusters.map((name) =>
     plan.clusters.find((row) => row.cluster === name));
@@ -1178,6 +1197,7 @@ function promoteWave({
   return {
     wave: wave.wave,
     environment: wave.environment,
+    unlockedBy,
     selection: { ...preflight, ...reviewed.selection },
     upgrade: {
       command: `cub unit update --patch --space "*" --where <query> --upgrade`,
@@ -1521,6 +1541,10 @@ function buildReceipt({
         query: baselineSet.selection.query,
         matched: baselineSet.selection.matched,
         ...baselineSet.approval,
+      },
+      advance: {
+        evidenceGated: true,
+        rule: "No wave's approval is requested until the preceding checkpoint shows every cluster the wave depends on reporting healthy: the whole fleet at the baseline for wave one, the environment the previous wave promoted after that. Each wave records the evidence that unlocked it.",
       },
       waves: waveRecords,
       gatewayDelivery: {
@@ -1932,9 +1956,57 @@ function verifyWaves(receipt, plan) {
       && baseline.recordedApprovals === plan.clusters.length + 1,
     "the baseline must be approved as one set operation over every record this run created",
   );
+  // A receipt that declares evidence-gated advance must record, on every wave,
+  // the checkpoint evidence that unlocked its approval, and that evidence must
+  // agree with the checkpoints the receipt itself carries. A receipt recorded
+  // before the guard existed declares nothing and carries nothing; one that
+  // carries unlock evidence without declaring it, or declares it without
+  // carrying it, is refused.
+  const evidenceGated = receipt.spec?.advance?.evidenceGated === true;
+  const carrying = waves.filter((row) => row.unlockedBy).length;
+  if (!evidenceGated) {
+    check(
+      carrying === 0,
+      "waves carry unlock evidence the receipt does not declare; the advance record changed",
+    );
+    console.log(
+      "the recorded receipt predates evidence-gated advance and records no unlock evidence; it awaits a live re-record",
+    );
+  }
   for (const wave of waves) {
     const planned = plan.waves.find((row) => row.wave === wave.wave);
     const members = wave.clusters ?? [];
+    if (evidenceGated) {
+      const unlocked = wave.unlockedBy ?? {};
+      const expectedId = wave.wave === 1
+        ? "baseline"
+        : `after-wave-${wave.wave - 1}`;
+      const previous = wave.wave === 1
+        ? null
+        : plan.waves.find((row) => row.wave === wave.wave - 1);
+      const checkpoint = (receipt.spec?.checkpoints ?? []).find(
+        (row) => row.id === unlocked.precedingCheckpointId,
+      );
+      const scope = previous
+        ? (checkpoint?.observations ?? []).filter(
+          (row) => row.environment === previous.environment,
+        )
+        : (checkpoint?.observations ?? []);
+      check(
+        unlocked.approvalFollowedEvidence === true
+          && unlocked.precedingCheckpointId === expectedId
+          && unlocked.environment === (previous ? previous.environment : "baseline")
+          && Boolean(checkpoint)
+          && (unlocked.clusters ?? []).length > 0
+          && sameSet(
+            (unlocked.clusters ?? []).map((row) => row.logicalCluster),
+            scope.map((row) => row.logicalCluster),
+          )
+          && (unlocked.clusters ?? []).every((row) => row.result === "pass")
+          && scope.every((row) => row.observation?.result === "pass"),
+        `wave ${wave.wave} must record the evidence that unlocked its approval: every cluster it depends on healthy at ${expectedId}`,
+      );
+    }
     check(
       sameSet(members.map((row) => row.cluster), planned.clusters),
       `wave ${wave.wave} approved ${members.map((row) => row.cluster).join(", ")} rather than the ${wave.environment} clusters`,
@@ -2083,6 +2155,20 @@ function renderSummary(receipt) {
     `| ${wave.wave} | ${wave.environment} | ${wave.clusters.length} | ${wave.approval.recordedApprovals} |`);
   const finalCheckpoint = receipt.spec.checkpoints.at(-1);
   const delivery = receipt.spec.gatewayDelivery;
+  // A receipt recorded before evidence-gated advance carries no unlock
+  // records, and its summary stays exactly as recorded.
+  const advance = receipt.spec.advance?.evidenceGated === true
+    ? `
+No wave's approval was requested on a schedule. Each one was unlocked by the
+preceding checkpoint showing every cluster it depends on reporting healthy,
+and each wave records that evidence:
+
+| Wave | Unlocked by checkpoint | Clusters observed healthy there |
+| --- | --- | --- |
+${receipt.spec.waves.map((wave) =>
+    `| ${wave.wave} | \`${wave.unlockedBy.precedingCheckpointId}\` (${wave.unlockedBy.environment}) | ${wave.unlockedBy.clusters.map((row) => row.logicalCluster).join(", ")} |`).join("\n")}
+`
+    : "";
   return `# ConfigHub promotes one change through a fleet it maps cluster by cluster
 
 This run starts with four workload clusters and a management cluster. ConfigHub
@@ -2112,7 +2198,7 @@ ${rows.join("\n")}
 | Wave | Group | Variants selected | Approvals recorded |
 | --- | --- | --- | --- |
 ${waves.join("\n")}
-
+${advance}
 | Check | Result |
 | --- | --- |
 | Checkpoints observed | ${receipt.spec.checkpoints.length}/4 |
@@ -3500,6 +3586,7 @@ function selfTest() {
 
     // The trap: when the merge hands back the variant's own content, the wave
     // is refused rather than recorded as promoted.
+    const walkCheckpoints = synthesizeCheckpoints(plan);
     hub.state.mergeKeepsDepartureOnly = true;
     expectFailure(
       () => promoteWave({
@@ -3511,12 +3598,53 @@ function selfTest() {
         spaceFor,
         runId,
         variantRecords,
+        checkpoints: walkCheckpoints.slice(0, 1),
       }),
       /did not come out of the upgrade as the reviewed merge: inheritedTheChange=false/,
       "silent departure win refusal",
     );
     hub.state.mergeKeepsDepartureOnly = false;
     hub.restoreVariantBaselines();
+
+    // The guard: a wave whose preceding checkpoint shows an unhealthy cluster
+    // in the environment just promoted refuses to request the next approval,
+    // before its set is even listed.
+    const sickCheckpoints = synthesizeCheckpoints(plan).slice(0, 2);
+    sickCheckpoints[1].observations
+      .find((row) => row.environment === "pilot").observation.result = "fail";
+    expectFailure(
+      () => promoteWave({
+        policyContext,
+        managementKubeconfig,
+        managementName,
+        wave: plan.waves[1],
+        plan,
+        spaceFor,
+        runId,
+        variantRecords,
+        checkpoints: sickCheckpoints,
+      }),
+      /wave 2 approval refused: .* did not report healthy at after-wave-1/,
+      "unhealthy pilot refuses wave two's approval",
+    );
+    // And a wave whose evidence is missing a cluster is refused the same way.
+    const incompleteCheckpoints = synthesizeCheckpoints(plan).slice(0, 1);
+    incompleteCheckpoints[0].observations.pop();
+    expectFailure(
+      () => promoteWave({
+        policyContext,
+        managementKubeconfig,
+        managementName,
+        wave: plan.waves[0],
+        plan,
+        spaceFor,
+        runId,
+        variantRecords,
+        checkpoints: incompleteCheckpoints,
+      }),
+      /the evidence is incomplete/,
+      "a checkpoint missing a cluster is not unlock evidence",
+    );
 
     const waveRecords = [];
     for (const wave of plan.waves) {
@@ -3529,6 +3657,7 @@ function selfTest() {
         spaceFor,
         runId,
         variantRecords,
+        checkpoints: walkCheckpoints.slice(0, wave.wave),
       }));
     }
     check(
@@ -3757,6 +3886,12 @@ function selfTest() {
       ["wave approvals miscounted", (c) => { c.spec.waves[2].approval.recordedApprovals = 1; }, /one approval per member/],
       ["wave approval iterated", (c) => { c.spec.waves[2].approval.appliedAsOneOperation = false; }, /one operation/],
       ["wave upgrade iterated", (c) => { c.spec.waves[2].upgrade.appliedAsOneOperation = false; }, /one operation/],
+      ["wave unlock dropped", (c) => { delete c.spec.waves[0].unlockedBy; }, /must record the evidence that unlocked its approval/],
+      ["wave unlock unmarked", (c) => { c.spec.waves[1].unlockedBy.approvalFollowedEvidence = false; }, /must record the evidence that unlocked its approval/],
+      ["wave unlock wrong checkpoint", (c) => { c.spec.waves[2].unlockedBy.precedingCheckpointId = "baseline"; }, /must record the evidence that unlocked its approval/],
+      ["wave unlock unhealthy", (c) => { c.spec.waves[1].unlockedBy.clusters[0].result = "fail"; }, /must record the evidence that unlocked its approval/],
+      ["wave unlock cluster dropped", (c) => { c.spec.waves[0].unlockedBy.clusters.pop(); }, /must record the evidence that unlocked its approval/],
+      ["advance undeclared", (c) => { delete c.spec.advance; }, /unlock evidence the receipt does not declare/],
       ["checkpoint set", (c) => { c.spec.checkpoints.pop(); }, /checkpoint set changed/],
       ["checkpoint math", (c) => { c.spec.checkpoints[1].observations.find((row) => row.environment === "staging").expectedReplicas[backgroundDeployment] = 2; }, /observation for .* changed/],
       ["observation result", (c) => { c.spec.checkpoints[2].observations[0].observation.result = "fail"; }, /observation for .* changed/],
@@ -3777,7 +3912,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -4084,6 +4219,57 @@ function createFakeConfigHub() {
       }
       return ok("");
     }
+    // One verb clones the Space and every unit in it, links each clone to its
+    // upstream, stamps the Variant label, and copies the approval wiring from
+    // the upstream Space. The release target is deliberately not copied, which
+    // is why the runner sets it afterwards.
+    if (entity === "variant" && verb === "create") {
+      const [variantName, upstreamSlug] = rest;
+      const upstream = spaces.get(upstreamSlug);
+      if (!upstream) return refuse(`upstream space ${upstreamSlug} not found`);
+      const pattern = String(flags["space-pattern"] ?? "");
+      if (!pattern.startsWith("template:") || pattern.includes("{{")) {
+        return refuse(`the self-test fake hub resolves only literal space patterns, not ${pattern || "a derived slug"}`);
+      }
+      const slug = pattern.slice("template:".length);
+      if (spaces.has(slug)) return refuse(`space ${slug} already exists`);
+      spaces.set(slug, {
+        Slug: slug,
+        SpaceID: `self-test-space-${slug}`,
+        TriggerIDs: state.triggerIdOverride ?? [...upstream.TriggerIDs],
+        ReleaseTargetID: null,
+        TriggerFilterID: upstream.TriggerFilterID,
+        Labels: { ...(upstream.Labels ?? {}), Variant: variantName },
+      });
+      for (const [key, row] of [...units.entries()]) {
+        if (row.SpaceSlug !== upstreamSlug) continue;
+        const clone = {
+          Slug: row.Slug,
+          SpaceSlug: slug,
+          UnitID: `self-test-unit-${slug}-${row.Slug}`,
+          HeadRevisionNum: 1,
+          ApplyGates: { "awaiting/triggers": true },
+          ApprovedBy: [],
+          Labels: { ...(row.Labels ?? {}) },
+          TargetID: null,
+          UpstreamUnitID: state.refuseUpstreamLink ? "" : row.UnitID,
+          UpstreamUnitKey: key,
+          UpstreamRevisionNum: row.HeadRevisionNum,
+          history: new Map(),
+        };
+        store(clone, dataOf(row));
+        units.set(unitKey(slug, row.Slug), clone);
+        pending.add(unitKey(slug, row.Slug));
+      }
+      return ok("");
+    }
+    if (entity === "unit" && verb === "set-target") {
+      const key = unitKey(flags.space, rest[0]);
+      const unit = units.get(key);
+      if (!unit) return refuse(`unit ${key} not found`);
+      unit.TargetID = `self-test-target-${rest[1]}`;
+      return ok("");
+    }
     if (entity === "unit" && verb === "create") {
       const [slug, path] = rest;
       const key = unitKey(flags.space, slug);
@@ -4119,8 +4305,18 @@ function createFakeConfigHub() {
       pending.add(key);
       return ok("");
     }
+    // A label patch on one unit is a metadata change: the labels merge and the
+    // stored revision is untouched, so the gate and approval state stay as
+    // they were.
+    if (entity === "unit" && verb === "update" && flags.patch && flags.space !== "*") {
+      const key = unitKey(flags.space, rest[0]);
+      const unit = units.get(key);
+      if (!unit) return refuse(`unit ${key} not found`);
+      if (flags.upgrade) return refuse("the self-test fake hub upgrades sets, not single units");
+      unit.Labels = { ...(unit.Labels ?? {}), ...labelsFrom(flags.label) };
+      return ok(JSON.stringify({ Unit: projectUnit(unit) }));
+    }
     if (entity === "unit" && verb === "update" && flags.patch) {
-      if (flags.space !== "*") return refuse("bulk patch needs --space \"*\"");
       if (!flags.upgrade) return refuse("the self-test fake hub only patches upgrades");
       const selected = matching(flags.where);
       if (!selected) return refuse(`unsupported where expression ${flags.where}`);

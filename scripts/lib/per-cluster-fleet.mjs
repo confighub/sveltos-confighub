@@ -144,6 +144,54 @@ export function normalizeDigest(value) {
   return match ? match[0].toLowerCase() : "";
 }
 
+// Evidence-gated advance: a wave may request its approval only after the
+// preceding checkpoint shows the clusters it depends on reporting healthy.
+// Wave one depends on the whole fleet at the baseline; every later wave
+// depends on the environment the previous wave just promoted. The returned
+// record is written into the receipt per wave, so a reader can verify from
+// the receipt alone that every approval followed evidence rather than a
+// schedule. Clusters are matched on their fleet names, because the live kind
+// clusters carry a run stamp the plan does not.
+export function waveUnlockEvidence({
+  wave,
+  previousEnvironment,
+  expectedClusters,
+  checkpoints,
+}) {
+  const checkpoint = checkpoints.at(-1);
+  const expectedId = wave === 1 ? "baseline" : `after-wave-${wave - 1}`;
+  check(
+    checkpoint?.id === expectedId,
+    `wave ${wave} cannot request its approval: the preceding checkpoint is ${checkpoint?.id ?? "missing"} rather than ${expectedId}`,
+  );
+  const scope = wave === 1
+    ? checkpoint.observations
+    : checkpoint.observations.filter(
+      (row) => row.environment === previousEnvironment,
+    );
+  const seen = scope.map((row) => row.logicalCluster);
+  check(
+    sameSet(seen, expectedClusters),
+    `wave ${wave} cannot request its approval: ${checkpoint.id} observed ${seen.sort().join(", ") || "no cluster"} rather than ${[...expectedClusters].sort().join(", ")}, so the evidence is incomplete`,
+  );
+  const unhealthy = scope.filter((row) => row.observation?.result !== "pass");
+  check(
+    unhealthy.length === 0,
+    `wave ${wave} approval refused: ${unhealthy.map((row) => row.logicalCluster).sort().join(", ")} did not report healthy at ${checkpoint.id}`,
+  );
+  return {
+    precedingCheckpointId: checkpoint.id,
+    environment: wave === 1 ? "baseline" : previousEnvironment,
+    clusters: scope.map((row) => ({
+      cluster: row.cluster,
+      logicalCluster: row.logicalCluster,
+      environment: row.environment,
+      result: row.observation.result,
+    })),
+    approvalFollowedEvidence: true,
+  };
+}
+
 // The server evaluates apply gates after the write returns, so a publish can
 // arrive while a gate trigger is still queued. The server says so in those
 // words and re-queues the trigger. That is a race and not a refusal. A gate
@@ -257,7 +305,7 @@ export function governedRecords(deps) {
   } = deps;
 
   function createPolicySpace(context, space) {
-    assertPublishableSpaceName(space);
+    assertPublishableSpaceName(space, probeRecord);
     cub(context, [
       "space", "create", space,
       "--label", `App=${appLabel}`,
@@ -268,7 +316,7 @@ export function governedRecords(deps) {
       "--label", `Component=${componentLabel}`,
       "--label", `Owner=${ownerLabel}`,
       "--label", "ApplyPolicyProfile=catalog-standard",
-      "--label", "Proof=sveltos-env-rollout",
+      "--label", `Proof=${proofLabel}`,
       "--label", "ResourceClass=system-configuration",
       "--label", "SourceType=sveltos",
       "--trigger-filter", approvalFilterRef,
@@ -604,9 +652,13 @@ export function governedRecords(deps) {
     };
   }
 
-  // A variant is a clone of the base unit, linked to it, with this cluster's
-  // departures written over it. The link is what lets a later base change flow
-  // down while the departures stay.
+  // A variant is a clone of the base Space and its unit, made with the CLI's
+  // own verb for exactly this shape: `cub variant create` clones the Space and
+  // every unit in one operation, links each clone to its upstream, stamps the
+  // Variant label with the cluster's name, and copies the approval wiring
+  // (WhereTrigger, TriggerFilterID, Permissions, DeleteGates) from the base
+  // Space. The upstream link is what lets a later base change flow down while
+  // the departures stay.
   function establishVariant({
     policyContext,
     space,
@@ -618,19 +670,34 @@ export function governedRecords(deps) {
     workRoot,
     policySpacesCreated,
   }) {
-    createPolicySpace(policyContext, space);
+    // The server derives the new Space's slug from labels, so the declared
+    // slug is pinned explicitly: the gateway only serves lowercase slugs, and
+    // the committed variants declaration is the reviewed source of the name.
+    assertPublishableSpaceName(space, probeRecord);
+    cub(policyContext, [
+      "variant", "create", cluster.cluster, baseSpace,
+      "--space-pattern", `template:${space}`,
+      "--quiet",
+    ]);
     policySpacesCreated.add(space);
+    // The release target is not among the fields variant create copies, so it
+    // is set the same way the base Space's was.
+    cub(policyContext, [
+      "space", "update", space,
+      "--release-target", catalogOciTargetRef,
+      "--quiet",
+    ]);
     assertPolicySpace(
       policyContext,
       space,
       topology.triggerIds,
       catalogTarget.TargetID,
     );
+    // Every label the wave and audit queries select on is set explicitly on
+    // the clone, rather than trusting the clone to inherit the base unit's,
+    // because a record a query cannot find is a cluster a wave cannot reach.
     cub(policyContext, [
-      "unit", "create", "--space", space, policyUnit,
-      "--upstream-space", baseSpace,
-      "--upstream-unit", policyUnit,
-      "--target", catalogOciTargetRef,
+      "unit", "update", "--patch", "--space", space, policyUnit,
       "--label", `App=${appLabel}`,
       "--label", `Cluster=${cluster.cluster}`,
       "--label", `Environment=${cluster.environment}`,
@@ -638,8 +705,12 @@ export function governedRecords(deps) {
       "--label", `Proof=${proofLabel}`,
       "--label", `Run=${runId}`,
       "--label", `Record=${variantRecordLabel}`,
-      "--change-desc", `Clone the base record for ${cluster.cluster}`,
+      "--change-desc", `Label ${cluster.cluster}'s clone of the base record`,
       "--quiet",
+    ]);
+    cub(policyContext, [
+      "unit", "set-target", policyUnit, catalogOciTargetRef,
+      "--space", space, "--quiet",
     ]);
     const cloned = cubJson(policyContext, [
       "unit", "get", "--space", space, policyUnit, "-o", "json",
@@ -759,7 +830,7 @@ export function governedRecords(deps) {
     cub(policyContext, [
       "unit", "create", "--space", space, policyUnit, manifestPath,
       "--target", catalogOciTargetRef,
-      "--label", "App=sveltos-kyverno-env-rollout",
+      "--label", `App=${appLabel}`,
       "--label", `Cluster=${plan.management.cluster}`,
       "--label", "Role=management",
       "--label", `Proof=${proofLabel}`,

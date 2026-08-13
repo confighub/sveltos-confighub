@@ -19,9 +19,6 @@ const EXAMPLES_DIR = "examples/sveltos";
 const PROFILE_KINDS = new Set(["ClusterProfile", "Profile"]);
 
 const LEGACY = [
-  // Chapters 1 and 2 as recorded; reworked by issue #4.
-  "examples/sveltos/kyverno-fleet/clusterprofile.yaml",
-  "examples/sveltos/kyverno-fleet/clusterprofile-pilot.yaml",
   // The rehearsal has no ConfigHub records behind its profiles, so the
   // record-per-cluster rule has nothing to bind to there.
   "examples/sveltos/fleet-rehearsal/clusterprofile-pilot.yaml",
@@ -135,7 +132,7 @@ function verify() {
   }
   console.log(
     `verified the per-cluster model: ${addressed} profiles each address one cluster; ` +
-      `${LEGACY.length} files recorded before the model are expected and listed (issue #4 and the rehearsal exemption), nothing is wrong`,
+      `${LEGACY.length} files without ConfigHub records behind them are expected and listed (the rehearsal exemption), nothing is wrong`,
   );
 }
 

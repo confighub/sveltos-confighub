@@ -109,10 +109,16 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
 1. **Create the base**: one Space wired to your approval trigger filter,
    holding one `clusterprofile` record with the shared content. The base
    gets no target and is never published.
-2. **Clone a cluster's variant**:
-   `cub unit create --upstream-space <base-space> --upstream-unit clusterprofile ...`
-   in that cluster's own Space, then write its three departures (name,
-   address line, removal behaviour).
+2. **Clone a cluster's variant**: `cub variant create <cluster> <base-space>`
+   clones the base Space and its record in one operation, links the clone to
+   its upstream, and copies the approval wiring. The variant name is the
+   cluster, which reads exactly like the model. Pin the new Space's slug with
+   `--space-pattern` (the gateway serves lowercase names only), set its
+   release target, then write the clone's three departures (name, address
+   line, removal behaviour). `cub variant promote <variant-space>` is the
+   reconcile verb when a variant fell behind its base or the base gained a
+   unit; the recorded waves do not use it, because a wave is one set
+   operation over every record it names rather than one promotion per Space.
 3. **Select a wave as a set**: `cub unit list --space "*" --where "<query
    over your record labels>"`, and assert the match equals exactly the wave
    you intended before acting on it.
@@ -134,25 +140,22 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
 
 One check, part of `npm run verify` and CI, reads every committed
 `ClusterProfile` and refuses a selector that could match more than one
-cluster. The files recorded before the model are listed inside the check,
-next to the issues that rework them, and fixing one means removing it from
-the list in the same change. That is the whole mechanism.
+cluster. The only files listed as exempt inside the check are the
+rehearsal's, which have no ConfigHub records behind them, and shrinking or
+growing that list is refused unless the files change in the same change.
+That is the whole mechanism.
 
 Before a live run, update cub; the runners were measured against v0.2.15
 and newer, and each one still checks its own preconditions and stops with a
 named reason.
 
-## What is not built yet
+## What still waits on a live run
 
-- Chapters one and two still record the older one-profile shape; their
-  per-cluster re-record is
-  [#4](https://github.com/confighub/sveltos-confighub/issues/4).
-- Evidence-gated advance (the next wave refusing to start until the
-  previous one is observed healthy) is designed, not built:
-  [#2](https://github.com/confighub/sveltos-confighub/issues/2).
-- The record machinery clones by hand what `cub variant create` and
-  `cub variant promote` now do natively; adopting them is
-  [#5](https://github.com/confighub/sveltos-confighub/issues/5).
-
-Nothing in this guide depends on those landing, and the receipts say which
-shape each chapter recorded.
+Everything in this guide is built and verified offline. What waits is
+recording: every chapter's committed recording predates some part of the
+current design — the per-cluster shape for chapters one, two, four, and
+five, and the evidence-gated advance for chapter three — and each verifier
+says so rather than filling from a superseded receipt. The re-records run
+serially on the gateway path, and
+[#2](https://github.com/confighub/sveltos-confighub/issues/2) also waits on
+an upstream addon-controller release that carries the gzip fix.
