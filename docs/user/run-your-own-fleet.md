@@ -149,13 +149,11 @@ Before a live run, update cub; the runners were measured against v0.2.15
 and newer, and each one still checks its own preconditions and stops with a
 named reason.
 
-## What still waits on a live run
+## What still waits
 
-Everything in this guide is built and verified offline. What waits is
-recording: every chapter's committed recording predates some part of the
-current design — the per-cluster shape for chapters one, two, four, and
-five, and the evidence-gated advance for chapter three — and each verifier
-says so rather than filling from a superseded receipt. The re-records run
-serially on the gateway path, and
-[#2](https://github.com/confighub/sveltos-confighub/issues/2) also waits on
-an upstream addon-controller release that carries the gzip fix.
+Every chapter is recorded live on the design this guide describes: one
+variant per cluster over the gateway, waves unlocked by checkpoint evidence.
+What waits is an upstream release
+([#2](https://github.com/confighub/sveltos-confighub/issues/2)): the gateway
+serves gzipped layers, the recordings used the gzip-capable addon controller
+build, and the chapters re-record when that fix ships in a Sveltos release.

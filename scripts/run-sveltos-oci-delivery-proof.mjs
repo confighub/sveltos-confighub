@@ -522,8 +522,17 @@ function waitForRemoteDeploy({
           !looksLikeGzipDecodeFailure(failureMessage),
           `the addon controller could not read the ${cluster} release: it decoded gzipped bytes as YAML. The gateway serves each release as a gzipped tar layer, so this run needs an addon controller that gunzips. Set SVELTOS_ADDON_CONTROLLER_IMAGE to that build and see ${probeRecord}.`,
         );
+        // This chapter applies the bootstrap profiles before anything is
+        // approved, so until a Space's first release is published the gateway
+        // answers not found and Sveltos records the pull as failed. That is
+        // the inert state the canary deliberately walks through, and a stale
+        // not-found status right after publish is the same wait: Sveltos
+        // requeues on its interval and the loop outlasts it. Any other
+        // failure still stops the run.
+        const pullNotFound = /failed to pull OCI artifact/i.test(failureMessage)
+          && /not found/i.test(failureMessage);
         check(
-          feature.status !== "Failed",
+          feature.status !== "Failed" || pullNotFound,
           `the ${cluster} bootstrap profile failed to apply the fetched release: ${last.reason}`,
         );
       }
@@ -3639,7 +3648,14 @@ function createFakeManagementCluster(hub) {
     for (const [profileName, space] of bootstraps) {
       const release = hub.releaseFor(space);
       if (!release) {
-        summaries.set(profileName, { status: "Provisioning", failureMessage: "" });
+        // The live gateway answers not found for a Space with no release,
+        // and Sveltos records the pull as failed. The fake says the same
+        // thing so the runner's wait is proved to outlast that inert state
+        // rather than refusing on it.
+        summaries.set(profileName, {
+          status: "Failed",
+          failureMessage: `failed to pull OCI artifact oci://${configHubOciHost}/space/${space}:${releaseTag}: ${configHubOciHost}/space/${space}:${releaseTag}: not found`,
+        });
         continue;
       }
       if (state.failureMode === "gzip") {

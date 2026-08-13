@@ -141,14 +141,16 @@ committed [receipt](runs/sveltos-env-rollout-proof/receipt.yaml): four
 clusters at four checkpoints, each carrying its own departure through the
 change.
 
-Chapters one and two now hold the same shape: the canary is two records,
-and widening the rollout means approving the second cluster's variant while
-it sits complete, addressed, and gate-armed with no approval on file. The
-committed [two-wave recording](data/sveltos-oci-delivery-proof/summary.md)
-predates this: it widened one profile with an approved selector change and
-carried its OCI through a GitOps controller and a temporary registry, which
-its receipt states. Its governance half stands as recorded, and the
-per-cluster re-record on the gateway replaces it.
+Chapters one and two hold the same shape, and the
+[recorded canary](data/sveltos-oci-delivery-proof/summary.md) shows what it
+buys: two records, two approvals, two release digests. Wave one approved and
+delivered the pilot cluster's variant alone while the second cluster's
+variant sat complete, addressed, and gate-armed with zero approvals and
+nothing served for its Space — the
+[receipt](runs/sveltos-oci-delivery-proof/receipt.yaml) records that held
+state as evidence, wave two's approval was unlocked by the checkpoint that
+showed the pilot healthy, and injected drift was repaired on both clusters.
+No selector was edited anywhere.
 
 The [fleet rehearsal](examples/sveltos/fleet-rehearsal/README.md) proves the
 delivery machinery on a five-cluster fleet with no ConfigHub account at all,
@@ -159,12 +161,12 @@ and records its phase timings.
 1. **[Kyverno across the fleet](examples/sveltos/kyverno-fleet/README.md)**
    installs admission policy through one reviewed variant per cluster, each
    behind the approval gate, because policy is the clearest case for review
-   before a change reaches any cluster. The first recording stands as
-   recorded and the gateway re-record is pending.
+   before a change reaches any cluster. Recorded live on the gateway; the
+   first, partial recording remains a historical result.
 2. **The canary**, in the same example: the pilot cluster's variant approved
    and delivered first, the second cluster's variant complete, addressed,
    and gate-armed until its own approval widens the rollout. No selector is
-   edited anywhere. Awaits its re-record on the gateway.
+   edited anywhere. Recorded live on the gateway.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
    one reviewed values change pilot to staging to production, with one
    governed variant per cluster and no variant addressing two clusters.
@@ -172,17 +174,15 @@ and records its phase timings.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
    that proves no cluster was missed. No vulnerability scanning is claimed.
-   Recorded live before the per-cluster rework; awaits its re-record.
+   Recorded live on the per-cluster design.
 5. **[Bulk operations](examples/sveltos/bulk-ops/README.md)**: one reviewed
    edit written to every record in one pass, closed by a zero-drift audit.
-   Recorded live before the per-cluster rework; awaits its re-record.
+   Recorded live on the per-cluster design.
 
-Every chapter has a live recording committed, and every observed matrix
-cell comes from a committed receipt. Chapter three's recording is on the
-current per-cluster design over the gateway. The other chapters' recordings
-predate the design; their verifiers say so, fill nothing from them, and
-each awaits its re-record. Every receipt records the addon controller image
-its run used.
+Every chapter is recorded live on the per-cluster design over the gateway,
+every wave's approval records the checkpoint evidence that unlocked it, and
+every observed matrix cell comes from a committed receipt. Every receipt
+records the addon controller image its run used.
 
 ## How to run it
 
