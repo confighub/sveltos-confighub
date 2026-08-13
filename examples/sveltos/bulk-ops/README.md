@@ -1,9 +1,9 @@
 # Sveltos bulk operations
 
 One reviewed edit raises the Kyverno background controller across the whole
-fleet in a single pass, and every environment record still clears its own
-approval gate before any cluster sees the change. This is chapter five, the
-change-it-once claim, and it closes with an audit that looks for drift
+fleet in a single operation, and every per-cluster record still clears its
+own approval gate before any cluster sees the change. This is chapter five,
+the change-it-once claim, and it closes with an audit that looks for drift
 everywhere and finds none.
 
 [Sveltos](https://projectsveltos.io) selects the clusters and installs the
@@ -35,25 +35,34 @@ honestly empty until one is.
 
 ## How it works
 
-Each environment keeps its own governed `ClusterProfile` in its own ConfigHub
-Space with an approval gate. The
-[bulk change candidate](bulk-change.yaml) raises
-`backgroundController.replicas` from 2 to 3, and one pass writes those same
-reviewed bytes into all three records under one change description. Nothing
-is promoted in waves.
+ConfigHub holds the fleet the way the earlier chapters hold it: one reviewed
+[base record](clusterprofile-base.yaml) carrying what every cluster shares,
+and one [variant per cluster](variants.yaml), each a clone linked to the base
+that departs only on its own name, its own single-cluster selector, and its
+own drift-handling behavior. Each record lives in its own ConfigHub Space
+with an approval gate.
+
+The [bulk change candidate](bulk-change.yaml) raises
+`backgroundController.replicas` from 2 to 3. The edit is made once, on the
+base record, and approved there. One set operation
+(`cub unit update --patch --space "*" --where <query> --upgrade`) then
+inherits it into every variant at once, with each variant keeping its own
+departures. Nothing is promoted in waves: the whole fleet is one wave.
 
 Each record then clears its own bracket: the gate arms with no approval on
-file, the exact head revision is approved, the gate clears with that approval
-recorded, and the Space publishes a release. One bootstrap `ClusterProfile`
-per environment points Sveltos at that Space on the gateway
-(`oci://oci.hub.confighub.com/space/<space>:latest`), and Sveltos fetches the
-release itself and sends the reviewed profile to the clusters carrying that
-environment label.
+file, one set approval binds each record to its own exact head revision, the
+gate clears with that approval recorded, and each Space publishes a release.
+One bootstrap `ClusterProfile` per workload Space points Sveltos at that
+Space on the gateway
+(`oci://oci.hub.confighub.com/space/<space>:latest`), and Sveltos fetches
+each release itself and sends the reviewed profile to the one cluster that
+variant addresses.
 
-The fan-out is one authored edit and one pass. It is also three approvals and
-three publishes, because each Space publishes its own release and each
-bootstrap profile reads its own Space. The receipt records those counts rather
-than rounding them down to one operation.
+The fan-out is one reviewed edit and one set upgrade across the Spaces. It is
+also four recorded approvals and four publishes, because every approval binds
+one cluster's record to its own revision and each Space publishes its own
+release. The receipt records those counts rather than rounding them in either
+direction.
 
 The bootstrap profiles never change. Publishing a release moves the tag, and
 Sveltos follows it on its interval.
@@ -67,7 +76,8 @@ The chapter closes with the prove-it-everywhere audit, in four parts.
    must find no record still blocked behind an armed gate.
 2. Every record is re-read: its revision and content hash must be exactly
    what was approved, so nothing changed out of band.
-3. The stored change must be byte-identical across the three records.
+3. The inherited values must be byte-identical across the four variant
+   records.
 4. Drift is injected on every cluster, by scaling the background controller
    down by hand, and Sveltos must repair all four.
 
@@ -78,7 +88,7 @@ management cluster and four workload clusters grouped as pilot, staging, and
 two production clusters, defined in the
 [shared fleet design](../env-rollout/fleet.yaml).
 
-The baseline continues chapter four's outcome. Each environment record sits at
+The baseline continues chapter four's outcome. The base record sits at
 Kyverno chart 3.8.2 carrying the values the earlier chapters promoted, and the
 repository gate enforces that continuity.
 
@@ -101,9 +111,10 @@ npm run sveltos-bulk-ops:self-test
 
 # Deterministic self-test of the live runner: the Sveltos pin, the addon
 # controller image override, the lowercase Space and Secret type refusals the
-# gateway imposes, the gate preflight, one fan-out pass with six approval
-# brackets delivered through a fake gateway, the set-aware gate query with a
-# rogue armed gate detected, and the tamper battery.
+# gateway imposes, the gate preflight, one base record and four variants
+# approved as one baseline set, one fan-out set operation that inherits the
+# edit into every variant, the set-aware gate query with a rogue armed gate
+# detected, and the tamper battery.
 npm run sveltos-bulk-ops-proof:self-test
 ```
 

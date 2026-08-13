@@ -9,19 +9,15 @@ spec:
   valuesPath: backgroundController.replicas
   before: 2
   after: 3
+  editedRecord: base
   fanOut:
-    method: one reviewed candidate applied to every environment record in one pass
-    approvals: each environment record still enforces its own approval gate
-    records:
-      - environment: pilot
-        profile: clusterprofile-pilot.yaml
-        space: sveltos-kyverno-bulk-pilot
-      - environment: staging
-        profile: clusterprofile-staging.yaml
-        space: sveltos-kyverno-bulk-staging
-      - environment: prod
-        profile: clusterprofile-prod.yaml
-        space: sveltos-kyverno-bulk-prod
+    method: one reviewed edit made once on the base record and inherited by every per-cluster variant in one operation
+    approvals: each per-cluster record still enforces its own approval gate
+    selection:
+      scope: cub unit list --space "*"
+      whereTemplate: Labels.Proof = 'sveltos-bulk-ops' AND Labels.Run = '{run}' AND Labels.Wave = '1'
+      baselineWhereTemplate: Labels.Proof = 'sveltos-bulk-ops' AND Labels.Run = '{run}' AND Labels.Record = 'variant'
+      note: The whole fleet is one wave. The fan-out selects every variant with one query over the labels the records carry, so the operator acts once and ConfigHub still records one approval per cluster against that cluster's own exact revision.
   audit:
     gateQuery: Labels.Proof = 'sveltos-bulk-ops' AND LEN(ApplyGates) > 0
     gateQueryScope: cub unit list --space "*"
