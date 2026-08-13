@@ -22,13 +22,6 @@ const LEGACY = [
   // Chapters 1 and 2 as recorded; reworked by issue #4.
   "examples/sveltos/kyverno-fleet/clusterprofile.yaml",
   "examples/sveltos/kyverno-fleet/clusterprofile-pilot.yaml",
-  // Chapters 4 and 5 before the per-cluster rework; issue #3.
-  "examples/sveltos/cve-patch/clusterprofile-pilot.yaml",
-  "examples/sveltos/cve-patch/clusterprofile-staging.yaml",
-  "examples/sveltos/cve-patch/clusterprofile-prod.yaml",
-  "examples/sveltos/bulk-ops/clusterprofile-pilot.yaml",
-  "examples/sveltos/bulk-ops/clusterprofile-staging.yaml",
-  "examples/sveltos/bulk-ops/clusterprofile-prod.yaml",
   // The rehearsal has no ConfigHub records behind its profiles, so the
   // record-per-cluster rule has nothing to bind to there.
   "examples/sveltos/fleet-rehearsal/clusterprofile-pilot.yaml",
@@ -142,7 +135,7 @@ function verify() {
   }
   console.log(
     `verified the per-cluster model: ${addressed} profiles each address one cluster; ` +
-      `${LEGACY.length} files recorded before the model are expected and listed (issues #3 and #4), nothing is wrong`,
+      `${LEGACY.length} files recorded before the model are expected and listed (issue #4 and the rehearsal exemption), nothing is wrong`,
   );
 }
 
