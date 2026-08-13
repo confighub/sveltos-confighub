@@ -22,16 +22,26 @@ tag, and Sveltos followed it.
 
 | Wave | Cluster | Space | Departure kept through the change | Changed release digest | Sveltos |
 | --- | --- | --- | --- | --- | --- |
-| 1 | hx-sveltos-env-pilot | hx-sveltos-env-pilot-20260812195312 |  | `sha256:98b6c270b16b0f6c142c88d06e3d2d3969215ecb5b05ba87bdca6910123527dd` | Provisioned |
-| 2 | hx-sveltos-env-staging | hx-sveltos-env-staging-20260812195312 |  | `sha256:07fa92f9d91da8c479f860b274ae7ba1794d5a89bc1411c36a8f66002b6df03e` | Provisioned |
-| 3 | hx-sveltos-env-prod-a | hx-sveltos-env-prod-a-20260812195312 |  | `sha256:927014dd9baabd516ff418423a110cc80cf7b34e28226c4bae678e72cd94e302` | Provisioned |
-| 3 | hx-sveltos-env-prod-b | hx-sveltos-env-prod-b-20260812195312 |  | `sha256:8a818618236f98afb11f0b30a6763c6baa54dbd91c367dbb5418cf6d80dd167e` | Provisioned |
+| 1 | hx-sveltos-env-pilot | hx-sveltos-env-pilot-20260813154117 |  | `sha256:676ddf4ae90dbb54fb338c970bc0936d02fc2e4fed6806bd092fadcb12fb51fe` | Provisioned |
+| 2 | hx-sveltos-env-staging | hx-sveltos-env-staging-20260813154117 |  | `sha256:8380eafdb285fa34e985b3b62b3c1ecfd5b8875a7554b98cde6848c6e9d55bcf` | Provisioned |
+| 3 | hx-sveltos-env-prod-a | hx-sveltos-env-prod-a-20260813154117 |  | `sha256:2d787c1482931c25d6b5d34fc820e5901649151a024f84ea2bb6ea2dab81aba2` | Provisioned |
+| 3 | hx-sveltos-env-prod-b | hx-sveltos-env-prod-b-20260813154117 |  | `sha256:ca03ea2cc66eecc95739e0e9f029d83b4317918c3fc5c7940234ddb3dcd1354a` | Provisioned |
 
 | Wave | Group | Variants selected | Approvals recorded |
 | --- | --- | --- | --- |
 | 1 | pilot | 1 | 1 |
 | 2 | staging | 1 | 1 |
 | 3 | prod | 2 | 2 |
+
+No wave's approval was requested on a schedule. Each one was unlocked by the
+preceding checkpoint showing every cluster it depends on reporting healthy,
+and each wave records that evidence:
+
+| Wave | Unlocked by checkpoint | Clusters observed healthy there |
+| --- | --- | --- |
+| 1 | `baseline` (baseline) | hx-sveltos-env-pilot, hx-sveltos-env-staging, hx-sveltos-env-prod-a, hx-sveltos-env-prod-b |
+| 2 | `after-wave-1` (pilot) | hx-sveltos-env-pilot |
+| 3 | `after-wave-2` (staging) | hx-sveltos-env-staging |
 
 | Check | Result |
 | --- | --- |
