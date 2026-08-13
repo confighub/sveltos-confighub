@@ -1,0 +1,73 @@
+# The declared debt of the one-record-per-cluster model.
+#
+# Every entry names a committed file whose ClusterProfile selector can still
+# match more than one cluster. The model gate
+# (scripts/verify-per-cluster-model.mjs) refuses any fan-out selector that is
+# NOT listed here, and refuses any entry that stops violating, so fixing a
+# file and retiring its entry must happen in the same change. New entries are
+# not to be added for new work: this register only shrinks.
+entries:
+  - path: examples/sveltos/kyverno-fleet/clusterprofile.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/4"
+    reason: >-
+      Chapter one as recorded: one profile selecting environment=staging fans
+      out to every staging cluster. The per-cluster re-record retires this.
+  - path: examples/sveltos/kyverno-fleet/clusterprofile-pilot.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/4"
+    reason: >-
+      Chapter two's canary as recorded: the same profile narrowed by
+      rollout=pilot, widened by deleting the narrowing. The per-cluster
+      re-record replaces this with the second cluster's own record.
+  - path: examples/sveltos/cve-patch/clusterprofile-pilot.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/3"
+    reason: >-
+      Chapter four's pre-rework shape, one record per environment. The
+      per-cluster rework in flight replaces these three files.
+  - path: examples/sveltos/cve-patch/clusterprofile-staging.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/3"
+    reason: >-
+      Chapter four's pre-rework shape, one record per environment.
+  - path: examples/sveltos/cve-patch/clusterprofile-prod.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/3"
+    reason: >-
+      Chapter four's pre-rework shape; this one record covers both
+      production clusters.
+  - path: examples/sveltos/bulk-ops/clusterprofile-pilot.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/3"
+    reason: >-
+      Chapter five's pre-rework shape, one record per environment.
+  - path: examples/sveltos/bulk-ops/clusterprofile-staging.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/3"
+    reason: >-
+      Chapter five's pre-rework shape, one record per environment.
+  - path: examples/sveltos/bulk-ops/clusterprofile-prod.yaml
+    issue: "https://github.com/confighub/sveltos-confighub/issues/3"
+    reason: >-
+      Chapter five's pre-rework shape; this one record covers both
+      production clusters.
+  - path: examples/sveltos/fleet-rehearsal/clusterprofile-pilot.yaml
+    issue: null
+    reason: >-
+      The rehearsal proves cluster-side delivery with no ConfigHub records at
+      all, so the record-per-cluster rule has nothing to bind to. Its
+      profiles stay environment-scoped until the rehearsal is reshaped.
+  - path: examples/sveltos/fleet-rehearsal/clusterprofile-staging.yaml
+    issue: null
+    reason: >-
+      Rehearsal profile with no ConfigHub record behind it.
+  - path: examples/sveltos/fleet-rehearsal/clusterprofile-prod.yaml
+    issue: null
+    reason: >-
+      Rehearsal profile with no ConfigHub record behind it.
+  - path: examples/sveltos/fleet-rehearsal/app-profile-pilot.yaml
+    issue: null
+    reason: >-
+      Rehearsal application profile with no ConfigHub record behind it.
+  - path: examples/sveltos/fleet-rehearsal/app-profile-staging.yaml
+    issue: null
+    reason: >-
+      Rehearsal application profile with no ConfigHub record behind it.
+  - path: examples/sveltos/fleet-rehearsal/app-profile-prod.yaml
+    issue: null
+    reason: >-
+      Rehearsal application profile with no ConfigHub record behind it.

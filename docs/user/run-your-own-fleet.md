@@ -98,6 +98,22 @@ These were each paid for once so you do not have to.
   Spaces reference must outlive them, or the survivors are stuck with
   dangling references.
 
+## What keeps this true
+
+Two checks enforce this guide instead of trusting it.
+
+- **The model gate** (`npm run per-cluster-model:verify`, part of
+  `npm run verify` and CI) refuses any committed `ClusterProfile` whose
+  selector could match more than one cluster. The recorded debt that
+  predates the model is declared in `tests/per-cluster-model-legacy.yaml`
+  with its reason and issue. That register only shrinks: an entry whose file
+  stops violating is itself a refusal, so retiring the debt retires the
+  entry in the same change, and new fan-out surfaces cannot be added at all.
+- **The live preflight** (`npm run fleet:preflight`) refuses a fleet run
+  before any cluster is built if cub is missing, older than the minimum
+  these runners were measured against, or lacking the variant and
+  set-approval surfaces the record machinery depends on.
+
 ## What is not built yet
 
 - Chapters one and two still record the older one-profile shape; their
