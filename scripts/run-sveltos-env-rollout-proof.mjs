@@ -1987,21 +1987,22 @@ function verifyWaves(receipt, plan) {
       const checkpoint = (receipt.spec?.checkpoints ?? []).find(
         (row) => row.id === unlocked.precedingCheckpointId,
       );
-      const scope = previous
-        ? (checkpoint?.observations ?? []).filter(
-          (row) => row.environment === previous.environment,
-        )
-        : (checkpoint?.observations ?? []);
+      const dependedOn = previous
+        ? previous.clusters
+        : plan.clusters.map((row) => row.cluster);
+      const scope = (checkpoint?.observations ?? []).filter(
+        (row) => dependedOn.includes(row.logicalCluster),
+      );
       check(
         unlocked.approvalFollowedEvidence === true
           && unlocked.precedingCheckpointId === expectedId
           && unlocked.environment === (previous ? previous.environment : "baseline")
           && Boolean(checkpoint)
-          && (unlocked.clusters ?? []).length > 0
           && sameSet(
             (unlocked.clusters ?? []).map((row) => row.logicalCluster),
-            scope.map((row) => row.logicalCluster),
+            dependedOn,
           )
+          && scope.length === dependedOn.length
           && (unlocked.clusters ?? []).every((row) => row.result === "pass")
           && scope.every((row) => row.observation?.result === "pass"),
         `wave ${wave.wave} must record the evidence that unlocked its approval: every cluster it depends on healthy at ${expectedId}`,
