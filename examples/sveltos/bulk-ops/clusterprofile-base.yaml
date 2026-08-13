@@ -1,11 +1,11 @@
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: kyverno-bulk-prod
+  name: kyverno-bulk-base
 spec:
   clusterSelector:
     matchLabels:
-      environment: prod
+      cluster: unassigned
   syncMode: ContinuousWithDriftDetection
   helmCharts:
     - repositoryURL: https://kyverno.github.io/kyverno/
