@@ -224,6 +224,14 @@ export function assertUpstreamLineage(mutationsOutput, cluster) {
 export function governedRecords(deps) {
   const {
     appLabel,
+    stableJson,
+    bootstrapPrefix,
+    clusterCommand,
+    gatewaySecretName,
+    managementRecordLabel,
+    registrationNamespace,
+    remoteFetchInterval,
+    workRootFor,
     valuesOf,
     now,
     approvalFilterRef,
@@ -717,7 +725,129 @@ export function governedRecords(deps) {
     );
   }
 
+  // The management record holds one bootstrap profile per workload Space. It is
+  // the record that opens the gateway path, so its first revision is applied out
+  // of band with kubectl, and ConfigHub governs every revision after that.
+  function establishManagement({
+    policyContext,
+    space,
+    plan,
+    topology,
+    catalogTarget,
+    runId,
+    workRoot,
+    policySpacesCreated,
+    workloadSpaces,
+  }) {
+    createPolicySpace(policyContext, space);
+    policySpacesCreated.add(space);
+    assertPolicySpace(
+      policyContext,
+      space,
+      topology.triggerIds,
+      catalogTarget.TargetID,
+    );
+    const manifest = workloadSpaces
+      .map((row) => bootstrapProfileManifest(row.cluster, row.space))
+      .join("---\n");
+    const manifestPath = join(workRoot, "clusterprofile-management.yaml");
+    writeFileSync(manifestPath, manifest, { mode: 0o600 });
+    const documents = parseDocs(manifest);
+    check(
+      documents.length === workloadSpaces.length,
+      "the management record must hold one bootstrap profile per workload Space",
+    );
+    cub(policyContext, [
+      "unit", "create", "--space", space, policyUnit, manifestPath,
+      "--target", catalogOciTargetRef,
+      "--label", "App=sveltos-kyverno-env-rollout",
+      "--label", `Cluster=${plan.management.cluster}`,
+      "--label", "Role=management",
+      "--label", `Proof=${proofLabel}`,
+      "--label", `Run=${runId}`,
+      "--label", `Record=${variantRecordLabel}`,
+      "--change-desc", "Store the reviewed bootstrap profiles for the management cluster",
+      "--quiet",
+    ]);
+    return {
+      cluster: plan.management.cluster,
+      space,
+      unit: policyUnit,
+      documents,
+      manifestPath,
+      revisionId: `m1-${sha256(stableJson(documents)).slice(0, 12)}`,
+      bootstrapProfiles: workloadSpaces.map((row) => ({
+        profile: bootstrapProfileName(row.cluster),
+        cluster: row.cluster,
+        space: row.space,
+        reference: gatewayReference(row.space),
+      })),
+      boundary: {
+        appliedOutOfBandWith: plan.management.appliedOutOfBandWith,
+        firstRevisionDeliveredThroughGateway: false,
+        laterRevisionsGovernedInConfigHub: true,
+        reason: plan.management.reason,
+      },
+    };
+  }
+
+  function bootstrapProfileName(cluster) {
+    return `${bootstrapPrefix}-${cluster}-bootstrap`;
+  }
+
+  // One bootstrap profile per workload Space, applied once as cluster setup. It
+  // selects the management cluster and points at that cluster's Space on the
+  // gateway. Promotion never touches it: publishing a release moves the tag, and
+  // Sveltos follows on its interval.
+  function bootstrapProfileManifest(cluster, space) {
+    return `apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: ${bootstrapProfileName(cluster)}
+spec:
+  clusterSelector:
+    matchLabels:
+      role: management
+  policyRefs:
+    - deploymentType: Remote
+      remoteURL:
+        url: ${gatewayReference(space)}
+        interval: ${remoteFetchInterval}
+        secretRef:
+          name: ${gatewaySecretName}
+          namespace: ${registrationNamespace}
+`;
+  }
+
+  // The reviewed management record is applied out of band, which is the one step
+  // that cannot come through the gateway, because it is what opens the gateway
+  // path in the first place.
+  function applyBootstrapProfiles({ managementKubeconfig, workRoot, profiles }) {
+    const profilePath = join(workRoot, "bootstrap-clusterprofiles.yaml");
+    writeFileSync(
+      profilePath,
+      profiles
+        .map((row) => bootstrapProfileManifest(row.cluster, row.space))
+        .join("---\n"),
+      { mode: 0o600 },
+    );
+    clusterCommand(managementKubeconfig, ["apply", "-f", profilePath]);
+    return {
+      profiles,
+      interval: remoteFetchInterval,
+      deploymentType: "Remote",
+      clusterSelector: { role: "management" },
+      secret: { name: gatewaySecretName, namespace: registrationNamespace },
+      appliedWith: "kubectl as management-cluster setup",
+      changedByPromotion: false,
+    };
+  }
+
   return {
+    applyBootstrapProfiles,
+    bootstrapProfileManifest,
+    bootstrapProfileName,
+    establishManagement,
     allowedDryRun,
     approvalCount,
     approvalObservation,
