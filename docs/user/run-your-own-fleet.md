@@ -98,6 +98,18 @@ These were each paid for once so you do not have to.
   Spaces reference must outlive them, or the survivors are stuck with
   dangling references.
 
+## What keeps this true
+
+One check, part of `npm run verify` and CI, reads every committed
+`ClusterProfile` and refuses a selector that could match more than one
+cluster. The files recorded before the model are listed inside the check,
+next to the issues that rework them, and fixing one means removing it from
+the list in the same change. That is the whole mechanism.
+
+Before a live run, update cub; the runners were measured against v0.2.15
+and newer, and each one still checks its own preconditions and stops with a
+named reason.
+
 ## What is not built yet
 
 - Chapters one and two still record the older one-profile shape; their
