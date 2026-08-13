@@ -20,7 +20,7 @@ const PROFILE_KINDS = new Set(["ClusterProfile", "Profile"]);
 
 const LEGACY = [
   // The rehearsal has no ConfigHub records behind its profiles, so the
-  // record-per-cluster rule has nothing to bind to there.
+  // per-cluster variant rule has nothing to bind to there.
   "examples/sveltos/fleet-rehearsal/clusterprofile-pilot.yaml",
   "examples/sveltos/fleet-rehearsal/clusterprofile-staging.yaml",
   "examples/sveltos/fleet-rehearsal/clusterprofile-prod.yaml",

@@ -1,4 +1,4 @@
-# Run your own fleet on one record per cluster
+# Run your own fleet on one variant per cluster
 
 This guide takes the shape the chapters record on the five-cluster reference
 fleet and states it for a fleet of any size. Everything here comes from a
@@ -7,14 +7,14 @@ not built yet, the guide says so and links the issue.
 
 ## The shape
 
-One ConfigHub record per Sveltos cluster, including the management cluster,
+One ConfigHub variant per Sveltos cluster, including the management cluster,
 and one base that reaches no cluster.
 
 - **The base** holds what every cluster shares: one Space, one
   `clusterprofile` record, a selector that matches no registered cluster, no
   target, never published. A change to the fleet is made once, here.
 - **One variant record per workload cluster.** Each is cloned from the base
-  and departs from it in the fields that make it that cluster's record: its
+  and departs from it in the fields that make it that cluster's own: its
   `metadata.name`, the selector line that addresses exactly one cluster
   (`spec.clusterSelector.matchLabels.cluster`), and its
   `spec.stopMatchingBehavior`. Keep departures out of fields the base

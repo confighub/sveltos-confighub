@@ -14,14 +14,14 @@ matrix, a receipt contract, and deterministic self-tests.
 ## The five chapters
 
 1. **[Kyverno across the fleet](../../../examples/sveltos/kyverno-fleet/README.md)**
-   installs admission policy through one reviewed record per cluster, each
+   installs admission policy through one reviewed variant per cluster, each
    behind an approval gate, because policy is the clearest case for review
    before a change reaches any cluster. The first recording stands as
    recorded and the gateway re-record is pending.
-2. **The canary, in the same example**: the pilot cluster's record approved
-   and delivered first, the second cluster's record complete, addressed, and
+2. **The canary, in the same example**: the pilot cluster's variant approved
+   and delivered first, the second cluster's variant complete, addressed, and
    gate-armed with no approval until wave two approves its own revision.
-   Widening the rollout is approving the next cluster's record, never editing
+   Widening the rollout is approving the next cluster's variant, never editing
    a selector. The committed
    [two-wave recording](../../../data/sveltos-oci-delivery-proof/summary.md)
    predates this shape and awaits its re-record on the gateway.
@@ -31,7 +31,7 @@ matrix, a receipt contract, and deterministic self-tests.
    to every matching cluster, and this chapter narrows that on purpose so a
    variant and a target cluster stand one to one. All five clusters including
    the management cluster have their own governed record over a shared base,
-   no record addresses two clusters, and every query, approval, release and
+   no variant addresses two clusters, and every query, approval, release and
    check therefore names one cluster rather than resolving at delivery time.
    That is what lets the
    [per-cluster matrix](../../../data/sveltos-env-rollout/matrix.md) show
@@ -57,7 +57,7 @@ four's, and the repository gate enforces that continuity mechanically.
 
 ## What is proven today and what is not
 
-Every chapter holds its fleet as one record per cluster, and every chapter
+Every chapter holds its fleet as one variant per cluster, and every chapter
 has a live recording committed. Chapter three's recording is on that design
 over the gateway; the other chapters' recordings predate it, their verifiers
 recognize them as recorded and fill nothing from them, and each awaits its

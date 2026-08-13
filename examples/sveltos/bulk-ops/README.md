@@ -60,7 +60,7 @@ variant addresses.
 
 The fan-out is one reviewed edit and one set upgrade across the Spaces. It is
 also four recorded approvals and four publishes, because every approval binds
-one cluster's record to its own revision and each Space publishes its own
+one cluster's variant to its own revision and each Space publishes its own
 release. The receipt records those counts rather than rounding them in either
 direction.
 

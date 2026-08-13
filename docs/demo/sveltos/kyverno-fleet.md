@@ -31,7 +31,7 @@ three fields: its name, the selector line that addresses its own cluster and
 nothing else, and its removal behaviour. The rollout order is part of the
 reviewed declaration: the pilot cluster carries wave one and the second cluster
 wave two, so the canary is two records and two approvals, and widening the
-rollout means approving the second cluster's record. No selector is edited
+rollout means approving the second cluster's variant. No selector is edited
 anywhere.
 
 The [source lock](../../../examples/sveltos/kyverno-fleet/source-lock.yaml) pins
@@ -79,8 +79,8 @@ exactly approved revision, and Sveltos repaired a deliberate replica change on
 both clusters.
 
 The reworked proof replaces the selector edit with the per-cluster canary: wave
-one approves and delivers the pilot cluster's record through the ConfigHub OCI
-gateway; the second cluster's record is complete, addressed, and gate-armed
+one approves and delivers the pilot cluster's variant through the ConfigHub OCI
+gateway; the second cluster's variant is complete, addressed, and gate-armed
 with no approval the whole time, and the run records that held state as
 evidence; wave two's approval is refused until the checkpoint after wave one
 shows the pilot healthy. The committed receipt is recognized as recorded on the

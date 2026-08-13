@@ -155,7 +155,7 @@ function verifyExample(surfaces) {
   check(values.admissionController?.replicas === 3, "Kyverno admission replica setting changed");
   check(values.replicaCount === undefined, "the base contains an unused generic replicaCount");
 
-  // The variants declaration is the reviewed rollout: one record per cluster,
+  // The variants declaration is the reviewed rollout: one variant per cluster,
   // exactly three departures each, and the wave order carried on the records.
   check(
     variants.kind === "SveltosKyvernoFleetVariants",
@@ -286,7 +286,7 @@ function verifyExample(surfaces) {
   }
 
   check(
-    technicalReadmeText.includes("One record per cluster")
+    technicalReadmeText.includes("One variant per cluster")
       && technicalReadmeText.includes("## The canary, without a selector edit")
       && technicalReadmeText.includes("gate-armed")
       && !technicalReadmeText.includes("removes only the rollout label"),
@@ -312,7 +312,7 @@ function verifyExample(surfaces) {
     );
   } else {
     check(
-      readmeText.includes("one record per cluster")
+      readmeText.includes("one variant per cluster")
         && readmeText.includes("OCI gateway"),
       "a regenerated Hub README must tell the per-cluster gateway story",
     );
