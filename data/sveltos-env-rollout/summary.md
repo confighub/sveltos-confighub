@@ -22,10 +22,10 @@ tag, and Sveltos followed it.
 
 | Wave | Cluster | Space | Departure kept through the change | Changed release digest | Sveltos |
 | --- | --- | --- | --- | --- | --- |
-| 1 | hx-sveltos-env-pilot | hx-sveltos-env-pilot-20260813154117 |  | `sha256:676ddf4ae90dbb54fb338c970bc0936d02fc2e4fed6806bd092fadcb12fb51fe` | Provisioned |
-| 2 | hx-sveltos-env-staging | hx-sveltos-env-staging-20260813154117 |  | `sha256:8380eafdb285fa34e985b3b62b3c1ecfd5b8875a7554b98cde6848c6e9d55bcf` | Provisioned |
-| 3 | hx-sveltos-env-prod-a | hx-sveltos-env-prod-a-20260813154117 |  | `sha256:2d787c1482931c25d6b5d34fc820e5901649151a024f84ea2bb6ea2dab81aba2` | Provisioned |
-| 3 | hx-sveltos-env-prod-b | hx-sveltos-env-prod-b-20260813154117 |  | `sha256:ca03ea2cc66eecc95739e0e9f029d83b4317918c3fc5c7940234ddb3dcd1354a` | Provisioned |
+| 1 | hx-sveltos-env-pilot | hx-sveltos-env-pilot-20260814213928 |  | `sha256:188690c931bd7960747dfbba6784962a652115e4b015c21dba4a070fe71e7244` | Provisioned |
+| 2 | hx-sveltos-env-staging | hx-sveltos-env-staging-20260814213928 |  | `sha256:3e066c40dcdd9147c602c8b2533e4ad8900846f643c1e76298e7a6e0a2a382a4` | Provisioned |
+| 3 | hx-sveltos-env-prod-a | hx-sveltos-env-prod-a-20260814213928 |  | `sha256:b15edfc605f88e1a41b28f9816d870fb685585630f31e19279887f17db238217` | Provisioned |
+| 3 | hx-sveltos-env-prod-b | hx-sveltos-env-prod-b-20260814213928 |  | `sha256:9217fa516c6aab978f6a4ac64fcbfbfffb49f7c29b6a689e85bf3dbf7cfeb354` | Provisioned |
 
 | Wave | Group | Variants selected | Approvals recorded |
 | --- | --- | --- | --- |
@@ -50,6 +50,7 @@ and each wave records that evidence:
 | Convergence audit | pass |
 | Addon controller image | `docker.io/projectsveltos/addon-controller:v1.13.0-ch` |
 | Cleanup | Artifacts kept deliberately |
+| Release targets | one Target per cluster, named for it |
 
 The per-cluster matrix in [matrix.md](matrix.md) and
 [matrix.html](matrix.html) shows which cluster ran which revision at each
