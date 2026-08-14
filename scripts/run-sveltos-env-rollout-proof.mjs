@@ -1128,7 +1128,7 @@ function promoteWave({
     expectedUnits,
   });
   const upgrade = cubTry(policyContext, [
-    "unit", "update", "--patch", "--space", "*", "--where", query, "--upgrade", "--allow-exists",
+    "unit", "update", "--patch", "--space", "*", "--where", query, "--upgrade",
     "--change-desc",
     `Inherit ${plan.change.spec.valuesPath}=${plan.change.spec.after} from the base into the ${wave.environment} variants`,
     "--quiet",
