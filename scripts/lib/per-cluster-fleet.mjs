@@ -185,12 +185,20 @@ export function preloadSveltosImages({ clusters, version, addonControllerImage }
   // "content digest ... not found". A platform-scoped `docker save` writes
   // an archive containing exactly the blobs this machine holds, and one
   // archive loads every image into a cluster in one import.
+  // A digest-pinned reference must NOT go into the archive: docker save of
+  // an @sha256 ref has no repo:tag, so the import lands as a broken unnamed
+  // import-<date> record sharing the real image's content ID, and kubelet's
+  // resolution collides with it even after a clean pull ("failed to check if
+  // this is a checkpoint image", measured live). Nodes pull digest pins
+  // directly instead — measured at two seconds — and the archive carries
+  // only the tag-named images.
+  const archivable = unique.filter((image) => !image.includes("@sha256:"));
   const arch = host("docker", ["version", "--format", "{{.Server.Arch}}"], 30_000);
   const platform = `linux/${(arch.stdout ?? "").trim() || "arm64"}`;
   const archive = join(tmpdir(), `sveltos-preload-${process.pid}.tar`);
   const saved = host(
     "docker",
-    ["save", "--platform", platform, "-o", archive, ...unique],
+    ["save", "--platform", platform, "-o", archive, ...archivable],
     900_000,
   );
   check(
