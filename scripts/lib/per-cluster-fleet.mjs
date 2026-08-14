@@ -144,6 +144,53 @@ export function normalizeDigest(value) {
   return match ? match[0].toLowerCase() : "";
 }
 
+// Docker Hub throttles anonymous pulls, and a fleet lane multiplies every
+// image by every node: five clusters pulling ten images cold is how a
+// converge that takes seconds on a quiet day dies at its timeout on a busy
+// one. Each image is pulled into the local docker daemon at most once and
+// loaded into every kind cluster from there, so a lane costs one pull per
+// image however many clusters it builds. Kyverno's images come from ghcr.io
+// and are not throttled, so they are left alone. The agent image is pinned
+// by digest because Sveltos deploys it into workload clusters by digest.
+const sveltosAgentDigests = {
+  "v1.13.0": "docker.io/projectsveltos/sveltos-agent@sha256:3f1fb4a8159b5acc6d77d117b8623bbacce0213e32d92ebdc7938d3fd97a3dca",
+};
+
+export function preloadSveltosImages({ clusters, version, addonControllerImage }) {
+  const images = [
+    ...[
+      "access-manager", "classifier", "event-manager", "healthcheck-manager",
+      "mcp-server", "shard-controller", "sveltoscluster-manager", "techsupport",
+    ].map((name) => `docker.io/projectsveltos/${name}:${version}`),
+    addonControllerImage,
+    ...(sveltosAgentDigests[version] ? [sveltosAgentDigests[version]] : []),
+  ];
+  const host = (tool, args, timeout) =>
+    spawnSync(tool, args, { encoding: "utf8", timeout });
+  for (const image of [...new Set(images)]) {
+    const present = host("docker", ["image", "inspect", image], 30_000);
+    if (present.status !== 0) {
+      const pulled = host("docker", ["pull", image], 600_000);
+      check(
+        pulled.status === 0,
+        `could not pull ${image} into the local docker daemon: ${(pulled.stderr ?? "").trim() || "docker pull failed"}`,
+      );
+    }
+    for (const cluster of clusters) {
+      const loaded = host(
+        "kind",
+        ["load", "docker-image", image, "--name", cluster],
+        300_000,
+      );
+      check(
+        loaded.status === 0,
+        `could not load ${image} into ${cluster}: ${(loaded.stderr ?? "").trim() || "kind load failed"}`,
+      );
+    }
+  }
+  return images;
+}
+
 // Evidence-gated advance: a wave may request its approval only after the
 // preceding checkpoint shows the clusters it depends on reporting healthy.
 // Wave one depends on the whole fleet at the baseline; every later wave
