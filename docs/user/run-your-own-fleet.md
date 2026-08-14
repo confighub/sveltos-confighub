@@ -11,12 +11,12 @@ One ConfigHub variant per Sveltos cluster, including the management cluster,
 and one base that reaches no cluster.
 
 - **The base** holds what every cluster shares: one Space, one
-  `clusterprofile` record, a selector that matches no registered cluster, no
-  target, never published. A change to the fleet is made once, here.
+  `clusterprofile` record, an empty clusterRefs list that names no cluster,
+  no target, never published. A change to the fleet is made once, here.
 - **One variant record per workload cluster.** Each is cloned from the base
   and departs from it in the fields that make it that cluster's own: its
-  `metadata.name`, the selector line that addresses exactly one cluster
-  (`spec.clusterSelector.matchLabels.cluster`), and its
+  `metadata.name`, the clusterRefs entry that names exactly one cluster
+  (`spec.clusterRefs`, one `SveltosCluster` reference), and its
   `spec.stopMatchingBehavior`. Keep departures out of fields the base
   rewrites: chart values live in one string field, and a values departure
   would be silently swallowed by the next inherited change (this repository's
@@ -27,9 +27,10 @@ and one base that reaches no cluster.
   gateway fetching. ConfigHub governs every revision after that under the
   same approval gate. The seam is honest and the receipts state it.
 
-Labels carry the grouping that selectors used to carry. Each record is
+Labels carry the grouping, and the address is structural. Each record is
 labeled with its cluster and its environment, so a wave is a query over
-records, not a delivery-time match over clusters.
+records; the record's clusterRefs entry names its cluster in Sveltos's own
+API, so nothing is resolved by label at delivery time.
 
 ## What a change looks like, at any fleet size
 
@@ -113,25 +114,33 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    clones the base Space and its record in one operation, links the clone to
    its upstream, and copies the approval wiring. The variant name is the
    cluster, which reads exactly like the model. Pin the new Space's slug with
-   `--space-pattern` (the gateway serves lowercase names only), set its
-   release target, then write the clone's three departures (name, address
-   line, removal behaviour). `cub variant promote <variant-space>` is the
-   reconcile verb when a variant fell behind its base or the base gained a
-   unit; the recorded waves do not use it, because a wave is one set
-   operation over every record it names rather than one promotion per Space.
-3. **Select a wave as a set**: `cub unit list --space "*" --where "<query
+   `--space-pattern` (the gateway serves lowercase names only), then write
+   the clone's three departures (name, address line, removal behaviour).
+   `cub variant promote <variant-space>` is the reconcile verb when a
+   variant fell behind its base or the base gained a unit; the recorded
+   waves do not use it, because a wave is one set operation over every
+   record it names rather than one promotion per Space.
+3. **Name the cluster's destination**:
+   `cub target create <cluster> '{}' --space <variant-space> --provider OCI --toolchain Any`,
+   then set it as the Space's release target and the record's target. One
+   Target per cluster, named for it, is what lets ConfigHub's own model
+   answer which cluster a variant ships to, rather than a selector line
+   inside the stored YAML. The base Space gets no Target and no release
+   target, because the base ships nowhere. Check the Target quota before a
+   fleet build, the same lesson as Links.
+4. **Select a wave as a set**: `cub unit list --space "*" --where "<query
    over your record labels>"`, and assert the match equals exactly the wave
    you intended before acting on it.
-4. **Upgrade the set in one operation**:
+5. **Upgrade the set in one operation**:
    `cub unit update --patch --space "*" --where <query> --upgrade`.
-5. **Approve the set in one operation**:
+6. **Approve the set in one operation**:
    `cub unit approve --space "*" --where <query> --revision HeadRevisionNum`.
    ConfigHub records one approval per record, each bound to that record's
    revision.
-6. **Publish each record's release**: `cub release publish <space>`. The
+7. **Publish each record's release**: `cub release publish <space>`. The
    gateway serves it at `oci://oci.hub.confighub.com/space/<space>:latest`,
    and publishing is what moves the tag the fleet follows.
-7. **Let Sveltos fetch**: the management cluster carries a Secret of type
+8. **Let Sveltos fetch**: the management cluster carries a Secret of type
    `addons.projectsveltos.io/cluster-profile` holding a `cub auth get-token`
    token, and one bootstrap ClusterProfile per workload Space pointing at
    that Space's gateway address.
@@ -139,8 +148,9 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
 ## What keeps this true
 
 One check, part of `npm run verify` and CI, reads every committed
-`ClusterProfile` and refuses a selector that could match more than one
-cluster. The only files listed as exempt inside the check are the
+`ClusterProfile` and refuses one that could address more than one cluster:
+no clusterSelector at all, and at most one clusterRefs entry naming a
+SveltosCluster. The only files listed as exempt inside the check are the
 rehearsal's, which have no ConfigHub records behind them, and shrinking or
 growing that list is refused unless the files change in the same change.
 That is the whole mechanism.

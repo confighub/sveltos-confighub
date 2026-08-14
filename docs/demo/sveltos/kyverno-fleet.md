@@ -22,12 +22,12 @@ contains the decisions a reviewer needs to see:
 - install `kyverno/kyverno` chart version `3.8.1`;
 - run three admission-controller replicas;
 - use `ContinuousWithDriftDetection` so Sveltos restores the reviewed settings;
-- carry a selector that matches no registered cluster, so the base itself
+- name no cluster, because its clusterRefs list is empty, so the base itself
   reaches nothing.
 
 The [variants declaration](../../../examples/sveltos/kyverno-fleet/variants.yaml)
 gives each workload cluster its own record, departing from the base in exactly
-three fields: its name, the selector line that addresses its own cluster and
+three fields: its name, the clusterRefs entry that names its own cluster and
 nothing else, and its removal behaviour. The rollout order is part of the
 reviewed declaration: the pilot cluster carries wave one and the second cluster
 wave two, so the canary is two records and two approvals, and widening the
