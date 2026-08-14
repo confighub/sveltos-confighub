@@ -180,7 +180,10 @@ export function preloadSveltosImages({ clusters, version, addonControllerImage }
       const loaded = host(
         "kind",
         ["load", "docker-image", image, "--name", cluster],
-        300_000,
+        // Loading into a node on a machine still settling five fresh
+        // clusters is I/O-bound and slow; the 300s budget was measured
+        // failing mid-load. Same cure as the converge waits: room.
+        900_000,
       );
       check(
         loaded.status === 0,
