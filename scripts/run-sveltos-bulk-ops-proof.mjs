@@ -89,7 +89,12 @@ const summaryPath = join(repoRoot, "data", "sveltos-bulk-ops", "summary.md");
 const environments = ["pilot", "staging", "prod"];
 const policyUnit = "clusterprofile";
 const proofLabel = "sveltos-bulk-ops";
-const gateQueryWhere = `Labels.Proof = '${proofLabel}' AND LEN(ApplyGates) > 0`;
+// Scoped to one run: kept Spaces from earlier recordings legitimately hold
+// armed schema-vet gates on their management records, and a fleet-wide
+// sweep re-finds them forever (measured live twice). The audit's honesty
+// claim is about the records THIS run governs; the recorded query says so.
+const gateQueryWhereFor = (runId) =>
+  `Labels.Proof = '${proofLabel}' AND Labels.Run = '${runId}' AND LEN(ApplyGates) > 0`;
 const gateQueryScope = 'cub unit list --space "*"';
 // Declared with the other constants because the mode dispatch runs before
 // anything further down the file is initialized.
@@ -504,6 +509,7 @@ function run() {
 
     const zeroDriftAudit = auditZeroDrift({
       policyContext,
+      runId,
       plan,
       spaceFor,
       variantRecords,
@@ -1199,6 +1205,7 @@ function recordCheckpoint({
 // drift injected on every cluster must be repaired.
 function auditZeroDrift({
   policyContext,
+  runId,
   plan,
   spaceFor,
   variantRecords,
@@ -1208,7 +1215,7 @@ function auditZeroDrift({
   const gateRows = JSON.parse(cub(policyContext, [
     "unit", "list",
     "--space", "*",
-    "--where", gateQueryWhere,
+    "--where", gateQueryWhereFor(runId),
     "--quiet", "-o", "json",
   ]));
   const matches = (Array.isArray(gateRows) ? gateRows : [])
@@ -1317,7 +1324,7 @@ function auditZeroDrift({
     result: "pass",
     gateQuery: {
       scope: gateQueryScope,
-      where: gateQueryWhere,
+      where: gateQueryWhereFor(runId),
       matches,
       recognizedBoundary,
     },
@@ -1774,7 +1781,11 @@ function verifyReceipt(receipt) {
   const audit = receipt.spec?.zeroDriftAudit;
   check(
     audit?.result === "pass"
-      && audit.gateQuery?.where === gateQueryWhere
+      && (() => {
+        const m = new RegExp(`^Labels\\.Proof = '${proofLabel}' AND Labels\\.Run = '([A-Za-z0-9]+)' AND LEN\\(ApplyGates\\) > 0$`)
+          .exec(String(audit.gateQuery?.where ?? ""));
+        return Boolean(m) && String(audit.gateQuery?.recognizedBoundary?.space ?? "").includes(m[1]);
+      })()
       && Array.isArray(audit.gateQuery.matches)
       && audit.gateQuery.matches.length === 1
       && audit.gateQuery.matches[0]
@@ -3478,7 +3489,7 @@ function selfTest() {
     // real: the set-aware gate query, the out-of-band re-reads, and the
     // inherited byte identity across the variant records.
     const gateRows = JSON.parse(cub(policyContext, [
-      "unit", "list", "--space", "*", "--where", gateQueryWhere,
+      "unit", "list", "--space", "*", "--where", gateQueryWhereFor(runId),
       "--quiet", "-o", "json",
     ]));
     // The one armed record the sweep may find is the management record's
@@ -3517,7 +3528,7 @@ function selfTest() {
     ]);
     sleep(1000);
     const rogueRows = JSON.parse(cub(policyContext, [
-      "unit", "list", "--space", "*", "--where", gateQueryWhere,
+      "unit", "list", "--space", "*", "--where", gateQueryWhereFor(runId),
       "--quiet", "-o", "json",
     ]));
     check(
@@ -3545,7 +3556,7 @@ function selfTest() {
       bootstrap: bootstrapRecord,
       fanOut,
       checkpoints: synthesizeCheckpoints(plan),
-      zeroDriftAudit: synthesizeAudit(plan, managementVariant.space),
+      zeroDriftAudit: synthesizeAudit(plan, managementVariant.space, runId),
       cleanup: {
         mode: "removed",
         keptDeliberately: false,
@@ -3836,12 +3847,12 @@ function synthesizeCheckpoints(plan) {
   }));
 }
 
-function synthesizeAudit(plan, managementSpace) {
+function synthesizeAudit(plan, managementSpace, runId) {
   return {
     result: "pass",
     gateQuery: {
       scope: gateQueryScope,
-      where: gateQueryWhere,
+      where: gateQueryWhereFor(runId),
       matches: [`${managementSpace}/${policyUnit}`],
       recognizedBoundary: {
         space: managementSpace,
