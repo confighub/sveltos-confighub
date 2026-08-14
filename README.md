@@ -101,10 +101,12 @@ enough to be the point of the repository.
 ## See the result first
 
 This is the recorded chapter-three fleet as ConfigHub shows it: one base
-record on the left, one variant per cluster on the right, four
-workload clusters and the management record, every record at its second
-release after one reviewed change to the base. The base and management
-records carry armed gates:
+on the left, one variant per cluster on the right, and every deployment
+card headed by its own named Target — the cluster it ships to is
+ConfigHub's own destination model, not a selector line inside the YAML.
+Each variant sits at its second release after one reviewed change to the
+base, and the base is the dashed node with no Target at all, because the
+base ships nowhere:
 
 ![One base record fanning out to one variant per cluster](docs/images/sveltos/sveltos-flow-graph.png)
 
