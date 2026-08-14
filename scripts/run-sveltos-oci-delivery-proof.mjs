@@ -49,8 +49,6 @@ if (!allowedModes.has(mode)) {
 const expectedPolicyOrg = "helm-catalog";
 const approvalFilterRef = "platform/helm-catalog-prod-gates";
 const approvalGate = "platform/require-approval/vet-approvedby";
-const catalogOciTargetRef =
-  "bitnami-redis-27-0-0-default-pilot-live-20260705/oci-target";
 // The approval gate attaches about a second after a Unit is created; the
 // report that said otherwise was our own misreading, now withdrawn. The
 // runner carries the per-cluster design chapters three, four, and five
@@ -149,7 +147,6 @@ const {
   approvalFilterRef,
   approvalGate,
   baseRecordLabel,
-  catalogOciTargetRef,
   componentLabel,
   configHubOciHost,
   ownerLabel,
@@ -399,12 +396,12 @@ function resolveAddonControllerImage(sveltos) {
   return override;
 }
 
-function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
+function assertApprovalGateObservable(context, runId, topology) {
   const probeSpace = spaceName(`hx-sveltos-oci-probe-${runId}`);
   check(!spacePresent(context, probeSpace), `refusing to reuse ${probeSpace}`);
   createPolicySpace(context, probeSpace);
   try {
-    assertPolicySpace(context, probeSpace, topology.triggerIds, catalogTarget.TargetID);
+    assertPolicySpace(context, probeSpace, topology.triggerIds, null);
     cub(context, [
       "unit", "create", "--space", probeSpace, policyUnit,
       basePathConst,
@@ -1037,13 +1034,6 @@ function run() {
   const addonControllerImage = resolveAddonControllerImage(sveltos);
 
   const topology = readApprovalTopology(policyContext);
-  const catalogTarget = cubJson(policyContext, [
-    "target", "get", "--space", ...catalogOciTargetRef.split("/"), "-o", "json",
-  ]).Target;
-  check(
-    catalogTarget?.ProviderType === "OCI",
-    `${catalogOciTargetRef} is not an OCI target`,
-  );
 
   const recordedAt = new Date().toISOString();
   const runId = safeRunId(process.env.HELM_EXPT_PROOF_RUN_ID || recordedAt);
@@ -1086,7 +1076,7 @@ function run() {
   // The approval gate is probed before any cluster work, so a Space whose
   // gate never attaches costs seconds, not the minutes a two-cluster fleet
   // build would cost per attempt.
-  assertApprovalGateObservable(policyContext, runId, topology, catalogTarget);
+  assertApprovalGateObservable(policyContext, runId, topology);
   cleanup.results.probeSpace = "pass";
   phase("gate preflight passed; the approval gate is observable");
 
@@ -1136,7 +1126,7 @@ function run() {
 
     cleanup.results.policySpaces = "pending";
     const baseRecord = establishBase({
-      policyContext, space: baseSpace, plan, topology, catalogTarget, runId, policySpacesCreated,
+      policyContext, space: baseSpace, plan, topology, runId, policySpacesCreated,
     });
     phase("the base record holds the content every cluster shares");
 
@@ -1148,7 +1138,6 @@ function run() {
         baseSpace,
         cluster: row,
         topology,
-        catalogTarget,
         runId,
         workRoot,
         policySpacesCreated,
@@ -1161,7 +1150,6 @@ function run() {
       space: spaceFor[plan.management.cluster],
       plan,
       topology,
-      catalogTarget,
       runId,
       workRoot,
       policySpacesCreated,
@@ -1246,7 +1234,6 @@ function run() {
       recordedAt,
       plan,
       topology,
-      catalogTarget,
       managementName,
       managementRegistration,
       sveltosInstall,
@@ -1672,7 +1659,6 @@ function buildReceipt({
   recordedAt,
   plan,
   topology,
-  catalogTarget,
   managementName,
   managementRegistration,
   sveltosInstall,
@@ -1703,6 +1689,7 @@ function buildReceipt({
         upstream: record.upstream,
         departures: record.departures,
         departedFields: record.departedFields,
+        target: record.target,
         records: [{ stage: "baseline", wave: row.wave, ...record.baseline }],
       };
     }),
@@ -1721,6 +1708,7 @@ function buildReceipt({
       departedFields: [],
       bootstrapProfiles: managementVariant.bootstrapProfiles,
       boundary: managementVariant.boundary,
+      target: managementVariant.target,
       records: [{ stage: "baseline", wave: 0, ...managementVariant.baseline }],
     },
   ];
@@ -1756,11 +1744,6 @@ function buildReceipt({
         resourceClass: "system-configuration",
         filter: topology,
         approvalGate,
-        target: {
-          ref: catalogOciTargetRef,
-          id: catalogTarget.TargetID,
-          provider: catalogTarget.ProviderType,
-        },
       },
       prerequisite: sveltosInstall,
       base: baseRecord,
@@ -1996,6 +1979,35 @@ function verifyVariants(receipt, plan) {
     new Set(variants.map((row) => row.gatewayReference)).size === variants.length,
     "two variants share a gateway reference, so they cannot be served separately",
   );
+  // ConfigHub's destination model: each variant's Space carries a Target
+  // named for its cluster and releases to it, so what runs where is a
+  // model-level answer. A receipt recorded before this model released every
+  // Space to one shared catalog target; it is recognized and awaits its
+  // re-record, while a receipt that mixes the two shapes is refused.
+  const targeted = variants.some((row) => row.target);
+  if (!targeted) {
+    console.log(
+      "the recorded receipt predates the per-cluster Target model and releases to a shared catalog target; it awaits its re-record",
+    );
+  } else {
+    check(
+      receipt.spec?.policy?.target === undefined,
+      "the shared catalog target is retired; a per-cluster Target receipt must not carry one",
+    );
+    for (const variant of variants) {
+      check(
+        variant.target?.name === variant.cluster
+          && variant.target.ref === `${variant.space}/${variant.cluster}`
+          && variant.target.provider === "OCI"
+          && String(variant.target.id ?? "").length > 0,
+        `the ${variant.cluster} variant must release to its own cluster's Target`,
+      );
+    }
+    check(
+      new Set(variants.map((row) => row.target.id)).size === variants.length,
+      "two variants share a Target, so ConfigHub's model cannot say what runs where",
+    );
+  }
   const clusterLabels = Object.fromEntries(
     (receipt.spec?.fleet?.registrations ?? []).map((registration) => [
       registration.logicalCluster,
@@ -2347,7 +2359,7 @@ ${advance}
 | Release digests distinct | ${new Set(digests).size === digests.length ? "yes" : "no"} |
 | Drift repaired | ${driftPassed}/${receipt.spec.driftRepair.clusters.length} |
 | Addon controller image | \`${delivery.addonControllerImage}\` |
-| Cleanup | ${receipt.spec.cleanup.mode === "kept" ? "Artifacts kept deliberately" : "Pass"} |
+| Cleanup | ${receipt.spec.cleanup.mode === "kept" ? "Artifacts kept deliberately" : "Pass"} |${receipt.spec.variants.some((row) => row.target) ? `\n| Release targets | one Target per cluster, named for it |` : ""}
 
 - [Committed receipt](../../runs/sveltos-oci-delivery-proof/receipt.yaml)
 - [Reviewed base profile](../../examples/sveltos/kyverno-fleet/clusterprofile-base.yaml)
@@ -2634,7 +2646,6 @@ function selfTest() {
     );
 
     const topology = readApprovalTopology(policyContext);
-    const catalogTarget = { TargetID: hub.catalogTargetId, ProviderType: "OCI" };
 
     // The whole path: one base record, two variants cloned from it, the
     // management record reviewed and approved on its own, delivery through
@@ -2648,7 +2659,7 @@ function selfTest() {
     const managementName = `${plan.management.cluster}-${runId}`;
 
     const baseRecord = establishBase({
-      policyContext, space: baseSpace, plan, topology, catalogTarget, runId, policySpacesCreated,
+      policyContext, space: baseSpace, plan, topology, runId, policySpacesCreated,
     });
     check(
       baseRecord.published === false
@@ -2665,7 +2676,6 @@ function selfTest() {
         baseSpace,
         cluster: row,
         topology,
-        catalogTarget,
         runId,
         workRoot,
         policySpacesCreated,
@@ -2684,7 +2694,6 @@ function selfTest() {
       space: spaceFor[plan.management.cluster],
       plan,
       topology,
-      catalogTarget,
       runId,
       workRoot,
       policySpacesCreated,
@@ -2827,7 +2836,6 @@ function selfTest() {
       recordedAt: "self-test",
       plan,
       topology,
-      catalogTarget,
       managementName,
       managementRegistration: fakeManagementRegistration(),
       sveltosInstall: fakeSveltosInstall(sveltos, overrideImage),
@@ -2898,6 +2906,11 @@ function selfTest() {
       ["shared Space", (c) => { c.spec.variants[1].space = c.spec.variants[0].space; }, /two variants share a Space/],
       ["selector fans out", (c) => { c.spec.variants[0].selector = { environment: "staging" }; }, /must address one cluster by name/],
       ["selector wrong cluster", (c) => { c.spec.variants[0].selector = { cluster: secondCluster }; }, /must address one cluster by name/],
+      ["target dropped", (c) => { delete c.spec.variants[0].target; }, /must release to its own cluster's Target/],
+      ["target renamed", (c) => { c.spec.variants[0].target.name = "somewhere-else"; }, /must release to its own cluster's Target/],
+      ["target provider", (c) => { c.spec.variants[0].target.provider = "Kubernetes"; }, /must release to its own cluster's Target/],
+      ["targets shared", (c) => { c.spec.variants[1].target = { ...c.spec.variants[0].target }; c.spec.variants[1].target.name = c.spec.variants[1].cluster; c.spec.variants[1].target.ref = `${c.spec.variants[1].space}/${c.spec.variants[1].cluster}`; }, /two variants share a Target/],
+      ["shared catalog target reintroduced", (c) => { c.spec.policy.target = { ref: "catalog/oci-target" }; }, /shared catalog target is retired/],
       ["upstream link dropped", (c) => { c.spec.variants[0].upstream = null; }, /is not linked to the base record/],
       ["departures dropped", (c) => {
         c.spec.variants[0].departures = {};
@@ -3173,7 +3186,14 @@ function expectFailure(fn, pattern, label) {
 
 function createFakeConfigHub() {
   const filterId = "self-test-filter-0001";
-  const catalogTargetId = "self-test-oci-target-0001";
+  const targets = new Map();
+  const targetKey = (space, slug) => `${space}/${slug}`;
+  const resolveTargetRef = (ref, fallbackSpace) => {
+    const key = String(ref).includes("/")
+      ? String(ref)
+      : targetKey(fallbackSpace, ref);
+    return targets.get(key) ?? null;
+  };
   const triggerIdFor = (ref) => `self-test-trigger-${ref.split("/")[1]}`;
   const spaces = new Map();
   const units = new Map();
@@ -3255,7 +3275,9 @@ function createFakeConfigHub() {
       const row = spaces.get(rest[0]);
       if (!row) return refuse(`space ${rest[0]} not found`);
       if (flags["release-target"]) {
-        row.ReleaseTargetID = state.releaseTargetOverride ?? catalogTargetId;
+        const target = resolveTargetRef(flags["release-target"], rest[0]);
+        if (!target) return refuse(`release target ${flags["release-target"]} not found`);
+        row.ReleaseTargetID = state.releaseTargetOverride ?? target.TargetID;
       }
       if (flags["refresh-triggers"]) {
         row.TriggerIDs = state.triggerIdOverride
@@ -3267,6 +3289,23 @@ function createFakeConfigHub() {
       const row = spaces.get(rest[0]);
       if (!row) return refuse(`space ${rest[0]} not found`);
       return ok(JSON.stringify({ Space: structuredClone(row) }));
+    }
+    if (entity === "target" && verb === "create") {
+      const [slug] = rest;
+      if (!spaces.has(flags.space)) return refuse(`space ${flags.space} not found`);
+      targets.set(targetKey(flags.space, slug), {
+        Slug: slug,
+        SpaceSlug: flags.space,
+        TargetID: `self-test-target-${flags.space}-${slug}`,
+        ProviderType: flags.provider ?? "Kubernetes",
+        ToolchainType: flags.toolchain ?? "Any",
+      });
+      return ok("");
+    }
+    if (entity === "target" && verb === "get") {
+      const row = resolveTargetRef(rest[0], flags.space);
+      if (!row) return refuse(`target ${flags.space}/${rest[0]} not found`);
+      return ok(JSON.stringify({ Target: structuredClone(row) }));
     }
     if (entity === "space" && verb === "delete") {
       const slug = rest[0];
@@ -3326,7 +3365,9 @@ function createFakeConfigHub() {
       const key = unitKey(flags.space, rest[0]);
       const unit = units.get(key);
       if (!unit) return refuse(`unit ${key} not found`);
-      unit.TargetID = `self-test-target-${rest[1]}`;
+      const target = resolveTargetRef(rest[1], flags.space);
+      if (!target) return refuse(`target ${rest[1]} not found`);
+      unit.TargetID = target.TargetID;
       return ok("");
     }
     if (entity === "unit" && verb === "create") {
@@ -3349,7 +3390,7 @@ function createFakeConfigHub() {
         ApplyGates: { "awaiting/triggers": true },
         ApprovedBy: [],
         Labels: labelsFrom(flags.label),
-        TargetID: flags.target ? `self-test-target-${flags.target}` : null,
+        TargetID: flags.target ? resolveTargetRef(flags.target, flags.space)?.TargetID ?? null : null,
         UpstreamUnitID: upstreamKey && !state.refuseUpstreamLink
           ? units.get(upstreamKey).UnitID
           : "",
@@ -3541,7 +3582,6 @@ function createFakeConfigHub() {
     restoreVariantBaselines,
     spaceLabels: (slug) => spaces.get(slug)?.Labels ?? null,
     filterId,
-    catalogTargetId,
   };
 }
 
