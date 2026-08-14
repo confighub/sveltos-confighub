@@ -23,6 +23,7 @@ import {
   spaceName,
   waveUnlockEvidence,
   writeDocuments,
+  preloadSveltosImages,
 } from "./lib/per-cluster-fleet.mjs";
 import {
   check,
@@ -940,11 +941,11 @@ function installSveltos({ managementKubeconfig, workRoot, sveltos, addonControll
       `crd/${crd.metadata.name}`, "--timeout=180s",
     ], { timeout: 240_000 });
   }
-  clusterCommand(managementKubeconfig, ["apply", "-f", resourcePath], { timeout: 420_000 });
+  clusterCommand(managementKubeconfig, ["apply", "-f", resourcePath], { timeout: 900_000 });
   clusterCommand(managementKubeconfig, [
     "-n", registrationNamespace,
     "wait", "--for=condition=Available", "deployment", "--all",
-    "--timeout=420s",
+    "--timeout=900s",
   ], { timeout: 480_000 });
   const deployments = waitForExactDeployments({
     managementKubeconfig,
@@ -1021,7 +1022,7 @@ function createCluster(name, kubeconfigPath) {
     "--name", name,
     "--kubeconfig", kubeconfigPath,
     "--wait", "180s",
-  ], { timeout: 420_000 });
+  ], { timeout: 900_000 });
 }
 
 function run() {
@@ -1125,6 +1126,13 @@ function run() {
     }
     cleanup.results.workloadClusters = "pending";
     phase("two workload clusters ready");
+
+    preloadSveltosImages({
+      clusters: [managementName, ...fleetClusters.map((row) => row.cluster)],
+      version: sveltos.version,
+      addonControllerImage,
+    });
+    phase("the Sveltos images loaded into every cluster from the local daemon");
 
     const sveltosInstall = installSveltos({
       managementKubeconfig, workRoot, sveltos, addonControllerImage,
