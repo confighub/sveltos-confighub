@@ -14,7 +14,8 @@
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { check, parseDocs, sha256 } from "./proof-common.mjs";
 
@@ -167,7 +168,8 @@ export function preloadSveltosImages({ clusters, version, addonControllerImage }
   ];
   const host = (tool, args, timeout) =>
     spawnSync(tool, args, { encoding: "utf8", timeout });
-  for (const image of [...new Set(images)]) {
+  const unique = [...new Set(images)];
+  for (const image of unique) {
     const present = host("docker", ["image", "inspect", image], 30_000);
     if (present.status !== 0) {
       const pulled = host("docker", ["pull", image], 600_000);
@@ -176,20 +178,41 @@ export function preloadSveltosImages({ clusters, version, addonControllerImage }
         `could not pull ${image} into the local docker daemon: ${(pulled.stderr ?? "").trim() || "docker pull failed"}`,
       );
     }
+  }
+  // `kind load docker-image` imports with --all-platforms --digests, which
+  // demands multi-arch manifest blobs a single-platform pull never fetched;
+  // on a containerd-image-store docker (measured live) it refuses with
+  // "content digest ... not found". A platform-scoped `docker save` writes
+  // an archive containing exactly the blobs this machine holds, and one
+  // archive loads every image into a cluster in one import.
+  const arch = host("docker", ["version", "--format", "{{.Server.Arch}}"], 30_000);
+  const platform = `linux/${(arch.stdout ?? "").trim() || "arm64"}`;
+  const archive = join(tmpdir(), `sveltos-preload-${process.pid}.tar`);
+  const saved = host(
+    "docker",
+    ["save", "--platform", platform, "-o", archive, ...unique],
+    900_000,
+  );
+  check(
+    saved.status === 0,
+    `could not save the Sveltos images as a ${platform} archive: ${(saved.stderr ?? "").trim() || "docker save failed (a docker without save --platform predates the containerd-store fix this needs)"}`,
+  );
+  try {
     for (const cluster of clusters) {
       const loaded = host(
         "kind",
-        ["load", "docker-image", image, "--name", cluster],
+        ["load", "image-archive", archive, "--name", cluster],
         // Loading into a node on a machine still settling five fresh
-        // clusters is I/O-bound and slow; the 300s budget was measured
-        // failing mid-load. Same cure as the converge waits: room.
+        // clusters is I/O-bound and slow; give it the converge waits' room.
         900_000,
       );
       check(
         loaded.status === 0,
-        `could not load ${image} into ${cluster}: ${(loaded.stderr ?? "").trim() || "kind load failed"}`,
+        `could not load the Sveltos image archive into ${cluster}: ${(loaded.stderr ?? "").trim() || "kind load failed"}`,
       );
     }
+  } finally {
+    rmSync(archive, { force: true });
   }
   return images;
 }
