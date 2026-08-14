@@ -145,6 +145,42 @@ export function normalizeDigest(value) {
   return match ? match[0].toLowerCase() : "";
 }
 
+// The fakes parse flags permissively, which is how a flag belonging to one
+// verb leaked into another and every self-test stayed green while the live
+// CLI refused. The surface the runners use is small and known, so a fake
+// hub refuses any flag outside it, in the CLI's own words.
+const knownCubFlags = new Map([
+  ["auth get-token", []],
+  ["context get", ["o"]],
+  ["filter get", ["space", "o"]],
+  ["trigger get", ["space", "o"]],
+  ["space create", ["label", "trigger-filter", "where-trigger", "quiet"]],
+  ["space update", ["release-target", "refresh-triggers", "patch", "quiet"]],
+  ["space get", ["o"]],
+  ["space delete", ["recursive-force", "quiet"]],
+  ["variant create", ["space-pattern", "quiet"]],
+  ["target create", ["space", "provider", "toolchain", "label", "allow-exists", "quiet"]],
+  ["target get", ["space", "o"]],
+  ["unit create", ["space", "target", "upstream-space", "upstream-unit", "label", "change-desc", "quiet"]],
+  ["unit update", ["space", "patch", "upgrade", "where", "label", "change-desc", "quiet", "o"]],
+  ["unit get", ["space", "o"]],
+  ["unit list", ["space", "where", "quiet", "o"]],
+  ["unit approve", ["space", "where", "revision", "wait", "quiet"]],
+  ["unit set-target", ["space", "quiet"]],
+  ["release publish", ["o"]],
+]);
+
+export function unknownCubFlag(positionals, flags) {
+  const command = positionals.slice(0, 2).join(" ");
+  const known = knownCubFlags.get(command);
+  if (!known) return null;
+  const set = new Set(known);
+  for (const name of Object.keys(flags)) {
+    if (!set.has(name)) return `unknown flag: --${name}`;
+  }
+  return null;
+}
+
 // Docker Hub throttles anonymous pulls, and a fleet lane multiplies every
 // image by every node: five clusters pulling ten images cold is how a
 // converge that takes seconds on a quiet day dies at its timeout on a busy
