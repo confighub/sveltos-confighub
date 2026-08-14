@@ -127,12 +127,12 @@ stored, the bump moved through all three environments, and a
 [coverage audit](data/sveltos-cve-patch/matrix.md) named every cluster and
 confirmed each runs the patched version.
 
-Chapter five wrote one reviewed edit into every record in a single pass and
-closed with a [zero-drift audit](data/sveltos-bulk-ops/matrix.md), on the
-earlier three-environment design its committed receipt records. Its
-receipt records the shape of that fan-out honestly: one reviewed edit, three
-record updates, three approvals, and three release publishes, because each
-Space publishes its own release.
+Chapter five wrote one reviewed edit into every variant in a single pass
+and closed with a [zero-drift audit](data/sveltos-bulk-ops/matrix.md) that
+names the management record's armed schema-vet gate as the recorded
+bootstrap boundary. Its receipt records the shape of that fan-out
+honestly: one reviewed edit, four variant updates, four approvals, and
+four release publishes, because each Space publishes its own release.
 
 Chapter three now governs one variant per cluster over a shared base, so
 ConfigHub answers which cluster runs which revision from its own records
@@ -181,26 +181,16 @@ and records its phase timings.
    Recorded live on the per-cluster design.
 5. **[Bulk operations](examples/sveltos/bulk-ops/README.md)**: one reviewed
    edit written to every record in one pass, closed by a zero-drift audit.
-   Its committed recording is the earlier three-environment design; the
-   per-cluster recording is in flight
-   ([#17](https://github.com/confighub/sveltos-confighub/issues/17),
-   [#18](https://github.com/confighub/sveltos-confighub/issues/18)). Its
-   live run on the per-cluster shape stopped honestly at the zero-drift
-   audit, which caught the management record's armed bootstrap gate; the
-   audit boundary is being fixed with the re-record.
+   Recorded live on the per-cluster design, closing with the zero-drift
+   audit naming the management record's armed schema-vet gate as the
+   recorded bootstrap boundary.
 
-Chapters one through four are recorded live on the per-cluster design over
-the gateway, every wave's approval records the checkpoint evidence that
-unlocked it, and every observed matrix cell comes from a committed receipt.
-Those recordings predate one refinement this repository has since made:
-each cluster's Space now carries a Target named for its cluster and each
-variant names its cluster through clusterRefs, so the re-record in flight
-([#17](https://github.com/confighub/sveltos-confighub/issues/17),
-[#18](https://github.com/confighub/sveltos-confighub/issues/18)) covers all
-five chapters, and the verifiers say so rather than filling from receipts
-the current files cannot confirm. Every receipt records the addon
-controller image its run used, and chapter five's receipt says which
-design its recording used.
+All five chapters are recorded live on the per-cluster design over the
+gateway: each cluster with its own governed variant, its own named Target,
+and its own clusterRefs address, every wave's approval carrying the
+checkpoint evidence that unlocked it, and every observed matrix cell
+coming from a committed receipt. Every receipt records the addon
+controller image its run used.
 
 ## How to run it
 

@@ -34,6 +34,7 @@ import {
   writePath,
   writeStoredDocuments,
   preloadSveltosImages,
+  unknownCubFlag,
 } from "./lib/per-cluster-fleet.mjs";
 import {
   check,
@@ -3073,6 +3074,16 @@ function selfTest() {
   try {
     let clockMs = 0;
     const hub = createFakeConfigHub();
+    // The flag surface is enforced the way the live CLI enforces it: a flag
+    // that belongs to another verb refuses instead of parsing permissively.
+    const strayFlagAnswer = hub.handle([
+      "unit", "update", "--patch", "--space", "*",
+      "--where", "Labels.Proof = 'self-test'", "--upgrade", "--allow-exists",
+    ]);
+    check(
+      !strayFlagAnswer.ok && /unknown flag: --allow-exists/.test(strayFlagAnswer.error),
+      "the fake hub must refuse a flag the live CLI refuses",
+    );
     const cluster = createFakeManagementCluster(hub);
     const download = { bytes: "self-test-sveltos-manifest" };
     commandRunner = (file, args, options = {}) => {
@@ -4256,6 +4267,8 @@ function createFakeConfigHub() {
   const handle = (args) => {
     const { positionals, flags } = parseCubCommand(args);
     const [entity, verb, ...rest] = positionals;
+    const strayFlag = unknownCubFlag(positionals, flags);
+    if (strayFlag) return refuse(strayFlag);
     if (entity === "auth" && verb === "get-token") {
       return ok(`self-test-gateway-token-${"a".repeat(48)}`);
     }
