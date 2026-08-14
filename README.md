@@ -125,7 +125,8 @@ stored, the bump moved through all three environments, and a
 confirmed each runs the patched version.
 
 Chapter five wrote one reviewed edit into every record in a single pass and
-closed with a [zero-drift audit](data/sveltos-bulk-ops/matrix.md). Its
+closed with a [zero-drift audit](data/sveltos-bulk-ops/matrix.md), on the
+earlier three-environment design its committed receipt records. Its
 receipt records the shape of that fan-out honestly: one reviewed edit, three
 record updates, three approvals, and three release publishes, because each
 Space publishes its own release.
@@ -177,12 +178,19 @@ and records its phase timings.
    Recorded live on the per-cluster design.
 5. **[Bulk operations](examples/sveltos/bulk-ops/README.md)**: one reviewed
    edit written to every record in one pass, closed by a zero-drift audit.
-   Recorded live on the per-cluster design.
+   Its committed recording is the earlier three-environment design; the
+   per-cluster recording is in flight
+   ([#17](https://github.com/confighub/sveltos-confighub/issues/17),
+   [#18](https://github.com/confighub/sveltos-confighub/issues/18)). Its
+   live run on the per-cluster shape stopped honestly at the zero-drift
+   audit, which caught the management record's armed bootstrap gate; the
+   audit boundary is being fixed with the re-record.
 
-Every chapter is recorded live on the per-cluster design over the gateway,
-every wave's approval records the checkpoint evidence that unlocked it, and
-every observed matrix cell comes from a committed receipt. Every receipt
-records the addon controller image its run used.
+Chapters one through four are recorded live on the per-cluster design over
+the gateway, every wave's approval records the checkpoint evidence that
+unlocked it, and every observed matrix cell comes from a committed receipt.
+Every receipt records the addon controller image its run used, and chapter
+five's receipt says which design its recording used.
 
 ## How to run it
 
