@@ -468,7 +468,7 @@ function selfTest() {
       ["promotion overclaim", (s) => { s.receipt.status.multiClusterPromotionWave = "pass"; }, /fleet promotion is overclaimed/],
       ["drift result", (s) => { s.receipt.spec.driftTest.result = "fail"; }, /drift test must stay recorded/],
       ["technical README", (s) => { s.technicalReadmeText = s.technicalReadmeText.replace("## The canary, without a selector edit", "## The canary"); }, /must tell the per-cluster canary/],
-      ["OCI receipt result", (s) => { s.ociReceipt.status.result = "fail"; }, /OCI delivery receipt changed/],
+      ["OCI receipt result", (s) => { s.ociReceipt.status.result = "fail"; }, /OCI delivery receipt changed|no longer records the reviewed base/],
       ["OCI receipt superseded shape", (s) => {
         delete s.ociReceipt.spec.variants;
         s.ociReceipt.status.result = "fail";

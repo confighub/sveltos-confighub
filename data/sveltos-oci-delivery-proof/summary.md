@@ -22,8 +22,8 @@ back to its reviewed count of 3.
 
 | Wave | Cluster | Space | Release digest | Sveltos |
 | --- | --- | --- | --- | --- |
-| 1 | hx-sveltos-fleet-pilot | hx-sveltos-fleet-pilot-20260813160921 | `sha256:23e16e671711f17c7783a79f741cd88e1f43cbe5c723c3dde8ae8ab630f8c659` | Provisioned |
-| 2 | hx-sveltos-fleet-second | hx-sveltos-fleet-second-20260813160921 | `sha256:6ef9379492150529b1c55669448e4d130d5313425e7fc8808d75d67648c1cfd7` | Provisioned |
+| 1 | hx-sveltos-fleet-pilot | hx-sveltos-fleet-pilot-20260814164111 | `sha256:d2083bf32b4b70ddffc7375a4990dcc78299bc80369708641315d12be5b5183b` | Provisioned |
+| 2 | hx-sveltos-fleet-second | hx-sveltos-fleet-second-20260814164111 | `sha256:a19f336eed78a34bbe2b6ef17b42465e967fbf963184736c3c16ffbbfbbdb959` | Provisioned |
 
 No wave's approval was requested on a schedule. Each one was unlocked by the
 preceding checkpoint showing every cluster it depends on reporting healthy,
@@ -42,6 +42,7 @@ and each wave records that evidence:
 | Drift repaired | 2/2 |
 | Addon controller image | `docker.io/projectsveltos/addon-controller:v1.13.0-ch` |
 | Cleanup | Artifacts kept deliberately |
+| Release targets | one Target per cluster, named for it |
 
 - [Committed receipt](../../runs/sveltos-oci-delivery-proof/receipt.yaml)
 - [Reviewed base profile](../../examples/sveltos/kyverno-fleet/clusterprofile-base.yaml)
