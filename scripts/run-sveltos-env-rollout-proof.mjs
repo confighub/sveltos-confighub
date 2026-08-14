@@ -61,8 +61,6 @@ if (!allowedModes.has(mode)) {
 const expectedPolicyOrg = "helm-catalog";
 const approvalFilterRef = "platform/helm-catalog-prod-gates";
 const approvalGate = "platform/require-approval/vet-approvedby";
-const catalogOciTargetRef =
-  "bitnami-redis-27-0-0-default-pilot-live-20260705/oci-target";
 // The approval gate attaches about a second after a Unit is created; the
 // report that said otherwise was our own misreading, now withdrawn. The
 // runner now governs one variant per cluster, and no live run has been
@@ -169,7 +167,6 @@ const {
   approvalFilterRef,
   approvalGate,
   baseRecordLabel,
-  catalogOciTargetRef,
   componentLabel,
   configHubOciHost,
   ownerLabel,
@@ -203,10 +200,9 @@ if (mode === "--run") {
   );
   const receipt = readYaml(receiptPath);
   check(
-    !supersededReceipt(receipt),
-    `${relativeRepo(receiptPath)} predates the per-cluster variant design; record the run live before regenerating the summary`,
+    verifyReceipt(receipt),
+    `${relativeRepo(receiptPath)} predates the per-cluster design; record a live run before regenerating its summary`,
   );
-  verifyReceipt(receipt);
   write(summaryPath, renderSummary(receipt));
   console.log(`wrote ${relativeRepo(summaryPath)}`);
 } else if (!existsSync(receiptPath)) {
@@ -215,12 +211,9 @@ if (mode === "--run") {
   );
 } else {
   const receipt = readYaml(receiptPath);
-  if (supersededReceipt(receipt)) {
-    console.log(
-      "the committed Sveltos environment rollout receipt records three environment records and predates the per-cluster variant design; it awaits a live re-record, and its summary is kept as recorded",
-    );
-  } else {
-    verifyReceipt(receipt);
+  // A superseded receipt is kept as recorded, so its committed summary is
+  // kept as recorded too rather than being regenerated against the new shape.
+  if (verifyReceipt(receipt)) {
     check(
       existsSync(summaryPath),
       `${relativeRepo(summaryPath)} is missing; run the generator`,
@@ -229,8 +222,8 @@ if (mode === "--run") {
       readFileSync(summaryPath, "utf8") === renderSummary(receipt),
       `${relativeRepo(summaryPath)} is stale`,
     );
-    console.log("verified the Sveltos environment rollout proof");
   }
+  console.log("verified the Sveltos environment rollout proof");
 }
 
 // The recorded run governed one record per environment, so its receipt keys
@@ -273,13 +266,6 @@ function run() {
   const addonControllerImage = resolveAddonControllerImage(sveltos);
 
   const topology = readApprovalTopology(policyContext);
-  const catalogTarget = cubJson(policyContext, [
-    "target", "get", "--space", ...catalogOciTargetRef.split("/"), "-o", "json",
-  ]).Target;
-  check(
-    catalogTarget?.ProviderType === "OCI",
-    `${catalogOciTargetRef} is not an OCI target`,
-  );
 
   const recordedAt = new Date().toISOString();
   const runId = safeRunId(process.env.HELM_EXPT_PROOF_RUN_ID || recordedAt);
@@ -322,7 +308,7 @@ function run() {
   // The approval gate is probed before any cluster work, so a Space whose
   // gate never attaches costs seconds, not the seven-minute fleet build the
   // two-wave runner paid per attempt.
-  assertApprovalGateObservable(policyContext, runId, topology, catalogTarget);
+  assertApprovalGateObservable(policyContext, runId, topology);
   cleanup.results.probeSpace = "pass";
   phase("gate preflight passed; the approval gate is observable");
 
@@ -383,7 +369,6 @@ function run() {
       space: baseSpace,
       plan,
       topology,
-      catalogTarget,
       runId,
       policySpacesCreated,
     });
@@ -397,7 +382,6 @@ function run() {
         baseSpace,
         cluster: row,
         topology,
-        catalogTarget,
         runId,
         workRoot,
         policySpacesCreated,
@@ -410,7 +394,6 @@ function run() {
       space: spaceFor[plan.management.cluster],
       plan,
       topology,
-      catalogTarget,
       runId,
       workRoot,
       policySpacesCreated,
@@ -535,7 +518,6 @@ function run() {
       recordedAt,
       plan,
       topology,
-      catalogTarget,
       managementName,
       managementRegistration,
       sveltosInstall,
@@ -678,15 +660,8 @@ function probeGate() {
     `refusing to create probe evidence outside ${expectedPolicyOrg}`,
   );
   const topology = readApprovalTopology(policyContext);
-  const catalogTarget = cubJson(policyContext, [
-    "target", "get", "--space", ...catalogOciTargetRef.split("/"), "-o", "json",
-  ]).Target;
-  check(
-    catalogTarget?.ProviderType === "OCI",
-    `${catalogOciTargetRef} is not an OCI target`,
-  );
   const runId = safeRunId(new Date().toISOString());
-  assertApprovalGateObservable(policyContext, runId, topology, catalogTarget);
+  assertApprovalGateObservable(policyContext, runId, topology);
   console.log(
     "the approval gate attaches as expected in this organization; run the fleet lanes serially",
   );
@@ -748,13 +723,13 @@ function loadRolloutPlan(root = repoRoot) {
     "the variants record lost its base declaration",
   );
   const baseDoc = baseDocs[0];
-  const baseSelector = baseDoc.spec?.clusterSelector?.matchLabels ?? {};
   check(
     baseDoc.kind === "ClusterProfile"
       && typeof baseDoc.metadata?.name === "string"
-      && Object.keys(baseSelector).join(",") === "cluster"
-      && !workloads.some((row) => row.cluster === baseSelector.cluster),
-    "the base profile must carry a cluster selector that addresses no registered cluster",
+      && Array.isArray(baseDoc.spec?.clusterRefs)
+      && baseDoc.spec.clusterRefs.length === 0
+      && baseDoc.spec?.clusterSelector === undefined,
+    "the base profile must carry an empty clusterRefs list, no clusterSelector, and reach no cluster",
   );
   check(
     baseDoc.spec?.syncMode === "ContinuousWithDriftDetection"
@@ -807,12 +782,17 @@ function loadRolloutPlan(root = repoRoot) {
   const clusters = declaredVariants.map((row) => {
     const departures = row.departures ?? {};
     const departurePaths = Object.keys(departures).sort();
-    const addressing = ["metadata.name", "spec.clusterSelector.matchLabels.cluster"];
+    const addressing = ["metadata.name", "spec.clusterRefs"];
+    const refs = departures["spec.clusterRefs"];
     check(
-      departures["spec.clusterSelector.matchLabels.cluster"] === row.cluster
+      Array.isArray(refs) && refs.length === 1
+        && refs[0]?.kind === "SveltosCluster"
+        && refs[0]?.apiVersion === "lib.projectsveltos.io/v1beta1"
+        && refs[0]?.name === row.cluster
+        && refs[0]?.namespace === registrationNamespace
         && typeof departures["metadata.name"] === "string"
         && departurePaths.some((path) => !addressing.includes(path)),
-      `${row.cluster} must depart on its own selector, its own name, and at least one field beyond addressing`,
+      `${row.cluster} must depart on a clusterRefs list naming its own SveltosCluster, its own name, and at least one field beyond addressing`,
     );
     // A change to the base and a departure that write the same field, or
     // different keys of the same map of scalars, merge with the departure
@@ -846,6 +826,7 @@ function loadRolloutPlan(root = repoRoot) {
       profileName: departures["metadata.name"],
       departures,
       departurePaths,
+      clusterRef: refs[0],
       inheritedFields: [changeField],
       baselineDoc,
       changedDoc,
@@ -1008,7 +989,7 @@ function assertPublishableSpaceName(space) {
 }
 
 
-function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
+function assertApprovalGateObservable(context, runId, topology) {
   const probeSpace = spaceName(`hx-sveltos-env-probe-${runId}`);
   check(
     !spacePresent(context, probeSpace),
@@ -1016,7 +997,7 @@ function assertApprovalGateObservable(context, runId, topology, catalogTarget) {
   );
   createPolicySpace(context, probeSpace);
   try {
-    assertPolicySpace(context, probeSpace, topology.triggerIds, catalogTarget.TargetID);
+    assertPolicySpace(context, probeSpace, topology.triggerIds, null);
     cub(context, [
       "unit", "create", "--space", probeSpace, policyUnit,
       join(exampleRoot, "clusterprofile-base.yaml"),
@@ -1254,6 +1235,7 @@ function recordCheckpoint({
     const observation = observeWorkload({
       managementKubeconfig,
       workloadName: row.cluster,
+      logicalCluster: row.logicalCluster,
       workloadKubeconfig: row.kubeconfig,
       profileName: planned.profileName,
       expectedReplicas,
@@ -1289,6 +1271,7 @@ function auditConvergence({ plan, fleetClusters, managementKubeconfig }) {
     const observation = observeWorkload({
       managementKubeconfig,
       workloadName: row.cluster,
+      logicalCluster: row.logicalCluster,
       workloadKubeconfig: row.kubeconfig,
       profileName: planned.profileName,
       expectedReplicas: planned.expectedReplicas.changed,
@@ -1317,6 +1300,7 @@ function auditConvergence({ plan, fleetClusters, managementKubeconfig }) {
 function observeWorkload({
   managementKubeconfig,
   workloadName,
+  logicalCluster,
   workloadKubeconfig,
   profileName,
   expectedReplicas,
@@ -1339,7 +1323,7 @@ function observeWorkload({
         const profileOwner = (item.metadata?.ownerReferences ?? []).some(
           (owner) => owner.kind === "ClusterProfile" && owner.name === profileName,
         );
-        return item.spec?.clusterName === workloadName
+        return item.spec?.clusterName === logicalCluster
           && item.spec?.clusterNamespace === registrationNamespace
           && item.spec?.clusterType === "Sveltos"
           && (profileLabel === profileName || profileOwner);
@@ -1423,7 +1407,6 @@ function buildReceipt({
   recordedAt,
   plan,
   topology,
-  catalogTarget,
   managementName,
   managementRegistration,
   sveltosInstall,
@@ -1452,11 +1435,12 @@ function buildReceipt({
         gatewayReference: gatewayReference(record.space),
         unit: policyUnit,
         profile: row.profileName,
-        selector: record.selector,
+        clusterRef: record.clusterRef,
         upstream: record.upstream,
         departures: record.departures,
         departedFields: record.departedFields,
         inheritedFields: row.inheritedFields,
+        target: record.target,
         records: [
           { stage: "baseline", wave: 0, ...record.baseline },
           { stage: "changed", wave: row.wave, ...record.changed },
@@ -1481,6 +1465,7 @@ function buildReceipt({
       inheritedFields: [],
       bootstrapProfiles: managementVariant.bootstrapProfiles,
       boundary: managementVariant.boundary,
+      target: managementVariant.target,
       records: [{ stage: "baseline", wave: 0, ...managementVariant.baseline }],
     },
   ];
@@ -1527,11 +1512,6 @@ function buildReceipt({
         resourceClass: "system-configuration",
         filter: topology,
         approvalGate,
-        target: {
-          ref: catalogOciTargetRef,
-          id: catalogTarget.TargetID,
-          provider: catalogTarget.ProviderType,
-        },
       },
       prerequisite: sveltosInstall,
       base: { ...baseRecord, change: baseChange },
@@ -1603,12 +1583,35 @@ function buildReceipt({
   };
 }
 
+// A receipt recorded before the per-cluster variant design held one record
+// per environment, and predates a plan this function can check it against.
+// It is recognized, not verified, so the re-record does not silently rewrite
+// it or check it against a contract it was never built to satisfy.
 function verifyReceipt(receipt) {
+  if (supersededReceipt(receipt)) {
+    console.log(
+      "the recorded receipt records one record per environment and predates the per-cluster variant design; it awaits a live re-record",
+    );
+    return false;
+  }
   check(
     receipt.kind === "SveltosEnvRolloutProofReceipt",
     "Sveltos env rollout receipt kind changed",
   );
   check(receipt.status?.result === "pass", "Sveltos env rollout proof is not pass");
+
+  // A per-cluster receipt recorded before the Target and clusterRefs model
+  // hashed the example files as they were reviewed then, so it cannot be
+  // checked against a plan computed from today's files. It is recognized,
+  // kept as recorded, and replaced by the re-record.
+  const targeted = (receipt.spec?.variants ?? []).some((row) => row.target);
+  if (!targeted) {
+    console.log(
+      "the recorded receipt predates the per-cluster Target model and releases to a shared catalog target; it awaits its re-record",
+    );
+    return false;
+  }
+
   const plan = loadRolloutPlan();
   check(
     receipt.spec?.source?.base?.path === plan.base.repoPath
@@ -1670,11 +1673,11 @@ function verifyReceipt(receipt) {
       )
       && plan.clusters.every((row) =>
         registrations.some((registration) =>
-          registration.labels?.cluster === row.cluster
-          && registration.labels.environment === row.environment))
-      && new Set(registrations.map((row) => row.labels?.cluster)).size
+          registration.cluster === row.cluster
+          && registration.labels?.environment === row.environment))
+      && new Set(registrations.map((row) => row.cluster)).size
       === registrations.length,
-    "every workload cluster must be registered with its own addressing label",
+    "every workload cluster must be registered under its own SveltosCluster name",
   );
   const checkpoints = receipt.spec?.checkpoints ?? [];
   check(
@@ -1744,6 +1747,7 @@ function verifyReceipt(receipt) {
     !serialized.includes("ch_") && !serialized.includes("eyJ"),
     "Sveltos env rollout receipt contains a credential",
   );
+  return true;
 }
 
 // The base is the record every variant clones. It must stay a record that
@@ -1786,14 +1790,27 @@ function verifyVariants(receipt, plan) {
     new Set(variants.map((row) => row.gatewayReference)).size === variants.length,
     "two variants share a gateway reference, so they cannot be served separately",
   );
-  // Selectors are evaluated against the labels the run recorded on the
-  // registrations, so a selector is checked against the fleet that existed
-  // rather than against the fleet the plan expected.
-  const clusterLabels = Object.fromEntries(
-    (receipt.spec?.fleet?.registrations ?? []).map((registration) => [
-      registration.logicalCluster,
-      registration.labels ?? {},
-    ]),
+  // ConfigHub's destination model: each variant's Space carries a Target
+  // named for its cluster and releases to it, so what runs where is a
+  // model-level answer. A receipt recorded before this model was recognized
+  // before verifyVariants was ever reached, so every receipt here carries
+  // targets.
+  check(
+    receipt.spec?.policy?.target === undefined,
+    "the shared catalog target is retired; a per-cluster Target receipt must not carry one",
+  );
+  for (const variant of variants) {
+    check(
+      variant.target?.name === variant.cluster
+        && variant.target.ref === `${variant.space}/${variant.cluster}`
+        && variant.target.provider === "OCI"
+        && String(variant.target.id ?? "").length > 0,
+      `the ${variant.cluster} variant must release to its own cluster's Target`,
+    );
+  }
+  check(
+    new Set(variants.map((row) => row.target.id)).size === variants.length,
+    "two variants share a Target, so ConfigHub's model cannot say what runs where",
   );
   for (const variant of variants) {
     check(
@@ -1844,15 +1861,13 @@ function verifyVariants(receipt, plan) {
         && variant.profile === row.profileName,
       `the ${row.cluster} variant identity changed`,
     );
-    const selector = variant.selector ?? {};
-    const matched = Object.entries(clusterLabels).filter(([, labels]) =>
-      Object.entries(selector).every(([key, value]) => labels[key] === value));
     check(
-      Object.keys(selector).join(",") === "cluster"
-        && selector.cluster === row.cluster
-        && matched.length === 1
-        && matched[0][0] === row.cluster,
-      `the ${row.cluster} selector must address one cluster by name and nothing else; this one matches ${matched.length} of the registered clusters, and a selector that matches an environment fans out and takes the mapping back out of ConfigHub`,
+      variant.clusterRef?.kind === "SveltosCluster"
+        && variant.clusterRef.apiVersion === "lib.projectsveltos.io/v1beta1"
+        && variant.clusterRef.name === row.cluster
+        && variant.clusterRef.namespace === registrationNamespace
+        && variant.selector === undefined,
+      `the ${row.cluster} variant must name its own SveltosCluster and nothing else`,
     );
     check(
       variant.upstream?.space === receipt.spec?.base?.space
@@ -1864,7 +1879,7 @@ function verifyVariants(receipt, plan) {
       sameSet(variant.departedFields ?? [], row.departurePaths)
         && stableJson(variant.departures) === stableJson(row.departures)
         && (variant.departedFields ?? []).some((path) =>
-          !["metadata.name", "spec.clusterSelector.matchLabels.cluster"]
+          !["metadata.name", "spec.clusterRefs"]
             .includes(path)),
       `the ${row.cluster} departures no longer match the reviewed variants record`,
     );
@@ -2206,7 +2221,7 @@ ${advance}
 | Clusters at their own changed revision after wave 3 | ${finalCheckpoint.observations.filter((row) => row.observation.result === "pass").length}/4 |
 | Convergence audit | ${receipt.spec.convergenceAudit.result} |
 | Addon controller image | \`${delivery.addonControllerImage}\` |
-| Cleanup | ${receipt.spec.cleanup.mode === "kept" ? "Artifacts kept deliberately" : "Pass"} |
+| Cleanup | ${receipt.spec.cleanup.mode === "kept" ? "Artifacts kept deliberately" : "Pass"} |${receipt.spec.variants.some((row) => row.target) ? `\n| Release targets | one Target per cluster, named for it |` : ""}
 
 The per-cluster matrix in [matrix.md](matrix.md) and
 [matrix.html](matrix.html) shows which cluster ran which revision at each
@@ -2749,6 +2764,10 @@ contexts:
       user: sveltos-manager
 current-context: workload
 `;
+  // The committed clusterRefs departure names the logical cluster, so the
+  // SveltosCluster this kind cluster answers to must be registered under
+  // that logical name; the kubeconfig Secret follows Sveltos's own naming
+  // convention for the SveltosCluster it pairs with.
   const registrationPath = join(
     workRoot,
     `${workloadName}-sveltos-registration.yaml`,
@@ -2756,7 +2775,7 @@ current-context: workload
   writeFileSync(registrationPath, `apiVersion: v1
 kind: Secret
 metadata:
-  name: ${workloadName}-sveltos-kubeconfig
+  name: ${logicalCluster}-sveltos-kubeconfig
   namespace: ${registrationNamespace}
 type: Opaque
 data:
@@ -2765,27 +2784,25 @@ data:
 apiVersion: lib.projectsveltos.io/v1beta1
 kind: SveltosCluster
 metadata:
-  name: ${workloadName}
+  name: ${logicalCluster}
   namespace: ${registrationNamespace}
   labels:
-    cluster: ${logicalCluster}
     environment: ${environment}
     sveltos-agent: present
 spec: {}
 `, { mode: 0o600 });
   clusterCommand(managementKubeconfig, ["apply", "-f", registrationPath]);
-  const observed = waitForRegistration(managementKubeconfig, workloadName);
+  const observed = waitForRegistration(managementKubeconfig, logicalCluster);
   check(
     observed.ready,
-    `Sveltos did not register ${workloadName}: ${observed.reason}`,
+    `Sveltos did not register ${logicalCluster}: ${observed.reason}`,
   );
   return {
     method: "programmatic SveltosCluster registration",
     namespace: registrationNamespace,
-    cluster: workloadName,
-    logicalCluster,
+    cluster: logicalCluster,
+    kindCluster: workloadName,
     labels: {
-      cluster: logicalCluster,
       environment,
       "sveltos-agent": "present",
     },
@@ -3078,8 +3095,9 @@ function selfTest() {
     check(
       plan.clusters.length === 4
         && plan.clusters.every((row) =>
-          row.baselineDoc.spec.clusterSelector.matchLabels.cluster === row.cluster
-          && Object.keys(row.baselineDoc.spec.clusterSelector.matchLabels).length === 1)
+          row.baselineDoc.spec.clusterRefs.length === 1
+          && row.baselineDoc.spec.clusterRefs[0].kind === "SveltosCluster"
+          && row.baselineDoc.spec.clusterRefs[0].name === row.cluster)
         && new Set(plan.clusters.map((row) => row.space)).size === 4
         && new Set(plan.clusters.map((row) => row.profileName)).size === 4,
       "the plan must hold one single-cluster variant per workload cluster",
@@ -3117,8 +3135,8 @@ function selfTest() {
           plan.base.doc,
         )
         && fieldsCollide(
-          "spec.clusterSelector.matchLabels.cluster",
-          "spec.clusterSelector.matchLabels.environment",
+          "spec.helmCharts.0.chartName",
+          "spec.helmCharts.0.releaseNamespace",
           plan.base.doc,
         )
         && !fieldsCollide(
@@ -3138,13 +3156,13 @@ function selfTest() {
       "departure collision refusal",
     );
     expectFailure(
-      () => loadRolloutPlan(tamperedExampleRoot(workRoot, "fanout", (text) =>
+      () => loadRolloutPlan(tamperedExampleRoot(workRoot, "clusterref-wrong-cluster", (text) =>
         text.replace(
-          "        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-prod-a",
-          "        spec.clusterSelector.matchLabels.environment: prod",
+          "          name: hx-sveltos-env-prod-a",
+          "          name: hx-sveltos-env-prod-b",
         ))),
-      /must depart on its own selector/,
-      "environment selector refusal",
+      /must depart on a clusterRefs list naming its own SveltosCluster/,
+      "clusterRefs naming another cluster refusal",
     );
     expectFailure(
       () => loadRolloutPlan(tamperedExampleRoot(workRoot, "shared-space", (text) =>
@@ -3266,11 +3284,11 @@ function selfTest() {
       }));
     check(
       registrations.every((registration, index) =>
-        registration.labels.cluster === plan.clusters[index].cluster
+        registration.cluster === plan.clusters[index].cluster
         && registration.labels.environment === plan.clusters[index].environment
         && registration.ready === true
         && registration.credential.storedInRepository === false)
-        && new Set(registrations.map((row) => row.labels.cluster)).size === 4,
+        && new Set(registrations.map((row) => row.cluster)).size === 4,
       "the workload registrations lost their addressing labels",
     );
     const managementRegistration = registerManagementCluster({
@@ -3338,18 +3356,17 @@ function selfTest() {
     );
 
     const topology = readApprovalTopology(policyContext);
-    const catalogTarget = { TargetID: hub.catalogTargetId, ProviderType: "OCI" };
 
     // The gate preflight is the gate preflight: it must pass when the
     // gate materializes and refuse fast, naming the issue, when it never does.
-    assertApprovalGateObservable(policyContext, "20260807000000", topology, catalogTarget);
+    assertApprovalGateObservable(policyContext, "20260807000000", topology);
     check(
       !spacePresent(policyContext, "hx-sveltos-env-probe-20260807000000"),
       "the gate preflight did not delete its probe Space",
     );
     hub.state.neverPopulateGates = true;
     expectFailure(
-      () => assertApprovalGateObservable(policyContext, "20260807000001", topology, catalogTarget),
+      () => assertApprovalGateObservable(policyContext, "20260807000001", topology),
       /the approval gate never appeared on the probe Unit .*; check the Space wiring before building the fleet/,
       "gate preflight refusal",
     );
@@ -3373,7 +3390,6 @@ function selfTest() {
       space: baseSpace,
       plan,
       topology,
-      catalogTarget,
       runId,
       policySpacesCreated,
     });
@@ -3391,7 +3407,6 @@ function selfTest() {
         baseSpace,
         cluster: row,
         topology,
-        catalogTarget,
         runId,
         workRoot,
         policySpacesCreated,
@@ -3401,7 +3416,7 @@ function selfTest() {
       plan.clusters.every((row) =>
         variantRecords[row.cluster].upstream.space === baseSpace
         && variantRecords[row.cluster].upstream.unitLinked === true
-        && variantRecords[row.cluster].selector.cluster === row.cluster),
+        && variantRecords[row.cluster].clusterRef.name === row.cluster),
       "every variant must be linked to the base and address its own cluster",
     );
     // A variant can be linked to the base and still be unable to inherit from
@@ -3428,7 +3443,6 @@ function selfTest() {
         baseSpace,
         cluster: plan.clusters[0],
         topology,
-        catalogTarget,
         runId,
         workRoot,
         policySpacesCreated: new Set(),
@@ -3450,7 +3464,6 @@ function selfTest() {
       space: spaceFor[plan.management.cluster],
       plan,
       topology,
-      catalogTarget,
       runId,
       workRoot,
       policySpacesCreated,
@@ -3740,7 +3753,6 @@ function selfTest() {
       recordedAt: "self-test",
       plan,
       topology,
-      catalogTarget,
       managementName,
       managementRegistration,
       sveltosInstall: fakeSveltosInstall(sveltos, overrideImage),
@@ -3757,7 +3769,7 @@ function selfTest() {
       convergenceAudit: synthesizeAudit(plan),
       cleanup: removedCleanup(),
     });
-    verifyReceipt(receipt);
+    check(verifyReceipt(receipt) === true, "the self-test receipt was not recognized as a per-cluster record");
     const summary = renderSummary(receipt);
     check(
       summary.includes(
@@ -3773,7 +3785,7 @@ function selfTest() {
     // failed cleanup, and it still has to say what it left and how to remove it.
     const kept = structuredClone(receipt);
     kept.spec.cleanup = keptCleanup();
-    verifyReceipt(kept);
+    check(verifyReceipt(kept) === true, "a kept run must still verify");
     check(
       renderSummary(kept).includes("Artifacts kept deliberately"),
       "a kept run must say so in its summary",
@@ -3791,6 +3803,21 @@ function selfTest() {
       () => verifyReceipt(keptWithoutList),
       /cleanup did not pass/,
       "kept run that names nothing it kept",
+    );
+
+    // A receipt still on the per-environment path, or still on the shared
+    // catalog target, is recognized, not verified, and does not throw.
+    const superseded = structuredClone(receipt);
+    delete superseded.spec.variants;
+    check(
+      verifyReceipt(superseded) === false,
+      "a per-environment receipt must be recognized as recorded, not verified as current",
+    );
+    const untargeted = structuredClone(receipt);
+    for (const variant of untargeted.spec.variants) delete variant.target;
+    check(
+      verifyReceipt(untargeted) === false,
+      "a receipt without any Target must be recognized as pre-dating the per-cluster Target model",
     );
 
     const tampers = [
@@ -3811,12 +3838,23 @@ function selfTest() {
       ["shared gateway reference", (c) => {
         c.spec.variants[1].gatewayReference = c.spec.variants[0].gatewayReference;
       }, /two variants share a gateway reference/],
-      ["environment selector", (c) => {
-        c.spec.variants[2].selector = { environment: "prod" };
-      }, /must address one cluster by name and nothing else/],
-      ["selector fans out", (c) => {
-        c.spec.variants[2].selector = { "sveltos-agent": "present" };
-      }, /must address one cluster by name and nothing else/],
+      ["target dropped", (c) => { delete c.spec.variants[0].target; }, /must release to its own cluster's Target/],
+      ["target renamed", (c) => { c.spec.variants[0].target.name = "somewhere-else"; }, /must release to its own cluster's Target/],
+      ["target provider", (c) => { c.spec.variants[0].target.provider = "Kubernetes"; }, /must release to its own cluster's Target/],
+      ["targets shared", (c) => { c.spec.variants[1].target = { ...c.spec.variants[0].target }; c.spec.variants[1].target.name = c.spec.variants[1].cluster; c.spec.variants[1].target.ref = `${c.spec.variants[1].space}/${c.spec.variants[1].cluster}`; }, /two variants share a Target/],
+      ["shared catalog target reintroduced", (c) => { c.spec.policy.target = { ref: "catalog/oci-target" }; }, /shared catalog target is retired/],
+      ["clusterRef renamed", (c) => {
+        c.spec.variants[2].clusterRef.name = c.spec.variants[3].cluster;
+      }, /must name its own SveltosCluster/],
+      ["clusterRef wrong kind", (c) => {
+        c.spec.variants[2].clusterRef.kind = "Cluster";
+      }, /must name its own SveltosCluster/],
+      ["clusterRef dropped", (c) => {
+        delete c.spec.variants[2].clusterRef;
+      }, /must name its own SveltosCluster/],
+      ["selector reintroduced", (c) => {
+        c.spec.variants[2].selector = { cluster: c.spec.variants[2].cluster };
+      }, /must name its own SveltosCluster/],
       ["upstream link dropped", (c) => { c.spec.variants[0].upstream = null; }, /is not linked to the base record/],
       ["departures dropped", (c) => {
         c.spec.variants[0].departures = {};
@@ -3861,8 +3899,8 @@ function selfTest() {
           c.spec.gatewayDelivery.clusters["hx-sveltos-env-prod-a"].baselineReleaseManifestDigest;
       }, /own manifest digest/],
       ["management unregistered", (c) => { c.spec.fleet.managementRegistration.ready = false; }, /management cluster must be registered/],
-      ["registration relabelled", (c) => { c.spec.fleet.registrations[3].labels.cluster = "hx-sveltos-env-prod-a"; }, /matches 2 of the registered clusters/],
-      ["registration not ready", (c) => { c.spec.fleet.registrations[3].ready = false; }, /own addressing label/],
+      ["registration renamed", (c) => { c.spec.fleet.registrations[3].cluster = c.spec.fleet.registrations[2].cluster; }, /registered under its own SveltosCluster name/],
+      ["registration not ready", (c) => { c.spec.fleet.registrations[3].ready = false; }, /registered under its own SveltosCluster name/],
       ["approval bracket", (c) => { c.spec.variants[0].records[1].beforeApproval.result = "allowed"; }, /approval record changed/],
       ["approval count", (c) => { c.spec.variants[2].records[0].approval.recordedApprovals = 0; }, /approval record changed/],
       ["release reference", (c) => {
@@ -3913,7 +3951,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: one base and five per-cluster variants with single-cluster selectors, the departure collision and fan-out refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: one base and five per-cluster variants each naming its own SveltosCluster, the departure collision and clusterRefs-addressing refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -4115,7 +4153,14 @@ function fakeObservation(expectedReplicas) {
 
 function createFakeConfigHub() {
   const filterId = "self-test-filter-0001";
-  const catalogTargetId = "self-test-oci-target-0001";
+  const targets = new Map();
+  const targetKey = (space, slug) => `${space}/${slug}`;
+  const resolveTargetRef = (ref, fallbackSpace) => {
+    const key = String(ref).includes("/")
+      ? String(ref)
+      : targetKey(fallbackSpace, ref);
+    return targets.get(key) ?? null;
+  };
   const triggerIdFor = (ref) => `self-test-trigger-${ref.split("/")[1]}`;
   const spaces = new Map();
   const units = new Map();
@@ -4197,7 +4242,9 @@ function createFakeConfigHub() {
       const row = spaces.get(rest[0]);
       if (!row) return refuse(`space ${rest[0]} not found`);
       if (flags["release-target"]) {
-        row.ReleaseTargetID = state.releaseTargetOverride ?? catalogTargetId;
+        const target = resolveTargetRef(flags["release-target"], rest[0]);
+        if (!target) return refuse(`release target ${flags["release-target"]} not found`);
+        row.ReleaseTargetID = state.releaseTargetOverride ?? target.TargetID;
       }
       if (flags["refresh-triggers"]) {
         row.TriggerIDs = state.triggerIdOverride
@@ -4209,6 +4256,23 @@ function createFakeConfigHub() {
       const row = spaces.get(rest[0]);
       if (!row) return refuse(`space ${rest[0]} not found`);
       return ok(JSON.stringify({ Space: structuredClone(row) }));
+    }
+    if (entity === "target" && verb === "create") {
+      const [slug] = rest;
+      if (!spaces.has(flags.space)) return refuse(`space ${flags.space} not found`);
+      targets.set(targetKey(flags.space, slug), {
+        Slug: slug,
+        SpaceSlug: flags.space,
+        TargetID: `self-test-target-${flags.space}-${slug}`,
+        ProviderType: flags.provider ?? "Kubernetes",
+        ToolchainType: flags.toolchain ?? "Any",
+      });
+      return ok("");
+    }
+    if (entity === "target" && verb === "get") {
+      const row = resolveTargetRef(rest[0], flags.space);
+      if (!row) return refuse(`target ${flags.space}/${rest[0]} not found`);
+      return ok(JSON.stringify({ Target: structuredClone(row) }));
     }
     if (entity === "space" && verb === "delete") {
       const slug = rest[0];
@@ -4268,7 +4332,9 @@ function createFakeConfigHub() {
       const key = unitKey(flags.space, rest[0]);
       const unit = units.get(key);
       if (!unit) return refuse(`unit ${key} not found`);
-      unit.TargetID = `self-test-target-${rest[1]}`;
+      const target = resolveTargetRef(rest[1], flags.space);
+      if (!target) return refuse(`target ${rest[1]} not found`);
+      unit.TargetID = target.TargetID;
       return ok("");
     }
     if (entity === "unit" && verb === "create") {
@@ -4291,7 +4357,7 @@ function createFakeConfigHub() {
         ApplyGates: { "awaiting/triggers": true },
         ApprovedBy: [],
         Labels: labelsFrom(flags.label),
-        TargetID: flags.target ? `self-test-target-${flags.target}` : null,
+        TargetID: flags.target ? resolveTargetRef(flags.target, flags.space)?.TargetID ?? null : null,
         UpstreamUnitID: upstreamKey && !state.refuseUpstreamLink
           ? units.get(upstreamKey).UnitID
           : "",
@@ -4483,7 +4549,6 @@ function createFakeConfigHub() {
     restoreVariantBaselines,
     spaceLabels: (slug) => spaces.get(slug)?.Labels ?? null,
     filterId,
-    catalogTargetId,
   };
 }
 

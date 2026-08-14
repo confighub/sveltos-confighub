@@ -38,7 +38,7 @@ honestly empty until one is.
 ConfigHub holds the fleet the way the earlier chapters hold it: one reviewed
 [base record](clusterprofile-base.yaml) carrying what every cluster shares,
 and one [variant per cluster](variants.yaml), each a clone linked to the base
-that departs only on its own name, its own single-cluster selector, and its
+that departs only on its own name, its own single-cluster reference, and its
 own drift-handling behavior. Each record lives in its own ConfigHub Space
 with an approval gate.
 

@@ -50,7 +50,7 @@ const environments = ["pilot", "staging", "prod"];
 const changeField = "spec.helmCharts.0.values";
 const addressingDepartures = [
   "metadata.name",
-  "spec.clusterSelector.matchLabels.cluster",
+  "spec.clusterRefs",
 ];
 // The committed receipt governs three environment records, which this chapter
 // no longer builds, so it fills nothing until the per-cluster run is recorded.
@@ -148,12 +148,12 @@ function compileRollout(root) {
     "the variants record lost its base declaration",
   );
   const baseDoc = baseDocs[0];
-  const baseSelector = baseDoc.spec?.clusterSelector?.matchLabels ?? {};
   check(
     baseDoc.kind === "ClusterProfile"
-      && Object.keys(baseSelector).join(",") === "cluster"
-      && !workloads.some((row) => row.cluster === baseSelector.cluster),
-    "the base profile must carry a cluster selector that addresses no registered cluster",
+      && baseDoc.spec?.clusterSelector === undefined
+      && Array.isArray(baseDoc.spec?.clusterRefs)
+      && baseDoc.spec.clusterRefs.length === 0,
+    "the base profile must name no cluster: empty clusterRefs and no clusterSelector",
   );
   check(
     baseDoc.spec?.syncMode === "ContinuousWithDriftDetection",
@@ -196,11 +196,16 @@ function compileRollout(root) {
   const clusters = declaredVariants.map((row) => {
     const departures = row.departures ?? {};
     const departurePaths = Object.keys(departures).sort();
+    const refs = departures["spec.clusterRefs"];
     check(
-      departures["spec.clusterSelector.matchLabels.cluster"] === row.cluster
+      Array.isArray(refs) && refs.length === 1
+        && refs[0]?.kind === "SveltosCluster"
+        && refs[0].apiVersion === "lib.projectsveltos.io/v1beta1"
+        && refs[0].name === row.cluster
+        && refs[0].namespace === "projectsveltos"
         && typeof departures["metadata.name"] === "string"
         && departurePaths.some((path) => !addressingDepartures.includes(path)),
-      `${row.cluster} must depart on its own selector, its own name, and at least one field beyond addressing`,
+      `${row.cluster} must depart on its own cluster reference, its own name, and at least one field beyond addressing`,
     );
     for (const path of departurePaths) {
       check(
@@ -304,6 +309,13 @@ function fillObservedColumns(compiled, root) {
   if (!existsSync(liveReceiptPath)) return;
   const receipt = readYaml(liveReceiptPath);
   if (!Array.isArray(receipt?.spec?.variants)) {
+    compiled.superseded = true;
+    return;
+  }
+  // A per-cluster receipt recorded before the Target and clusterRefs model
+  // hashed the example files as they were reviewed then, so its revisions
+  // cannot match today's reviewed expectations. It fills nothing either.
+  if (!receipt.spec.variants.some((row) => row.target)) {
     compiled.superseded = true;
     return;
   }
@@ -574,7 +586,7 @@ function selfTest() {
       compiled.clusters.length === 4
         && new Set(compiled.clusters.map((row) => row.space)).size === 4
         && compiled.clusters.every((row) =>
-          row.departures["spec.clusterSelector.matchLabels.cluster"] === row.cluster
+          row.departures["spec.clusterRefs"]?.[0]?.name === row.cluster
           && row.departurePaths.some((path) =>
             !addressingDepartures.includes(path))),
       "the matrix must compile one single-cluster variant per workload cluster",
@@ -653,19 +665,19 @@ function selfTest() {
         /must place/,
       ],
       [
-        "base selector addresses a cluster",
+        "base names a cluster",
         (root) => editFile(root, "clusterprofile-base.yaml", (text) =>
-          text.replace("cluster: unassigned", "cluster: hx-sveltos-env-pilot")),
-        /addresses no registered cluster/,
+          text.replace("  clusterRefs: []", "  clusterRefs:\n    - apiVersion: lib.projectsveltos.io/v1beta1\n      kind: SveltosCluster\n      name: hx-sveltos-env-pilot\n      namespace: projectsveltos")),
+        /must name no cluster/,
       ],
       [
-        "variant fans out",
+        "variant names another cluster",
         (root) => editFile(root, "variants.yaml", (text) =>
           text.replace(
-            "        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-pilot",
-            "        spec.clusterSelector.matchLabels.environment: pilot",
+            "          name: hx-sveltos-env-pilot\n",
+            "          name: hx-sveltos-env-staging\n",
           )),
-        /must depart on its own selector/,
+        /must depart on its own cluster reference/,
       ],
       [
         "departure on the changed field",
@@ -743,6 +755,7 @@ function selfTestReceiptFill() {
         variants: planned.clusters.map((row) => ({
           cluster: row.cluster,
           space: row.space,
+          target: { name: row.cluster, ref: `${row.space}/${row.cluster}`, provider: "OCI" },
         })),
         revisions: {
           clusters: Object.fromEntries(

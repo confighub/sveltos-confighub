@@ -8,7 +8,7 @@ spec:
     unit: clusterprofile
     space: sveltos-kyverno-fleet-base
     reachesCluster: false
-    note: The base holds the reviewed content every cluster shares. It carries a selector that matches no registered cluster, it is given no target, and its Space is never published, so nothing reaches a cluster from the base itself.
+    note: The base holds the reviewed content every cluster shares. It names no cluster, because its clusterRefs list is empty, it is given no target, and its Space is never published, so nothing reaches a cluster from the base itself.
   workloads:
     - cluster: hx-sveltos-fleet-pilot
       environment: staging
@@ -16,7 +16,11 @@ spec:
       space: sveltos-kyverno-fleet-pilot
       departures:
         metadata.name: kyverno-hx-sveltos-fleet-pilot
-        spec.clusterSelector.matchLabels.cluster: hx-sveltos-fleet-pilot
+        spec.clusterRefs:
+        - apiVersion: lib.projectsveltos.io/v1beta1
+          kind: SveltosCluster
+          name: hx-sveltos-fleet-pilot
+          namespace: projectsveltos
         spec.stopMatchingBehavior: WithdrawPolicies
     - cluster: hx-sveltos-fleet-second
       environment: staging
@@ -24,7 +28,11 @@ spec:
       space: sveltos-kyverno-fleet-second
       departures:
         metadata.name: kyverno-hx-sveltos-fleet-second
-        spec.clusterSelector.matchLabels.cluster: hx-sveltos-fleet-second
+        spec.clusterRefs:
+        - apiVersion: lib.projectsveltos.io/v1beta1
+          kind: SveltosCluster
+          name: hx-sveltos-fleet-second
+          namespace: projectsveltos
         spec.stopMatchingBehavior: WithdrawPolicies
   management:
     cluster: hx-sveltos-fleet-mgmt

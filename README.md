@@ -43,7 +43,7 @@ across many clusters.
 2. A named person approves one exact revision, and ConfigHub publishes it as
    an OCI image on its OCI gateway.
 3. Sveltos on the management cluster fetches that image and sends the
-   reviewed profile to the one cluster its selector addresses.
+   reviewed profile to the one cluster its clusterRefs entry names.
 4. Sveltos keeps that cluster aligned and repairs drift.
 
 Each cluster's lane runs the whole way on its own variant, its own approval,
@@ -75,14 +75,17 @@ enough to be the point of the repository.
 - **A record and a cluster stand one to one.** Sveltos maps one profile to
   many clusters by design, which is what lets it scale. This repository
   narrows that on purpose: every cluster has its own governed record,
-  including the management cluster, and the selector inside each record
-  addresses exactly one cluster. A record covering two clusters cannot be
+  including the management cluster, and each record names its own cluster
+  in Sveltos's own API: one clusterRefs entry, so fan-out is impossible
+  rather than refused. A record covering two clusters cannot be
   approved for one and held for the other, cannot be rolled back for one
   alone, and cannot say which of them runs which revision today. The records
   are variants of a shared base carrying only their own departures, so a
-  change made once still flows to all of them. Every chapter now holds its
-  fleet this way. Chapter three is recorded live on it, and each committed
-  receipt says which shape its recording used.
+  change made once still flows to all of them, and each variant's Space
+  releases to a Target named for its cluster, so which cluster a variant
+  ships to is ConfigHub's own destination model answering rather than a
+  selector line inside stored YAML. Every chapter holds its fleet this way,
+  and each committed receipt says which shape its recording used.
 - **The rollout definition is itself reviewed configuration.** A wave is a
   label query over the per-cluster records, not a pipeline object beside
   them, and widening a rollout means approving the next cluster's variant.
@@ -112,7 +115,7 @@ Sveltos's reading in Sveltos's own words is proposed upstream.
 
 One variant up close, the pilot cluster's, with the whole story in its
 activity: cloned from the base behind the approval gate, departed in
-exactly three fields (its name, the selector line that addresses its
+exactly three fields (its name, the clusterRefs entry that names its
 cluster, its removal behaviour), then inheriting the reviewed base change.
 The approval binds to that record's exact revision:
 
@@ -189,8 +192,15 @@ and records its phase timings.
 Chapters one through four are recorded live on the per-cluster design over
 the gateway, every wave's approval records the checkpoint evidence that
 unlocked it, and every observed matrix cell comes from a committed receipt.
-Every receipt records the addon controller image its run used, and chapter
-five's receipt says which design its recording used.
+Those recordings predate one refinement this repository has since made:
+each cluster's Space now carries a Target named for its cluster and each
+variant names its cluster through clusterRefs, so the re-record in flight
+([#17](https://github.com/confighub/sveltos-confighub/issues/17),
+[#18](https://github.com/confighub/sveltos-confighub/issues/18)) covers all
+five chapters, and the verifiers say so rather than filling from receipts
+the current files cannot confirm. Every receipt records the addon
+controller image its run used, and chapter five's receipt says which
+design its recording used.
 
 ## How to run it
 

@@ -3,8 +3,8 @@
 // A fleet is held as one base record plus one variant per cluster. The base
 // carries what every cluster shares and reaches no cluster on its own. Each
 // variant is a clone of the base, linked to it, carrying only the fields that
-// genuinely differ for its own cluster, one of which is a selector that
-// matches that cluster and nothing else.
+// genuinely differ for its own cluster, one of which is a clusterRefs entry
+// naming that cluster's SveltosCluster and nothing else.
 //
 // This lived inside the environment rollout runner first. It lives here now
 // because a fleet design that only one chapter implements is a design that
@@ -287,7 +287,6 @@ export function governedRecords(deps) {
     approvalFilterRef,
     approvalGate,
     baseRecordLabel,
-    catalogOciTargetRef,
     componentLabel,
     configHubOciHost,
     cub,
@@ -325,13 +324,53 @@ export function governedRecords(deps) {
       "--quiet",
     ]);
     cub(context, [
-      "space", "update", space,
-      "--release-target", catalogOciTargetRef,
-      "--quiet",
-    ]);
-    cub(context, [
       "space", "update", "--patch", space, "--refresh-triggers", "--quiet",
     ]);
+  }
+
+  // ConfigHub's destination model is the Target, so each cluster's Space
+  // carries a Target named for its cluster and releases to it. Delivery is
+  // unchanged — the gateway already serves one address per Space — but what
+  // ConfigHub knows changes: which cluster a variant ships to becomes a
+  // model-level answer rather than a selector line inside the stored YAML.
+  // The base Space deliberately gets no Target and no release target, which
+  // is the model saying what the receipts already say: the base reaches no
+  // cluster.
+  function establishClusterTarget(context, space, cluster) {
+    cub(context, [
+      "target", "create", cluster, "{}",
+      "--space", space,
+      "--provider", "OCI",
+      "--toolchain", "Any",
+      "--label", `App=${appLabel}`,
+      "--label", `Cluster=${cluster}`,
+      "--quiet",
+    ]);
+    const created = cubJson(context, [
+      "target", "get", "--space", space, cluster, "-o", "json",
+    ]).Target;
+    check(
+      Boolean(created?.TargetID),
+      `${space} did not create the ${cluster} Target`,
+    );
+    check(
+      created.ProviderType === "OCI",
+      `the ${cluster} Target must be an OCI target, not ${created.ProviderType}`,
+    );
+    const ref = `${space}/${cluster}`;
+    cub(context, [
+      "space", "update", space,
+      "--release-target", ref,
+      "--quiet",
+    ]);
+    return {
+      name: cluster,
+      space,
+      ref,
+      id: created.TargetID,
+      provider: created.ProviderType,
+      toolchain: created.ToolchainType,
+    };
   }
 
   function assertPolicySpace(context, space, expectedTriggerIds, expectedReleaseTargetId) {
@@ -340,8 +379,11 @@ export function governedRecords(deps) {
       sameSet(actual.TriggerIDs ?? [], expectedTriggerIds),
       `${space} received the wrong Trigger set`,
     );
+    // The base Space expects no release target at all, which is passed as
+    // null and must match a server answer of null, empty, or absent.
     check(
-      actual.ReleaseTargetID === expectedReleaseTargetId,
+      (actual.ReleaseTargetID ?? null) === (expectedReleaseTargetId ?? null)
+        || (!actual.ReleaseTargetID && !expectedReleaseTargetId),
       `${space} received the wrong release target`,
     );
   }
@@ -612,7 +654,6 @@ export function governedRecords(deps) {
     space,
     plan,
     topology,
-    catalogTarget,
     runId,
     policySpacesCreated,
   }) {
@@ -622,7 +663,7 @@ export function governedRecords(deps) {
       policyContext,
       space,
       topology.triggerIds,
-      catalogTarget.TargetID,
+      null,
     );
     cub(policyContext, [
       "unit", "create", "--space", space, policyUnit, plan.base.path,
@@ -666,7 +707,6 @@ export function governedRecords(deps) {
     baseSpace,
     cluster,
     topology,
-    catalogTarget,
     runId,
     workRoot,
     policySpacesCreated,
@@ -681,18 +721,16 @@ export function governedRecords(deps) {
       "--quiet",
     ]);
     policySpacesCreated.add(space);
-    // The release target is not among the fields variant create copies, so it
-    // is set the same way the base Space's was.
-    cub(policyContext, [
-      "space", "update", space,
-      "--release-target", catalogOciTargetRef,
-      "--quiet",
-    ]);
+    // variant create copies a TargetID annotation from the upstream Space,
+    // and the base deliberately has none, so this cluster's own destination
+    // is created and bound here, next to the departures that make the record
+    // this cluster's own.
+    const target = establishClusterTarget(policyContext, space, cluster.cluster);
     assertPolicySpace(
       policyContext,
       space,
       topology.triggerIds,
-      catalogTarget.TargetID,
+      target.id,
     );
     // Every label the wave and audit queries select on is set explicitly on
     // the clone, rather than trusting the clone to inherit the base unit's,
@@ -710,7 +748,7 @@ export function governedRecords(deps) {
       "--quiet",
     ]);
     cub(policyContext, [
-      "unit", "set-target", policyUnit, catalogOciTargetRef,
+      "unit", "set-target", policyUnit, target.ref,
       "--space", space, "--quiet",
     ]);
     const cloned = cubJson(policyContext, [
@@ -745,7 +783,7 @@ export function governedRecords(deps) {
       space,
       unit: policyUnit,
       profile: cluster.profileName,
-      selector: { cluster: cluster.cluster },
+      clusterRef: cluster.clusterRef,
       upstream: {
         space: baseSpace,
         unit: policyUnit,
@@ -754,6 +792,12 @@ export function governedRecords(deps) {
       },
       departures: cluster.departures,
       departedFields: cluster.departurePaths,
+      target: {
+        name: target.name,
+        ref: target.ref,
+        id: target.id,
+        provider: target.provider,
+      },
     };
   }
 
@@ -804,7 +848,6 @@ export function governedRecords(deps) {
     space,
     plan,
     topology,
-    catalogTarget,
     runId,
     workRoot,
     policySpacesCreated,
@@ -812,11 +855,16 @@ export function governedRecords(deps) {
   }) {
     createPolicySpace(policyContext, space);
     policySpacesCreated.add(space);
+    const target = establishClusterTarget(
+      policyContext,
+      space,
+      plan.management.cluster,
+    );
     assertPolicySpace(
       policyContext,
       space,
       topology.triggerIds,
-      catalogTarget.TargetID,
+      target.id,
     );
     const manifest = workloadSpaces
       .map((row) => bootstrapProfileManifest(row.cluster, row.space))
@@ -830,7 +878,7 @@ export function governedRecords(deps) {
     );
     cub(policyContext, [
       "unit", "create", "--space", space, policyUnit, manifestPath,
-      "--target", catalogOciTargetRef,
+      "--target", target.ref,
       "--label", `App=${appLabel}`,
       "--label", `Cluster=${plan.management.cluster}`,
       "--label", "Role=management",
@@ -858,6 +906,12 @@ export function governedRecords(deps) {
         firstRevisionDeliveredThroughGateway: false,
         laterRevisionsGovernedInConfigHub: true,
         reason: plan.management.reason,
+      },
+      target: {
+        name: target.name,
+        ref: target.ref,
+        id: target.id,
+        provider: target.provider,
       },
     };
   }
@@ -929,6 +983,7 @@ spec:
     blockedDryRun,
     createPolicySpace,
     establishBase,
+    establishClusterTarget,
     establishVariant,
     gatewayReference,
     publishRelease,

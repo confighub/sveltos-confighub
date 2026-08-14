@@ -58,12 +58,13 @@ four's, and the repository gate enforces that continuity mechanically.
 
 ## What is proven today and what is not
 
-Every chapter holds its fleet as one variant per cluster and is recorded
-live on that design over the gateway, with every wave's approval carrying
-the checkpoint evidence that unlocked it. The two recordings that predate
-the design — chapter one's first manual run and the selector-widening
-two-wave proof — are kept as recorded, recognized by the verifiers, and
-filled from by nothing. The same governance logic also runs offline against
+Every chapter holds its fleet as one variant per cluster. Chapters one
+through four are recorded live on that design over the gateway, with every
+wave's approval carrying the checkpoint evidence that unlocked it; chapter
+five's per-cluster recording is in flight. The recordings that predate a
+design — chapter one's first manual run, the selector-widening two-wave
+proof, and chapter five's three-environment recording — are kept as
+recorded, recognized by the verifiers, and filled from by nothing. The same governance logic also runs offline against
 fake ConfigHub and cluster surfaces in the repository gate, in seconds, with
 no account or cluster.
 
@@ -82,18 +83,20 @@ after it is created. An earlier report here said the gate never appeared;
 that was a misreading in this repository's own observation code, which asked
 the server for a projection it does not return, and it has been withdrawn.
 
-Every chapter's runner fetches each approved release from the gateway and
-holds its fleet per-cluster, and no wave's approval is requested until the
-preceding checkpoint shows the clusters it depends on reporting healthy.
-Chapters one through four are recorded live on exactly that design; chapter
-five's committed recording is the earlier three-environment design, and its
-per-cluster re-record is in flight
-([#17](https://github.com/confighub/sveltos-confighub/issues/17),
-[#18](https://github.com/confighub/sveltos-confighub/issues/18)). What remains is not a
-run but a release: the gateway serves gzipped layers, so these recordings
-used an addon controller build that decompresses them, and each receipt
-names the image it used. When that fix ships in a Sveltos release, the
-chapters re-record against it.
+Every chapter's runner fetches each approved release from the gateway,
+holds its fleet per-cluster, gives each cluster's Space a Target named for
+it, names each cluster through clusterRefs, and refuses a wave's approval
+until the preceding checkpoint shows the clusters it depends on reporting
+healthy. Chapters one through four are recorded live on the per-cluster
+design before the Target and clusterRefs refinement; chapter five's
+committed recording is the earlier three-environment design. The re-record
+in flight ([#17](https://github.com/confighub/sveltos-confighub/issues/17),
+[#18](https://github.com/confighub/sveltos-confighub/issues/18)) covers all
+five chapters. What remains otherwise is not a run but a release: the
+gateway serves gzipped layers, so these recordings used an addon controller
+build that decompresses them, and each receipt names the image it used.
+When that fix ships in a Sveltos release, the chapters re-record against
+it.
 
 Every drafted runner starts with a gate preflight: it creates a throwaway
 record, waits for the approval gate to attach, and refuses in seconds if it
