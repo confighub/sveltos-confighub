@@ -3,8 +3,8 @@
 // A fleet is held as one base record plus one variant per cluster. The base
 // carries what every cluster shares and reaches no cluster on its own. Each
 // variant is a clone of the base, linked to it, carrying only the fields that
-// genuinely differ for its own cluster, one of which is a selector that
-// matches that cluster and nothing else.
+// genuinely differ for its own cluster, one of which is a clusterRefs entry
+// naming that cluster's SveltosCluster and nothing else.
 //
 // This lived inside the environment rollout runner first. It lives here now
 // because a fleet design that only one chapter implements is a design that
@@ -783,7 +783,7 @@ export function governedRecords(deps) {
       space,
       unit: policyUnit,
       profile: cluster.profileName,
-      selector: { cluster: cluster.cluster },
+      clusterRef: cluster.clusterRef,
       upstream: {
         space: baseSpace,
         unit: policyUnit,
