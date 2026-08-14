@@ -83,9 +83,13 @@ that was a misreading in this repository's own observation code, which asked
 the server for a projection it does not return, and it has been withdrawn.
 
 Every chapter's runner fetches each approved release from the gateway and
-holds its fleet per-cluster, no wave's approval is requested until the
-preceding checkpoint shows the clusters it depends on reporting healthy, and
-every chapter is recorded live on exactly that design. What remains is not a
+holds its fleet per-cluster, and no wave's approval is requested until the
+preceding checkpoint shows the clusters it depends on reporting healthy.
+Chapters one through four are recorded live on exactly that design; chapter
+five's committed recording is the earlier three-environment design, and its
+per-cluster re-record is in flight
+([#17](https://github.com/confighub/sveltos-confighub/issues/17),
+[#18](https://github.com/confighub/sveltos-confighub/issues/18)). What remains is not a
 run but a release: the gateway serves gzipped layers, so these recordings
 used an addon controller build that decompresses them, and each receipt
 names the image it used. When that fix ships in a Sveltos release, the
