@@ -16,28 +16,28 @@ come from the reviewed example files.
 
 | Cluster | Environment | Space | Expected revision | Background replicas | Drift check | Observed | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | sveltos-kyverno-bulk-pilot | `r1-ae04b5826c68` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-staging | staging | sveltos-kyverno-bulk-staging | `r1-60d746e185f7` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-prod-a | prod | sveltos-kyverno-bulk-prod-a | `r1-9a3ac4029a82` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-prod-b | prod | sveltos-kyverno-bulk-prod-b | `r1-854562469b6a` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-pilot | pilot | sveltos-kyverno-bulk-pilot | `r1-8a4e405bd347` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-staging | staging | sveltos-kyverno-bulk-staging | `r1-93901308d341` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-prod-a | prod | sveltos-kyverno-bulk-prod-a | `r1-b62778181d41` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-prod-b | prod | sveltos-kyverno-bulk-prod-b | `r1-e6a73d239e82` | 2 | none |  | awaiting-live-run (awaiting-gateway-recording) |
 
 ## After the fan-out, one edit inherited by every variant in one operation
 
 | Cluster | Environment | Space | Expected revision | Background replicas | Drift check | Observed | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | sveltos-kyverno-bulk-pilot | `r2-10622f83fa6b` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-staging | staging | sveltos-kyverno-bulk-staging | `r2-d50dd725c7c3` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-prod-a | prod | sveltos-kyverno-bulk-prod-a | `r2-561ba47d3d63` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-prod-b | prod | sveltos-kyverno-bulk-prod-b | `r2-e206ab854d5d` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-pilot | pilot | sveltos-kyverno-bulk-pilot | `r2-d840465209d6` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-staging | staging | sveltos-kyverno-bulk-staging | `r2-33378fa6e32b` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-prod-a | prod | sveltos-kyverno-bulk-prod-a | `r2-5f09dd1e8f52` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-prod-b | prod | sveltos-kyverno-bulk-prod-b | `r2-9f351f97f3ef` | 3 | none |  | awaiting-live-run (awaiting-gateway-recording) |
 
 ## Zero-drift audit; injected drift repaired on every cluster
 
 | Cluster | Environment | Space | Expected revision | Background replicas | Drift check | Observed | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| hx-sveltos-env-pilot | pilot | sveltos-kyverno-bulk-pilot | `r2-10622f83fa6b` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-staging | staging | sveltos-kyverno-bulk-staging | `r2-d50dd725c7c3` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-prod-a | prod | sveltos-kyverno-bulk-prod-a | `r2-561ba47d3d63` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
-| hx-sveltos-env-prod-b | prod | sveltos-kyverno-bulk-prod-b | `r2-e206ab854d5d` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-pilot | pilot | sveltos-kyverno-bulk-pilot | `r2-d840465209d6` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-staging | staging | sveltos-kyverno-bulk-staging | `r2-33378fa6e32b` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-prod-a | prod | sveltos-kyverno-bulk-prod-a | `r2-5f09dd1e8f52` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
+| hx-sveltos-env-prod-b | prod | sveltos-kyverno-bulk-prod-b | `r2-9f351f97f3ef` | 3 | injected-and-restored |  | awaiting-live-run (awaiting-gateway-recording) |
 
 ## Sources
 

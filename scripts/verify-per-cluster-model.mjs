@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // One rule keeps the model honest for future users: a committed
-// ClusterProfile addresses exactly one cluster, meaning its
-// spec.clusterSelector.matchLabels is the single key "cluster". Anything
-// else can fan out and is refused.
+// ClusterProfile addresses at most one cluster, structurally. It carries no
+// clusterSelector at all — a label query can fan out — and its
+// spec.clusterRefs holds either one reference naming a SveltosCluster (a
+// variant's own cluster) or none (the base, which reaches nothing). The
+// address is Sveltos's own API naming one cluster, not a convention a label
+// edit could widen.
 //
 // The files below were recorded before the model and leave the list as the
 // issues that rework them land. Fixing one of them means removing it from
@@ -47,11 +50,15 @@ export function loadSurfaces(root) {
   return files;
 }
 
-function addressesOneCluster(doc) {
-  const ml = doc?.spec?.clusterSelector?.matchLabels;
-  if (!ml || typeof ml !== "object") return false;
-  const keys = Object.keys(ml);
-  return keys.length === 1 && keys[0] === "cluster";
+function addressedStructurally(doc) {
+  if (doc?.spec?.clusterSelector !== undefined) return false;
+  const refs = doc?.spec?.clusterRefs;
+  if (!Array.isArray(refs) || refs.length > 1) return false;
+  if (refs.length === 0) return true;
+  const ref = refs[0];
+  return ref?.kind === "SveltosCluster"
+    && typeof ref.name === "string" && ref.name.length > 0
+    && typeof ref.namespace === "string" && ref.namespace.length > 0;
 }
 
 export function assess(files, legacy) {
@@ -67,40 +74,57 @@ export function assess(files, legacy) {
   for (const [path, docs] of files) {
     const profiles = docs.filter((d) => PROFILE_KINDS.has(d?.kind));
     if (profiles.length === 0) continue;
-    const violating = profiles.filter((d) => !addressesOneCluster(d));
+    const violating = profiles.filter((d) => !addressedStructurally(d));
     if (violating.length > 0 && !legacySet.has(path)) {
       for (const doc of violating) {
         findings.push(
-          `${path}: ${doc.kind} ${doc?.metadata?.name ?? "(unnamed)"} does not address exactly one cluster; ` +
-            `use matchLabels with the single key "cluster"`,
+          `${path}: ${doc.kind} ${doc?.metadata?.name ?? "(unnamed)"} does not address at most one cluster structurally; ` +
+            `carry no clusterSelector and at most one clusterRefs entry naming a SveltosCluster`,
         );
       }
     }
     if (violating.length === 0 && legacySet.has(path)) {
-      findings.push(`${path} now addresses one cluster; remove it from the legacy list in this change`);
+      findings.push(`${path} now addresses at most one cluster; remove it from the legacy list in this change`);
     }
   }
 
   return findings;
 }
 
-function profile(name, matchLabels) {
-  return { kind: "ClusterProfile", metadata: { name }, spec: { clusterSelector: { matchLabels } } };
+function profile(name, spec) {
+  return { kind: "ClusterProfile", metadata: { name }, spec };
+}
+
+function refTo(cluster) {
+  return {
+    apiVersion: "lib.projectsveltos.io/v1beta1",
+    kind: "SveltosCluster",
+    name: cluster,
+    namespace: "projectsveltos",
+  };
 }
 
 function selfTest() {
-  const clean = assess(new Map([["a.yaml", [profile("a", { cluster: "hx-a" })]]]), []);
+  const clean = assess(new Map([["a.yaml", [profile("a", { clusterRefs: [refTo("hx-a")] })]]]), []);
   if (clean.length !== 0) throw new Error(`self-test: addressed profile should pass:\n${clean.join("\n")}`);
 
-  const fanOut = assess(new Map([["a.yaml", [profile("a", { environment: "prod" })]]]), []);
-  if (!fanOut.some((f) => f.includes("does not address exactly one cluster"))) {
-    throw new Error("self-test: fan-out selector should refuse");
+  const base = assess(new Map([["b.yaml", [profile("b", { clusterRefs: [] })]]]), []);
+  if (base.length !== 0) throw new Error(`self-test: an empty-refs base should pass:\n${base.join("\n")}`);
+
+  const selector = assess(new Map([["a.yaml", [profile("a", { clusterSelector: { matchLabels: { cluster: "hx-a" } }, clusterRefs: [refTo("hx-a")] })]]]), []);
+  if (!selector.some((f) => f.includes("does not address at most one cluster structurally"))) {
+    throw new Error("self-test: a selector should refuse even when narrowed by convention");
   }
 
-  const listed = assess(new Map([["a.yaml", [profile("a", { environment: "prod" })]]]), ["a.yaml"]);
+  const fanOut = assess(new Map([["a.yaml", [profile("a", { clusterRefs: [refTo("hx-a"), refTo("hx-b")] })]]]), []);
+  if (!fanOut.some((f) => f.includes("does not address at most one cluster structurally"))) {
+    throw new Error("self-test: two clusterRefs should refuse");
+  }
+
+  const listed = assess(new Map([["a.yaml", [profile("a", { clusterSelector: { matchLabels: { environment: "prod" } } })]]]), ["a.yaml"]);
   if (listed.length !== 0) throw new Error(`self-test: listed legacy file should stand:\n${listed.join("\n")}`);
 
-  const fixed = assess(new Map([["a.yaml", [profile("a", { cluster: "hx-a" })]]]), ["a.yaml"]);
+  const fixed = assess(new Map([["a.yaml", [profile("a", { clusterRefs: [refTo("hx-a")] })]]]), ["a.yaml"]);
   if (!fixed.some((f) => f.includes("remove it from the legacy list"))) {
     throw new Error("self-test: fixed listed file should ask to shrink the list");
   }
@@ -115,7 +139,7 @@ function selfTest() {
     throw new Error(`self-test expects the committed tree to pass:\n${committed.join("\n")}`);
   }
 
-  console.log("per-cluster model self-test passed: the pass, the fan-out refusal, the listed file, the two shrink-the-list refusals, and the committed tree");
+  console.log("per-cluster model self-test passed: the structural pass, the empty-refs base, the selector and fan-out refusals, the listed file, the two shrink-the-list refusals, and the committed tree");
 }
 
 function verify() {
@@ -131,7 +155,7 @@ function verify() {
     addressed += docs.filter((d) => PROFILE_KINDS.has(d?.kind)).length;
   }
   console.log(
-    `verified the per-cluster model: ${addressed} profiles each address one cluster; ` +
+    `verified the per-cluster model: ${addressed} profiles each address at most one cluster structurally; ` +
       `${LEGACY.length} files without ConfigHub records behind them are expected and listed (the rehearsal exemption), nothing is wrong`,
   );
 }

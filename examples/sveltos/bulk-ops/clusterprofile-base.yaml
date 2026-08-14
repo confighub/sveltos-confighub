@@ -3,9 +3,7 @@ kind: ClusterProfile
 metadata:
   name: kyverno-bulk-base
 spec:
-  clusterSelector:
-    matchLabels:
-      cluster: unassigned
+  clusterRefs: []
   syncMode: ContinuousWithDriftDetection
   helmCharts:
     - repositoryURL: https://kyverno.github.io/kyverno/

@@ -8,35 +8,51 @@ spec:
     unit: clusterprofile
     space: sveltos-kyverno-env-base
     reachesCluster: false
-    note: The base holds the reviewed content every cluster shares. It carries a selector that matches no registered cluster, it is given no target, and its Space is never published, so nothing reaches a cluster from the base itself.
+    note: The base holds the reviewed content every cluster shares. It names no cluster, because its clusterRefs list is empty, it is given no target, and its Space is never published, so nothing reaches a cluster from the base itself.
   workloads:
     - cluster: hx-sveltos-env-pilot
       environment: pilot
       space: sveltos-kyverno-env-pilot
       departures:
         metadata.name: kyverno-hx-sveltos-env-pilot
-        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-pilot
+        spec.clusterRefs:
+        - apiVersion: lib.projectsveltos.io/v1beta1
+          kind: SveltosCluster
+          name: hx-sveltos-env-pilot
+          namespace: projectsveltos
         spec.stopMatchingBehavior: WithdrawPolicies
     - cluster: hx-sveltos-env-staging
       environment: staging
       space: sveltos-kyverno-env-staging
       departures:
         metadata.name: kyverno-hx-sveltos-env-staging
-        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-staging
+        spec.clusterRefs:
+        - apiVersion: lib.projectsveltos.io/v1beta1
+          kind: SveltosCluster
+          name: hx-sveltos-env-staging
+          namespace: projectsveltos
         spec.stopMatchingBehavior: WithdrawPolicies
     - cluster: hx-sveltos-env-prod-a
       environment: prod
       space: sveltos-kyverno-env-prod-a
       departures:
         metadata.name: kyverno-hx-sveltos-env-prod-a
-        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-prod-a
+        spec.clusterRefs:
+        - apiVersion: lib.projectsveltos.io/v1beta1
+          kind: SveltosCluster
+          name: hx-sveltos-env-prod-a
+          namespace: projectsveltos
         spec.stopMatchingBehavior: LeavePolicies
     - cluster: hx-sveltos-env-prod-b
       environment: prod
       space: sveltos-kyverno-env-prod-b
       departures:
         metadata.name: kyverno-hx-sveltos-env-prod-b
-        spec.clusterSelector.matchLabels.cluster: hx-sveltos-env-prod-b
+        spec.clusterRefs:
+        - apiVersion: lib.projectsveltos.io/v1beta1
+          kind: SveltosCluster
+          name: hx-sveltos-env-prod-b
+          namespace: projectsveltos
         spec.stopMatchingBehavior: LeavePolicies
   management:
     cluster: hx-sveltos-env-mgmt

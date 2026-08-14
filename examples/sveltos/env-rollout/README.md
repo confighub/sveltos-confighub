@@ -42,7 +42,7 @@ a controller reading labels, so nothing about scope has to be reconstructed
 afterwards from what a controller decided.
 
 One variant per cluster puts that mapping in ConfigHub, where it can be
-queried, approved, and rolled back per cluster. The selector inside each
+queried, approved, and rolled back per cluster. The clusterRefs entry in each
 record still exists and Sveltos still evaluates it, but it now matches exactly
 one cluster, so it has stopped being a fan-out mechanism and become an
 addressing detail.
@@ -74,8 +74,8 @@ was expressed twice and only one of them was queryable: one record selected
 `environment: prod` and Sveltos decided at delivery time that this meant two
 clusters, so a ConfigHub query could not say which cluster had received what.
 
-This chapter puts the mapping in ConfigHub. Each variant carries a selector
-that matches exactly one cluster, so the selector stops being a fan-out
+This chapter puts the mapping in ConfigHub. Each variant names exactly one
+cluster in its clusterRefs, so the address stops being a fan-out
 mechanism and becomes an addressing detail. Sveltos remains the delivery
 mechanism and the reconciler, and stops deciding scope.
 
@@ -92,7 +92,7 @@ release digest it published in each wave.
 
 The [base record](clusterprofile-base.yaml) holds the reviewed content every
 cluster shares: the chart, the pinned version, the drift mode and the shared
-values. It carries a selector that matches no registered cluster, it is given
+values. It names no cluster, because its clusterRefs list is empty, it is given
 no target, and its Space is never published, so nothing reaches a cluster
 from the base itself.
 

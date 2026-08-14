@@ -16,12 +16,12 @@ chapter in this repository holds a fleet:
 
 - The [base record](clusterprofile-base.yaml) carries what every cluster
   shares: Kyverno chart 3.8.1, three admission-controller replicas, and
-  `ContinuousWithDriftDetection`. Its selector matches no registered cluster,
-  it is given no target, and its Space is never published, so nothing reaches
-  a cluster from the base itself.
+  `ContinuousWithDriftDetection`. It names no cluster, because its
+  clusterRefs list is empty, it is given no target, and its Space is never
+  published, so nothing reaches a cluster from the base itself.
 - The [variants declaration](variants.yaml) gives each workload cluster its
   own record, cloned from the base and departing in exactly three fields:
-  its name, the selector line that addresses its own cluster and nothing
+  its name, the clusterRefs entry that names its own cluster and nothing
   else, and its removal behaviour. The rollout order is part of the reviewed
   declaration: the pilot cluster carries wave one, the second cluster wave
   two.

@@ -54,7 +54,7 @@ const surfaceFiles = {
 
 const departurePaths = [
   "metadata.name",
-  "spec.clusterSelector.matchLabels.cluster",
+  "spec.clusterRefs",
   "spec.stopMatchingBehavior",
 ];
 
@@ -129,13 +129,14 @@ function verifyExample(surfaces) {
     baseProfile.metadata?.name === "kyverno-staging-base",
     "the base ClusterProfile name changed",
   );
-  // The base reaches no cluster on its own: its selector carries exactly one
-  // key, cluster, bound to a name no registration uses.
-  const baseSelector = baseProfile.spec?.clusterSelector?.matchLabels ?? {};
+  // The base reaches no cluster on its own, structurally: it carries no
+  // clusterSelector at all and its clusterRefs list is empty, which Sveltos
+  // treats as matching nothing.
   check(
-    Object.keys(baseSelector).join(",") === "cluster"
-      && baseSelector.cluster === "unassigned",
-    "the base selector must match no registered cluster",
+    baseProfile.spec?.clusterSelector === undefined
+      && Array.isArray(baseProfile.spec?.clusterRefs)
+      && baseProfile.spec.clusterRefs.length === 0,
+    "the base must name no cluster: empty clusterRefs and no clusterSelector",
   );
   check(
     baseProfile.spec?.syncMode === "ContinuousWithDriftDetection",
@@ -178,11 +179,16 @@ function verifyExample(surfaces) {
     const departures = row.departures ?? {};
     check(
       Object.keys(departures).sort().join(",") === [...departurePaths].sort().join(","),
-      `${row.cluster} must depart from the base in exactly its name, its selector line, and its removal behaviour`,
+      `${row.cluster} must depart from the base in exactly its name, its cluster reference, and its removal behaviour`,
     );
+    const refs = departures["spec.clusterRefs"];
     check(
-      departures["spec.clusterSelector.matchLabels.cluster"] === row.cluster,
-      `${row.cluster}'s selector departure must address its own cluster and nothing else`,
+      Array.isArray(refs) && refs.length === 1
+        && refs[0]?.kind === "SveltosCluster"
+        && refs[0].apiVersion === "lib.projectsveltos.io/v1beta1"
+        && refs[0].name === row.cluster
+        && refs[0].namespace === "projectsveltos",
+      `${row.cluster}'s cluster reference must name its own SveltosCluster and nothing else`,
     );
     check(
       row.environment === "staging",
@@ -275,13 +281,24 @@ function verifyExample(surfaces) {
     note(
       "chapter two's receipt was recorded on the earlier delivery path and predates the per-cluster design; it awaits a gateway re-record",
     );
-  } else {
+  } else if ((ociReceipt.spec.variants ?? []).some((row) => row.target)) {
     check(
       ociReceipt.kind === "SveltosOciDeliveryProofReceipt"
         && ociReceipt.status?.result === "pass"
         && ociReceipt.spec?.source?.base?.rawSha256
         === sha256File(surfaces.paths.baseProfile),
       "Sveltos OCI delivery receipt no longer records the reviewed base",
+    );
+  } else {
+    // A per-cluster receipt recorded before the Target and clusterRefs model
+    // hashes the base as it was reviewed then; the re-record replaces it.
+    check(
+      ociReceipt.kind === "SveltosOciDeliveryProofReceipt"
+        && ociReceipt.status?.result === "pass",
+      "Sveltos OCI delivery receipt changed",
+    );
+    note(
+      "chapter two's receipt predates the per-cluster Target and clusterRefs model; it awaits its re-record",
     );
   }
 
@@ -427,16 +444,17 @@ function selfTest() {
 
     const tampers = [
       ["profile identity", (s) => { s.baseProfile.kind = "Profile"; }, /must be a ClusterProfile/],
-      ["base selector fans out", (s) => { s.baseProfile.spec.clusterSelector.matchLabels = { environment: "staging" }; }, /must match no registered cluster/],
-      ["base selector assigned", (s) => { s.baseProfile.spec.clusterSelector.matchLabels.cluster = "hx-sveltos-fleet-pilot"; }, /must match no registered cluster/],
+      ["base grows a selector", (s) => { s.baseProfile.spec.clusterSelector = { matchLabels: { environment: "staging" } }; }, /must name no cluster/],
+      ["base names a cluster", (s) => { s.baseProfile.spec.clusterRefs = [{ apiVersion: "lib.projectsveltos.io/v1beta1", kind: "SveltosCluster", name: "hx-sveltos-fleet-pilot", namespace: "projectsveltos" }]; }, /must name no cluster/],
       ["drift mode", (s) => { s.baseProfile.spec.syncMode = "OneTime"; }, /drift mode changed/],
       ["chart version", (s) => { s.baseProfile.spec.helmCharts[0].chartVersion = "9.9.9"; }, /chart version changed/],
       ["replica values", (s) => { s.baseProfile.spec.helmCharts[0].values = "admissionController:\n  replicas: 1\n"; }, /admission replica setting changed/],
       ["generic replicaCount", (s) => { s.baseProfile.spec.helmCharts[0].values = "admissionController:\n  replicas: 3\nreplicaCount: 3\n"; }, /unused generic replicaCount/],
       ["third workload", (s) => { s.variants.spec.workloads.push(structuredClone(s.variants.spec.workloads[1])); }, /exactly two workload clusters/],
       ["wave order", (s) => { s.variants.spec.workloads[1].wave = 1; }, /reviewed rollout order changed/],
-      ["selector departure", (s) => { s.variants.spec.workloads[0].departures["spec.clusterSelector.matchLabels.cluster"] = "some-other-cluster"; }, /must address its own cluster and nothing else/],
-      ["departure set", (s) => { delete s.variants.spec.workloads[1].departures["spec.stopMatchingBehavior"]; }, /exactly its name, its selector line, and its removal behaviour/],
+      ["reference departure", (s) => { s.variants.spec.workloads[0].departures["spec.clusterRefs"][0].name = "some-other-cluster"; }, /must name its own SveltosCluster and nothing else/],
+      ["reference fans out", (s) => { s.variants.spec.workloads[0].departures["spec.clusterRefs"].push({ apiVersion: "lib.projectsveltos.io/v1beta1", kind: "SveltosCluster", name: "hx-sveltos-fleet-second", namespace: "projectsveltos" }); }, /must name its own SveltosCluster and nothing else/],
+      ["departure set", (s) => { delete s.variants.spec.workloads[1].departures["spec.stopMatchingBehavior"]; }, /exactly its name, its cluster reference, and its removal behaviour/],
       ["shared space", (s) => { s.variants.spec.workloads[1].space = s.variants.spec.workloads[0].space; }, /its own lowercase Space/],
       ["uppercase space", (s) => { s.variants.spec.workloads[1].space = "Sveltos-Kyverno-Fleet-Second"; }, /its own lowercase Space/],
       ["management boundary", (s) => { s.variants.spec.management.appliedOutOfBandWith = "the gateway"; }, /boundary notes changed/],
@@ -450,13 +468,13 @@ function selfTest() {
       ["promotion overclaim", (s) => { s.receipt.status.multiClusterPromotionWave = "pass"; }, /fleet promotion is overclaimed/],
       ["drift result", (s) => { s.receipt.spec.driftTest.result = "fail"; }, /drift test must stay recorded/],
       ["technical README", (s) => { s.technicalReadmeText = s.technicalReadmeText.replace("## The canary, without a selector edit", "## The canary"); }, /must tell the per-cluster canary/],
-      ["OCI receipt result", (s) => { s.ociReceipt.status.result = "fail"; }, /no longer records the reviewed base/],
+      ["OCI receipt result", (s) => { s.ociReceipt.status.result = "fail"; }, /OCI delivery receipt changed/],
       ["OCI receipt superseded shape", (s) => {
         delete s.ociReceipt.spec.variants;
         s.ociReceipt.status.result = "fail";
       }, /OCI delivery receipt changed/],
       ["new-shape OCI receipt source", (s) => {
-        s.ociReceipt.spec.variants = [];
+        s.ociReceipt.spec.variants = [{ cluster: "hx", target: { name: "hx" } }];
         s.ociReceipt.spec.source = { base: { rawSha256: "0".repeat(64) } };
       }, /no longer records the reviewed base/],
       ["README Unit space", (s) => { s.readmeUnit.spec.space = "some-other-space"; }, /points at the wrong Space/],
