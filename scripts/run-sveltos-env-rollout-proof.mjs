@@ -112,6 +112,14 @@ const publishGatePollMs = 2_000;
 // Declared here with the other constants because the mode dispatch runs before
 // anything further down the file is initialized.
 const registrationNamespace = "projectsveltos";
+// A Target needs a BridgeWorker with announced support for its ConfigType,
+// workers are space-scoped and live, and this design runs no worker per
+// Space, so every cluster's named Target is hosted in the catalog's
+// infrastructure Space against its long-registered OCI-capable worker.
+const targetHost = {
+  space: "bitnami-redis-27-0-0-default-pilot-live-20260705",
+  worker: "server-worker",
+};
 const backgroundDeployment = "kyverno-background-controller";
 const managementClusterRecord = "management";
 const releaseTag = "latest";
@@ -135,6 +143,7 @@ const {
   blockedDryRun,
   createPolicySpace,
   establishBase,
+  establishClusterTarget,
   establishVariant,
   gatewayReference,
   publishRelease,
@@ -173,6 +182,7 @@ const {
   policyUnit,
   probeRecord,
   proofLabel,
+  targetHost,
   publishGateAttempts,
   publishGatePollMs,
   releaseTag,
@@ -309,6 +319,11 @@ function run() {
   // gate never attaches costs seconds, not the seven-minute fleet build the
   // two-wave runner paid per attempt.
   assertApprovalGateObservable(policyContext, runId, topology);
+  // Creating the management cluster's Target up front is the target-host
+  // preflight: it is idempotent, the record establishment needs it anyway,
+  // and a host worker that cannot mint OCI targets refuses here in seconds
+  // rather than after the fleet build.
+  establishClusterTarget(policyContext, "hx-sveltos-env-mgmt");
   cleanup.results.probeSpace = "pass";
   phase("gate preflight passed; the approval gate is observable");
 
@@ -1105,7 +1120,7 @@ function promoteWave({
     expectedUnits,
   });
   const upgrade = cubTry(policyContext, [
-    "unit", "update", "--patch", "--space", "*", "--where", query, "--upgrade",
+    "unit", "update", "--patch", "--space", "*", "--where", query, "--upgrade", "--allow-exists",
     "--change-desc",
     `Inherit ${plan.change.spec.valuesPath}=${plan.change.spec.after} from the base into the ${wave.environment} variants`,
     "--quiet",
@@ -1512,6 +1527,7 @@ function buildReceipt({
         resourceClass: "system-configuration",
         filter: topology,
         approvalGate,
+        targetHost: { space: targetHost.space, worker: targetHost.worker },
       },
       prerequisite: sveltosInstall,
       base: { ...baseRecord, change: baseChange },
@@ -1802,12 +1818,18 @@ function verifyVariants(receipt, plan) {
   for (const variant of variants) {
     check(
       variant.target?.name === variant.cluster
-        && variant.target.ref === `${variant.space}/${variant.cluster}`
+        && variant.target.ref === `${targetHost.space}/${variant.cluster}`
+        && variant.target.host === targetHost.space
         && variant.target.provider === "OCI"
         && String(variant.target.id ?? "").length > 0,
-      `the ${variant.cluster} variant must release to its own cluster's Target`,
+      `the ${variant.cluster} variant must release to its own cluster's Target on the declared host`,
     );
   }
+  check(
+    receipt.spec?.policy?.targetHost?.space === targetHost.space
+      && receipt.spec.policy.targetHost.worker === targetHost.worker,
+    "the receipt must record the Space and worker hosting the cluster Targets",
+  );
   check(
     new Set(variants.map((row) => row.target.id)).size === variants.length,
     "two variants share a Target, so ConfigHub's model cannot say what runs where",
@@ -3841,7 +3863,7 @@ function selfTest() {
       ["target dropped", (c) => { delete c.spec.variants[0].target; }, /must release to its own cluster's Target/],
       ["target renamed", (c) => { c.spec.variants[0].target.name = "somewhere-else"; }, /must release to its own cluster's Target/],
       ["target provider", (c) => { c.spec.variants[0].target.provider = "Kubernetes"; }, /must release to its own cluster's Target/],
-      ["targets shared", (c) => { c.spec.variants[1].target = { ...c.spec.variants[0].target }; c.spec.variants[1].target.name = c.spec.variants[1].cluster; c.spec.variants[1].target.ref = `${c.spec.variants[1].space}/${c.spec.variants[1].cluster}`; }, /two variants share a Target/],
+      ["targets shared", (c) => { c.spec.variants[1].target = { ...c.spec.variants[0].target }; c.spec.variants[1].target.name = c.spec.variants[1].cluster; c.spec.variants[1].target.ref = `${targetHost.space}/${c.spec.variants[1].cluster}`; }, /two variants share a Target/],
       ["shared catalog target reintroduced", (c) => { c.spec.policy.target = { ref: "catalog/oci-target" }; }, /shared catalog target is retired/],
       ["clusterRef renamed", (c) => {
         c.spec.variants[2].clusterRef.name = c.spec.variants[3].cluster;
@@ -4155,6 +4177,7 @@ function createFakeConfigHub() {
   const filterId = "self-test-filter-0001";
   const targets = new Map();
   const targetKey = (space, slug) => `${space}/${slug}`;
+
   const resolveTargetRef = (ref, fallbackSpace) => {
     const key = String(ref).includes("/")
       ? String(ref)
@@ -4166,6 +4189,20 @@ function createFakeConfigHub() {
   const units = new Map();
   const releases = new Map();
   const pending = new Set();
+  // The catalog's infrastructure Space and its long-registered OCI-capable
+  // worker exist before any run, so the fake seeds them the way the live
+  // organization carries them.
+  const workers = new Map([[
+    targetKey(targetHost.space, targetHost.worker),
+    { supports: new Set(["OCI/Any"]) },
+  ]]);
+  spaces.set(targetHost.space, {
+    Slug: targetHost.space,
+    SpaceID: `self-test-space-${targetHost.space}`,
+    TriggerIDs: [],
+    ReleaseTargetID: null,
+    TriggerFilterID: filterId,
+  });
   let releaseSequence = 0;
   const state = {
     neverPopulateGates: false,
@@ -4258,11 +4295,24 @@ function createFakeConfigHub() {
       return ok(JSON.stringify({ Space: structuredClone(row) }));
     }
     if (entity === "target" && verb === "create") {
-      const [slug] = rest;
+      const [slug, , workerSlug] = rest;
       if (!spaces.has(flags.space)) return refuse(`space ${flags.space} not found`);
+      if (!workerSlug) return refuse("BridgeWorkerID is required");
+      const worker = workers.get(targetKey(flags.space, workerSlug));
+      if (!worker) return refuse(`worker ${workerSlug} not found in ${flags.space}`);
+      const configType = `${flags.provider ?? "Kubernetes"}/${flags.toolchain ?? "Any"}`;
+      if (!worker.supports.has(configType)) {
+        return refuse(`BridgeWorker does not support ConfigType with ProviderType '${flags.provider}', ToolchainType '${flags.toolchain}'`);
+      }
+      if (targets.has(targetKey(flags.space, slug))) {
+        return flags["allow-exists"]
+          ? ok("")
+          : refuse(`target ${slug} already exists`);
+      }
       targets.set(targetKey(flags.space, slug), {
         Slug: slug,
         SpaceSlug: flags.space,
+        WorkerSlug: workerSlug,
         TargetID: `self-test-target-${flags.space}-${slug}`,
         ProviderType: flags.provider ?? "Kubernetes",
         ToolchainType: flags.toolchain ?? "Any",

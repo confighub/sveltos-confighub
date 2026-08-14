@@ -120,14 +120,20 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    variant fell behind its base or the base gained a unit; the recorded
    waves do not use it, because a wave is one set operation over every
    record it names rather than one promotion per Space.
-3. **Name the cluster's destination**:
-   `cub target create <cluster> '{}' --space <variant-space> --provider OCI --toolchain Any`,
-   then set it as the Space's release target and the record's target. One
-   Target per cluster, named for it, is what lets ConfigHub's own model
-   answer which cluster a variant ships to, rather than a selector line
-   inside the stored YAML. The base Space gets no Target and no release
-   target, because the base ships nowhere. Check the Target quota before a
-   fleet build, the same lesson as Links.
+3. **Name the cluster's destination**: a Target needs a BridgeWorker that
+   has run and announced support for its ConfigType, and workers are
+   space-scoped, so mint each cluster's named Target in your
+   infrastructure Space against its registered OCI-capable worker:
+   `cub target create <cluster> '{}' <worker> --space <infra-space> --provider OCI --toolchain Any --allow-exists`,
+   then set it as the variant Space's release target and the record's
+   target (the reference crosses Spaces, which is the long-standing
+   pattern). `--allow-exists` keeps each cluster's Target stable across
+   runs: one cluster, one destination identity. One Target per cluster,
+   named for it, is what lets ConfigHub's own model answer which cluster a
+   variant ships to, rather than a selector line inside the stored YAML.
+   The base Space gets no Target and no release target, because the base
+   ships nowhere. Check the Target quota before a fleet build, the same
+   lesson as Links.
 4. **Select a wave as a set**: `cub unit list --space "*" --where "<query
    over your record labels>"`, and assert the match equals exactly the wave
    you intended before acting on it.

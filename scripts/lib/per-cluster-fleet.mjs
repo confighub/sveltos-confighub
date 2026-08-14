@@ -296,6 +296,7 @@ export function governedRecords(deps) {
     policyUnit,
     probeRecord,
     proofLabel,
+    targetHost,
     publishGateAttempts,
     publishGatePollMs,
     releaseTag,
@@ -328,45 +329,46 @@ export function governedRecords(deps) {
     ]);
   }
 
-  // ConfigHub's destination model is the Target, so each cluster's Space
-  // carries a Target named for its cluster and releases to it. Delivery is
+  // ConfigHub's destination model is the Target, so each cluster gets a
+  // Target named for it and its variant's Space releases to it. Delivery is
   // unchanged — the gateway already serves one address per Space — but what
   // ConfigHub knows changes: which cluster a variant ships to becomes a
   // model-level answer rather than a selector line inside the stored YAML.
+  // A Target needs a BridgeWorker that has announced support for its
+  // ConfigType, workers are space-scoped and live, and this design is
+  // pull-based with no worker per Space, so each cluster's named Target is
+  // minted in the catalog's infrastructure Space against its long-registered
+  // OCI-capable worker. --allow-exists keeps the Target stable across runs:
+  // one cluster, one destination identity. The variant's Space references it
+  // across Spaces the way the shared catalog target always was referenced.
   // The base Space deliberately gets no Target and no release target, which
   // is the model saying what the receipts already say: the base reaches no
   // cluster.
-  function establishClusterTarget(context, space, cluster) {
+  function establishClusterTarget(context, cluster) {
     cub(context, [
-      "target", "create", cluster, "{}",
-      "--space", space,
+      "target", "create", cluster, "{}", targetHost.worker,
+      "--space", targetHost.space,
       "--provider", "OCI",
       "--toolchain", "Any",
-      "--label", `App=${appLabel}`,
       "--label", `Cluster=${cluster}`,
+      "--allow-exists",
       "--quiet",
     ]);
     const created = cubJson(context, [
-      "target", "get", "--space", space, cluster, "-o", "json",
+      "target", "get", "--space", targetHost.space, cluster, "-o", "json",
     ]).Target;
     check(
       Boolean(created?.TargetID),
-      `${space} did not create the ${cluster} Target`,
+      `${targetHost.space} did not host the ${cluster} Target`,
     );
     check(
       created.ProviderType === "OCI",
       `the ${cluster} Target must be an OCI target, not ${created.ProviderType}`,
     );
-    const ref = `${space}/${cluster}`;
-    cub(context, [
-      "space", "update", space,
-      "--release-target", ref,
-      "--quiet",
-    ]);
     return {
       name: cluster,
-      space,
-      ref,
+      host: targetHost.space,
+      ref: `${targetHost.space}/${cluster}`,
       id: created.TargetID,
       provider: created.ProviderType,
       toolchain: created.ToolchainType,
@@ -723,9 +725,14 @@ export function governedRecords(deps) {
     policySpacesCreated.add(space);
     // variant create copies a TargetID annotation from the upstream Space,
     // and the base deliberately has none, so this cluster's own destination
-    // is created and bound here, next to the departures that make the record
-    // this cluster's own.
-    const target = establishClusterTarget(policyContext, space, cluster.cluster);
+    // is established and bound here, next to the departures that make the
+    // record this cluster's own.
+    const target = establishClusterTarget(policyContext, cluster.cluster);
+    cub(policyContext, [
+      "space", "update", space,
+      "--release-target", target.ref,
+      "--quiet",
+    ]);
     assertPolicySpace(
       policyContext,
       space,
@@ -794,6 +801,7 @@ export function governedRecords(deps) {
       departedFields: cluster.departurePaths,
       target: {
         name: target.name,
+        host: target.host,
         ref: target.ref,
         id: target.id,
         provider: target.provider,
@@ -857,9 +865,13 @@ export function governedRecords(deps) {
     policySpacesCreated.add(space);
     const target = establishClusterTarget(
       policyContext,
-      space,
       plan.management.cluster,
     );
+    cub(policyContext, [
+      "space", "update", space,
+      "--release-target", target.ref,
+      "--quiet",
+    ]);
     assertPolicySpace(
       policyContext,
       space,
@@ -909,6 +921,7 @@ export function governedRecords(deps) {
       },
       target: {
         name: target.name,
+        host: target.host,
         ref: target.ref,
         id: target.id,
         provider: target.provider,
