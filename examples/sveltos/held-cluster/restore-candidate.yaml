@@ -1,0 +1,30 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosHeldClusterRestore
+metadata:
+  name: prod-a-restore-and-hold
+spec:
+  description: >-
+    Bring one production cluster back to the exact revision it ran before the
+    advance, under the same approval gate every forward change passes, and then
+    hold it there through the next fleet advance.
+  cluster: hx-sveltos-env-prod-a
+  twin: hx-sveltos-env-prod-b
+  restore:
+    mechanism: cub unit update --restore <revision>
+    revision: the variant's head revision recorded before this chapter's first advance
+    governed: >-
+      The restore is a revision like any other. The approval gate attaches to
+      it, publish is refused until a person approves that exact restored
+      revision, and the receipt records the refusal and the approval.
+  hold:
+    mechanism: absence of approval
+    note: >-
+      Holding a cluster is not a new feature. The next advance upgrades the
+      held cluster's variant like every other, and then nobody approves it.
+      The gate that blocks an unapproved release is the hold. Releasing the
+      hold later is one approval and one publish.
+  claimBoundary: >-
+    This chapter does not claim a fleet-wide undo, a failure budget, or an
+    automated verification step between waves. It restores one target to an
+    exact revision and keeps it there on purpose, with the fleet's mixed state
+    recorded as facts rather than drift.

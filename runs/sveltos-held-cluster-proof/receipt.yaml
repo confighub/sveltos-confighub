@@ -1,0 +1,1297 @@
+apiVersion: "catalog.confighub.com/v1alpha1"
+kind: "SveltosHeldClusterProofReceipt"
+metadata:
+  name: "kyverno-held-cluster"
+spec:
+  recordedAt: "2026-08-21T14:23:14.312Z"
+  flow:
+    path: "chapter-three cohort -> one reviewed advance on the base -> governed restore of one production cluster to its exact earlier revision -> a further reviewed advance with that cluster deliberately unapproved -> closing fleet audit"
+    promotion: "two reviewed changes on the shared base, 2 to 3 and then 3 to 4, each inherited wave by wave; one governed restore of hx-sveltos-env-prod-a between them"
+    boundary: "the hold is the absence of one approval on one variant, not a new mechanism; the restore is one cluster to one exact revision, not a fleet-wide reversal"
+    mapping: "ConfigHub holds one record per cluster, so which cluster stands at which of the three points is a model-level answer, read from the records rather than from a cluster"
+  source:
+    change:
+      path: "examples/sveltos/held-cluster/change-candidate.yaml"
+      rawSha256: "7318919cb2526cb443e138cc237c89c77807c3d5850220fa8b7a11bf778e09fc"
+    restore:
+      path: "examples/sveltos/held-cluster/restore-candidate.yaml"
+      rawSha256: "2f2459eb5f23bbaf14024d4e3bacedab9f6bb0199e821b35ebb3d155b12c5f3b"
+    continuation:
+      path: "examples/sveltos/held-cluster/continuation.yaml"
+      rawSha256: "9a3895fb905e18744f29558a2b3b777c5eef467a6f188112bf39613daef63fc5"
+    cohortReceipt:
+      path: "runs/sveltos-env-rollout-proof/receipt.yaml"
+      rawSha256: "a954f92613c3cde538c80b9420e3320ca23ecc4869a5acce42416c35394ea62e"
+    selectionTemplate:
+      path: "examples/sveltos/env-rollout/change-candidate.yaml"
+      scope: "cub unit list --space \"*\""
+      whereTemplate: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '{run}' AND Labels.Environment = '{environment}'"
+    valuesPath: "backgroundController.replicas"
+    advance:
+      before: 2
+      after: 3
+    heldAdvance:
+      before: 3
+      after: 4
+    gatewayRecord: "docs/planning/remote-url-oci-probe.md"
+  continuesCohort:
+    receipt: "runs/sveltos-env-rollout-proof/receipt.yaml"
+    runId: "20260821140804"
+    clusters:
+      - "hx-sveltos-envmgmt-20260821140804"
+      - "hx-sveltos-env-pilot-20260821140804"
+      - "hx-sveltos-env-staging-20260821140804"
+      - "hx-sveltos-env-prod-a-20260821140804"
+      - "hx-sveltos-env-prod-b-20260821140804"
+    spaces:
+      base: "hx-sveltos-env-base-20260821140804"
+      management: "hx-sveltos-env-mgmt-20260821140804"
+      workloads:
+        hx-sveltos-env-pilot: "hx-sveltos-env-pilot-20260821140804"
+        hx-sveltos-env-staging: "hx-sveltos-env-staging-20260821140804"
+        hx-sveltos-env-prod-a: "hx-sveltos-env-prod-a-20260821140804"
+        hx-sveltos-env-prod-b: "hx-sveltos-env-prod-b-20260821140804"
+    createdNothing: true
+  revisions:
+    base:
+      startingPointHead: 4
+      advanced:
+        revision: 5
+        revisionId: "a2b-00f8d61b6465"
+      held:
+        revision: 6
+        revisionId: "h3b-a205b7e1de57"
+    clusters:
+      hx-sveltos-env-pilot:
+        startingPoint:
+          headRevision: 4
+          revisionId: "s1-ed215f0c9741"
+          cohortReleaseDigest: "sha256:b309ed9d4429cf0c9786d344b9c6cd8a95489443d1b0ef8525ee88cb4ad70767"
+        advanced:
+          revision: 5
+          revisionId: "a2-16b9c3e58832"
+        held:
+          revision: 6
+          revisionId: "h3-c892680b0c64"
+      hx-sveltos-env-staging:
+        startingPoint:
+          headRevision: 4
+          revisionId: "s1-c6651525c7f3"
+          cohortReleaseDigest: "sha256:bad5e795bd2d58954b242dfdd5b010daf2b0cf202ff2354f77984204dab7001b"
+        advanced:
+          revision: 5
+          revisionId: "a2-c855d91d4c32"
+        held:
+          revision: 6
+          revisionId: "h3-4f4f80c7953d"
+      hx-sveltos-env-prod-a:
+        startingPoint:
+          headRevision: 4
+          revisionId: "s1-d00434703da3"
+          cohortReleaseDigest: "sha256:e7d752ba6ddbe2d6787d60253d1d30171955d8487859104d93069b0c6ad17740"
+        advanced:
+          revision: 5
+          revisionId: "a2-f12bcc305df2"
+        restored:
+          revision: 6
+          revisionId: "s1-d00434703da3"
+          contentOfRevision: 4
+        pending:
+          revision: 7
+          approved: false
+      hx-sveltos-env-prod-b:
+        startingPoint:
+          headRevision: 4
+          revisionId: "s1-126b6338a471"
+          cohortReleaseDigest: "sha256:dd39be5dc38bbdb6c98925b641c57e0bb8a7db7edac4ca5e3429ed3b11c31bec"
+        advanced:
+          revision: 5
+          revisionId: "a2-8c635aeae0d5"
+        held:
+          revision: 6
+          revisionId: "h3-d25f1745306d"
+  policy:
+    organization: "helm-catalog"
+    profile: "catalog-standard"
+    resourceClass: "system-configuration"
+    filter:
+      ref: "platform/helm-catalog-prod-gates"
+      id: "8784a447-0e4d-4471-b924-eae5377778a2"
+      hash: "31133ade3ebd259030d3d2ef559e6aec14a62590779fbce9c0d13b188f717dc1"
+      triggerRefs:
+        - "platform/aicr-training-images-pinned"
+        - "platform/aicr-training-secret-refs"
+        - "platform/digest-pinned-images"
+        - "platform/lifecycle-route-evidence"
+        - "platform/probes-declared"
+        - "platform/require-approval"
+        - "platform/vet-placeholders"
+        - "platform/vet-schemas"
+      triggerIds:
+        - "04746183-327b-484e-b061-91d2c7753a76"
+        - "1823a4c6-9743-467a-8e9a-5e1893e31d17"
+        - "2651b7cc-31a2-4833-adde-11e018656dee"
+        - "3f5dd412-1cf2-4583-a73a-12817f899c87"
+        - "4d7664a3-9ac0-4160-868f-95eaa0b59f8f"
+        - "5ce74cb1-7129-43c8-a48c-a0ba4322de3d"
+        - "894ba8a0-eb84-4105-9557-4854f3739cf2"
+        - "9d281daf-79f4-4244-84cc-fbde411e3c11"
+    approvalGate: "platform/require-approval/vet-approvedby"
+    targetHost:
+      space: "bitnami-redis-27-0-0-default-pilot-live-20260705"
+      worker: "server-worker"
+  advance:
+    evidenceGated: true
+    rule: "No wave's approval is requested until the preceding checkpoint shows every cluster the wave depends on reporting healthy. Each wave records the evidence that unlocked it."
+    base:
+      space: "hx-sveltos-env-base-20260821140804"
+      unit: "clusterprofile"
+      revision: 5
+      revisionId: "a2b-00f8d61b6465"
+      fromReplicas: 2
+      toReplicas: 3
+      approved: false
+      publishedAsRelease: false
+    waves:
+      -
+        wave: 1
+        environment: "pilot"
+        unlockedBy:
+          precedingCheckpointId: "baseline"
+          environment: "baseline"
+          clusters:
+            -
+              cluster: "hx-sveltos-env-pilot-20260821140804"
+              logicalCluster: "hx-sveltos-env-pilot"
+              environment: "pilot"
+              result: "pass"
+            -
+              cluster: "hx-sveltos-env-staging-20260821140804"
+              logicalCluster: "hx-sveltos-env-staging"
+              environment: "staging"
+              result: "pass"
+            -
+              cluster: "hx-sveltos-env-prod-a-20260821140804"
+              logicalCluster: "hx-sveltos-env-prod-a"
+              environment: "prod"
+              result: "pass"
+            -
+              cluster: "hx-sveltos-env-prod-b-20260821140804"
+              logicalCluster: "hx-sveltos-env-prod-b"
+              environment: "prod"
+              result: "pass"
+          approvalFollowedEvidence: true
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'pilot'"
+          matched:
+            - "hx-sveltos-env-pilot-20260821140804/clusterprofile"
+        upgrade:
+          command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          appliedAsOneOperation: true
+          members: 1
+          heldMembers: 0
+        approval:
+          command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+          appliedAsOneOperation: true
+          members: 1
+          recordedApprovals: 1
+        approvalSelection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'pilot'"
+          matched:
+            - "hx-sveltos-env-pilot-20260821140804/clusterprofile"
+        clusters:
+          -
+            cluster: "hx-sveltos-env-pilot"
+            space: "hx-sveltos-env-pilot-20260821140804"
+            revision: 5
+            revisionId: "a2-16b9c3e58832"
+            recordedApprovals: 1
+            releaseManifestDigest: "sha256:950167118097203afa955debf7f58af8cf8d85d7f9e66206f9f3ce6f857b2a32"
+            inheritedFields:
+              - "spec.helmCharts.0.values"
+            departedFields:
+              - "metadata.name"
+              - "spec.clusterRefs"
+              - "spec.stopMatchingBehavior"
+            beforeApproval:
+              result: "blocked"
+              gate: "platform/require-approval/vet-approvedby"
+              observation: "apply-gate-present-approval-absent"
+              dryRun: false
+              exitCode: 0
+            afterApproval:
+              result: "allowed"
+              observation: "approval-recorded"
+              dryRun: false
+              exitCode: 0
+            release:
+              space: "hx-sveltos-env-pilot-20260821140804"
+              reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+              tag: "latest"
+              manifestDigest: "sha256:950167118097203afa955debf7f58af8cf8d85d7f9e66206f9f3ce6f857b2a32"
+              bundleDigest: "sha256:087379e2f30b86fa3209e14f046971df19b368ddbbb33f0024ba0c363b783a9a"
+              releaseId: "ce83b0f3-4f00-4516-9269-364d21853053"
+            delivery:
+              result: "pass"
+              profile: "kyverno-hx-sveltos-env-pilot"
+              interval: "1m0s"
+              profileMatchesApprovedRevision: true
+      -
+        wave: 2
+        environment: "staging"
+        unlockedBy:
+          precedingCheckpointId: "after-wave-1"
+          environment: "pilot"
+          clusters:
+            -
+              cluster: "hx-sveltos-env-pilot-20260821140804"
+              logicalCluster: "hx-sveltos-env-pilot"
+              environment: "pilot"
+              result: "pass"
+          approvalFollowedEvidence: true
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'staging'"
+          matched:
+            - "hx-sveltos-env-staging-20260821140804/clusterprofile"
+        upgrade:
+          command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          appliedAsOneOperation: true
+          members: 1
+          heldMembers: 0
+        approval:
+          command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+          appliedAsOneOperation: true
+          members: 1
+          recordedApprovals: 1
+        approvalSelection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'staging'"
+          matched:
+            - "hx-sveltos-env-staging-20260821140804/clusterprofile"
+        clusters:
+          -
+            cluster: "hx-sveltos-env-staging"
+            space: "hx-sveltos-env-staging-20260821140804"
+            revision: 5
+            revisionId: "a2-c855d91d4c32"
+            recordedApprovals: 1
+            releaseManifestDigest: "sha256:6e8ebf25f1883f9e0cf5ede2a71abe2443f633003654a43b3be8c9625a442dd1"
+            inheritedFields:
+              - "spec.helmCharts.0.values"
+            departedFields:
+              - "metadata.name"
+              - "spec.clusterRefs"
+              - "spec.stopMatchingBehavior"
+            beforeApproval:
+              result: "blocked"
+              gate: "platform/require-approval/vet-approvedby"
+              observation: "apply-gate-present-approval-absent"
+              dryRun: false
+              exitCode: 0
+            afterApproval:
+              result: "allowed"
+              observation: "approval-recorded"
+              dryRun: false
+              exitCode: 0
+            release:
+              space: "hx-sveltos-env-staging-20260821140804"
+              reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+              tag: "latest"
+              manifestDigest: "sha256:6e8ebf25f1883f9e0cf5ede2a71abe2443f633003654a43b3be8c9625a442dd1"
+              bundleDigest: "sha256:3d332ac492b4db94e5677d6b70e2da03f63763ba9d03e02ee5e27d21be2dc0d5"
+              releaseId: "765b1ef7-0f3e-491c-b53d-d47e5de1d7b7"
+            delivery:
+              result: "pass"
+              profile: "kyverno-hx-sveltos-env-staging"
+              interval: "1m0s"
+              profileMatchesApprovedRevision: true
+      -
+        wave: 3
+        environment: "prod"
+        unlockedBy:
+          precedingCheckpointId: "after-wave-2"
+          environment: "staging"
+          clusters:
+            -
+              cluster: "hx-sveltos-env-staging-20260821140804"
+              logicalCluster: "hx-sveltos-env-staging"
+              environment: "staging"
+              result: "pass"
+          approvalFollowedEvidence: true
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'prod'"
+          matched:
+            - "hx-sveltos-env-prod-a-20260821140804/clusterprofile"
+            - "hx-sveltos-env-prod-b-20260821140804/clusterprofile"
+        upgrade:
+          command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          appliedAsOneOperation: true
+          members: 2
+          heldMembers: 0
+        approval:
+          command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+          appliedAsOneOperation: true
+          members: 2
+          recordedApprovals: 2
+        approvalSelection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'prod'"
+          matched:
+            - "hx-sveltos-env-prod-a-20260821140804/clusterprofile"
+            - "hx-sveltos-env-prod-b-20260821140804/clusterprofile"
+        clusters:
+          -
+            cluster: "hx-sveltos-env-prod-a"
+            space: "hx-sveltos-env-prod-a-20260821140804"
+            revision: 5
+            revisionId: "a2-f12bcc305df2"
+            recordedApprovals: 1
+            releaseManifestDigest: "sha256:8cb185e1bd0f0060f208e1d13707e3f41890f567cb8a391b5140c51316af7ec6"
+            inheritedFields:
+              - "spec.helmCharts.0.values"
+            departedFields:
+              - "metadata.name"
+              - "spec.clusterRefs"
+              - "spec.stopMatchingBehavior"
+            beforeApproval:
+              result: "blocked"
+              gate: "platform/require-approval/vet-approvedby"
+              observation: "apply-gate-present-approval-absent"
+              dryRun: false
+              exitCode: 0
+            afterApproval:
+              result: "allowed"
+              observation: "approval-recorded"
+              dryRun: false
+              exitCode: 0
+            release:
+              space: "hx-sveltos-env-prod-a-20260821140804"
+              reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+              tag: "latest"
+              manifestDigest: "sha256:8cb185e1bd0f0060f208e1d13707e3f41890f567cb8a391b5140c51316af7ec6"
+              bundleDigest: "sha256:96a420591d20edb49b534d21bee2089285cc3cc0183ae62ad7b7d33557a6ced4"
+              releaseId: "0f2276c5-0e59-477e-a806-2194297ba10a"
+            delivery:
+              result: "pass"
+              profile: "kyverno-hx-sveltos-env-prod-a"
+              interval: "1m0s"
+              profileMatchesApprovedRevision: true
+          -
+            cluster: "hx-sveltos-env-prod-b"
+            space: "hx-sveltos-env-prod-b-20260821140804"
+            revision: 5
+            revisionId: "a2-8c635aeae0d5"
+            recordedApprovals: 1
+            releaseManifestDigest: "sha256:b39f2298e1452413ba2bf4abfbd681c8563604fed87120680a907434e0aeab04"
+            inheritedFields:
+              - "spec.helmCharts.0.values"
+            departedFields:
+              - "metadata.name"
+              - "spec.clusterRefs"
+              - "spec.stopMatchingBehavior"
+            beforeApproval:
+              result: "blocked"
+              gate: "platform/require-approval/vet-approvedby"
+              observation: "apply-gate-present-approval-absent"
+              dryRun: false
+              exitCode: 0
+            afterApproval:
+              result: "allowed"
+              observation: "approval-recorded"
+              dryRun: false
+              exitCode: 0
+            release:
+              space: "hx-sveltos-env-prod-b-20260821140804"
+              reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+              tag: "latest"
+              manifestDigest: "sha256:b39f2298e1452413ba2bf4abfbd681c8563604fed87120680a907434e0aeab04"
+              bundleDigest: "sha256:0b99f794c4adc9b26fc56b8c7dc322228aa300808dd70343046d122d45260444"
+              releaseId: "5dfbe5d8-3a17-4af7-97d8-cbf0bed8b149"
+            delivery:
+              result: "pass"
+              profile: "kyverno-hx-sveltos-env-prod-b"
+              interval: "1m0s"
+              profileMatchesApprovedRevision: true
+  restore:
+    cluster: "hx-sveltos-env-prod-a"
+    twin: "hx-sveltos-env-prod-b"
+    space: "hx-sveltos-env-prod-a-20260821140804"
+    unit: "clusterprofile"
+    command: "cub unit update --space hx-sveltos-env-prod-a-20260821140804 clusterprofile --restore 4"
+    revisionRestoredTo: 4
+    restoredRevisionId: "s1-d00434703da3"
+    headRevisionAfterRestore: 6
+    restoredContentMatchesStartingPoint: true
+    gateEvidence:
+      beforeApproval:
+        result: "blocked"
+        gate: "platform/require-approval/vet-approvedby"
+        observation: "apply-gate-present-approval-absent"
+        dryRun: false
+        exitCode: 0
+      publishRefusal:
+        command: "cub release publish hx-sveltos-env-prod-a-20260821140804"
+        attempted: true
+        result: "refused"
+        gate: "platform/require-approval/vet-approvedby"
+        error: "Failed: HTTP 422 for req gsfogUFxDJgyBHSBmcuiTpqggTqdFgIs: outstanding ApplyGates; triggers re-queued for evaluation Metadata: Apply Gates: platform/require-approval/vet-approvedby"
+      afterApproval:
+        result: "allowed"
+        observation: "approval-recorded"
+        dryRun: false
+        exitCode: 0
+    approval:
+      revision: 6
+      recordedApprovals: 1
+      approverIdentityRecordedInReceipt: false
+      contentHashUnchanged: true
+    release:
+      space: "hx-sveltos-env-prod-a-20260821140804"
+      reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+      tag: "latest"
+      manifestDigest: "sha256:916145d87591cf65fa8a33b0a0227440264681b5a5863820413041705cfdc505"
+      bundleDigest: "sha256:c586e438b70b0d83445b33d0a21204de4280ec949831cc73de66701a0b1ac8bd"
+      releaseId: "e46cd176-c7bf-4d0d-9fb5-0a3baca1e70e"
+    delivery:
+      result: "pass"
+      profile: "kyverno-hx-sveltos-env-prod-a"
+      interval: "1m0s"
+      profileMatchesApprovedRevision: true
+    perCluster:
+      hx-sveltos-env-prod-a:
+        observedReplicas: 2
+        observation:
+          result: "pass"
+          deployment: "kyverno-background-controller"
+          desired: 2
+          available: 2
+          observedGenerationMatches: true
+        state: "restored"
+      hx-sveltos-env-prod-b:
+        observedReplicas: 3
+        observation:
+          result: "pass"
+          deployment: "kyverno-background-controller"
+          desired: 3
+          available: 3
+          observedGenerationMatches: true
+        headRevision: 5
+        state: "stayed-on-advance"
+  heldAdvance:
+    base:
+      space: "hx-sveltos-env-base-20260821140804"
+      unit: "clusterprofile"
+      revision: 6
+      revisionId: "h3b-a205b7e1de57"
+      fromReplicas: 3
+      toReplicas: 4
+      approved: false
+      publishedAsRelease: false
+    waves:
+      -
+        wave: 1
+        environment: "pilot"
+        unlockedBy:
+          precedingCheckpointId: "baseline"
+          environment: "baseline"
+          clusters:
+            -
+              cluster: "hx-sveltos-env-pilot-20260821140804"
+              logicalCluster: "hx-sveltos-env-pilot"
+              environment: "pilot"
+              result: "pass"
+            -
+              cluster: "hx-sveltos-env-staging-20260821140804"
+              logicalCluster: "hx-sveltos-env-staging"
+              environment: "staging"
+              result: "pass"
+            -
+              cluster: "hx-sveltos-env-prod-a-20260821140804"
+              logicalCluster: "hx-sveltos-env-prod-a"
+              environment: "prod"
+              result: "pass"
+            -
+              cluster: "hx-sveltos-env-prod-b-20260821140804"
+              logicalCluster: "hx-sveltos-env-prod-b"
+              environment: "prod"
+              result: "pass"
+          approvalFollowedEvidence: true
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'pilot'"
+          matched:
+            - "hx-sveltos-env-pilot-20260821140804/clusterprofile"
+        upgrade:
+          command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          appliedAsOneOperation: true
+          members: 1
+          heldMembers: 0
+        approval:
+          command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+          appliedAsOneOperation: true
+          members: 1
+          recordedApprovals: 1
+        approvalSelection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'pilot'"
+          matched:
+            - "hx-sveltos-env-pilot-20260821140804/clusterprofile"
+        clusters:
+          -
+            cluster: "hx-sveltos-env-pilot"
+            space: "hx-sveltos-env-pilot-20260821140804"
+            revision: 6
+            revisionId: "h3-c892680b0c64"
+            recordedApprovals: 1
+            releaseManifestDigest: "sha256:1093b15c38d4d2c24d24d4e9e59ccbc8fd162e0515f718aebe99f9b097f480cd"
+            inheritedFields:
+              - "spec.helmCharts.0.values"
+            departedFields:
+              - "metadata.name"
+              - "spec.clusterRefs"
+              - "spec.stopMatchingBehavior"
+            beforeApproval:
+              result: "blocked"
+              gate: "platform/require-approval/vet-approvedby"
+              observation: "apply-gate-present-approval-absent"
+              dryRun: false
+              exitCode: 0
+            afterApproval:
+              result: "allowed"
+              observation: "approval-recorded"
+              dryRun: false
+              exitCode: 0
+            release:
+              space: "hx-sveltos-env-pilot-20260821140804"
+              reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+              tag: "latest"
+              manifestDigest: "sha256:1093b15c38d4d2c24d24d4e9e59ccbc8fd162e0515f718aebe99f9b097f480cd"
+              bundleDigest: "sha256:5c2c1102a4f29e54f281e23ac758222d1217c073396c2f3831f995a66bb65970"
+              releaseId: "011e30fc-cdf1-43ba-89ca-2c74a45a6dbb"
+            delivery:
+              result: "pass"
+              profile: "kyverno-hx-sveltos-env-pilot"
+              interval: "1m0s"
+              profileMatchesApprovedRevision: true
+      -
+        wave: 2
+        environment: "staging"
+        unlockedBy:
+          precedingCheckpointId: "after-wave-1"
+          environment: "pilot"
+          clusters:
+            -
+              cluster: "hx-sveltos-env-pilot-20260821140804"
+              logicalCluster: "hx-sveltos-env-pilot"
+              environment: "pilot"
+              result: "pass"
+          approvalFollowedEvidence: true
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'staging'"
+          matched:
+            - "hx-sveltos-env-staging-20260821140804/clusterprofile"
+        upgrade:
+          command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          appliedAsOneOperation: true
+          members: 1
+          heldMembers: 0
+        approval:
+          command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+          appliedAsOneOperation: true
+          members: 1
+          recordedApprovals: 1
+        approvalSelection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'staging'"
+          matched:
+            - "hx-sveltos-env-staging-20260821140804/clusterprofile"
+        clusters:
+          -
+            cluster: "hx-sveltos-env-staging"
+            space: "hx-sveltos-env-staging-20260821140804"
+            revision: 6
+            revisionId: "h3-4f4f80c7953d"
+            recordedApprovals: 1
+            releaseManifestDigest: "sha256:e69c1c79e8e7606739dd2dd219899b730f8b218c1a98f6f2f76f48493cc6575d"
+            inheritedFields:
+              - "spec.helmCharts.0.values"
+            departedFields:
+              - "metadata.name"
+              - "spec.clusterRefs"
+              - "spec.stopMatchingBehavior"
+            beforeApproval:
+              result: "blocked"
+              gate: "platform/require-approval/vet-approvedby"
+              observation: "apply-gate-present-approval-absent"
+              dryRun: false
+              exitCode: 0
+            afterApproval:
+              result: "allowed"
+              observation: "approval-recorded"
+              dryRun: false
+              exitCode: 0
+            release:
+              space: "hx-sveltos-env-staging-20260821140804"
+              reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+              tag: "latest"
+              manifestDigest: "sha256:e69c1c79e8e7606739dd2dd219899b730f8b218c1a98f6f2f76f48493cc6575d"
+              bundleDigest: "sha256:eacabef2e9a806d0760e551f9711a645cf5fff9e786d63d7fd2b01c4b717dcd6"
+              releaseId: "8812c09e-4f38-4160-bd69-7405c08d677a"
+            delivery:
+              result: "pass"
+              profile: "kyverno-hx-sveltos-env-staging"
+              interval: "1m0s"
+              profileMatchesApprovedRevision: true
+      -
+        wave: 3
+        environment: "prod"
+        unlockedBy:
+          precedingCheckpointId: "after-wave-2"
+          environment: "staging"
+          clusters:
+            -
+              cluster: "hx-sveltos-env-staging-20260821140804"
+              logicalCluster: "hx-sveltos-env-staging"
+              environment: "staging"
+              result: "pass"
+          approvalFollowedEvidence: true
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'prod'"
+          matched:
+            - "hx-sveltos-env-prod-a-20260821140804/clusterprofile"
+            - "hx-sveltos-env-prod-b-20260821140804/clusterprofile"
+        upgrade:
+          command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          appliedAsOneOperation: true
+          members: 2
+          heldMembers: 1
+        approval:
+          command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+          appliedAsOneOperation: true
+          members: 1
+          recordedApprovals: 1
+        approvalSelection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'prod' AND Labels.Cluster = 'hx-sveltos-env-prod-b'"
+          matched:
+            - "hx-sveltos-env-prod-b-20260821140804/clusterprofile"
+        clusters:
+          -
+            cluster: "hx-sveltos-env-prod-b"
+            space: "hx-sveltos-env-prod-b-20260821140804"
+            revision: 6
+            revisionId: "h3-d25f1745306d"
+            recordedApprovals: 1
+            releaseManifestDigest: "sha256:211aeb54d8ae4550548f9ee743e36915f2b81b997b7e567bf4100b3b0a0143dd"
+            inheritedFields:
+              - "spec.helmCharts.0.values"
+            departedFields:
+              - "metadata.name"
+              - "spec.clusterRefs"
+              - "spec.stopMatchingBehavior"
+            beforeApproval:
+              result: "blocked"
+              gate: "platform/require-approval/vet-approvedby"
+              observation: "apply-gate-present-approval-absent"
+              dryRun: false
+              exitCode: 0
+            afterApproval:
+              result: "allowed"
+              observation: "approval-recorded"
+              dryRun: false
+              exitCode: 0
+            release:
+              space: "hx-sveltos-env-prod-b-20260821140804"
+              reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+              tag: "latest"
+              manifestDigest: "sha256:211aeb54d8ae4550548f9ee743e36915f2b81b997b7e567bf4100b3b0a0143dd"
+              bundleDigest: "sha256:cefa133ac4bdbef6bea95655b91a374921e3f8bc83be645a71c52f8e53d9b458"
+              releaseId: "79df89be-9ebf-400d-ab10-3625ffe40a27"
+            delivery:
+              result: "pass"
+              profile: "kyverno-hx-sveltos-env-prod-b"
+              interval: "1m0s"
+              profileMatchesApprovedRevision: true
+    approvedClusters:
+      - "hx-sveltos-env-pilot"
+      - "hx-sveltos-env-staging"
+      - "hx-sveltos-env-prod-b"
+    heldCluster: "hx-sveltos-env-prod-a"
+    heldRecord:
+      cluster: "hx-sveltos-env-prod-a"
+      space: "hx-sveltos-env-prod-a-20260821140804"
+      headRevision: 7
+      pendingRevisionCreated: true
+      pendingValues: 4
+      upstreamChangeApplied: true
+      approvedRevision: 6
+      releasedManifestDigest: "sha256:916145d87591cf65fa8a33b0a0227440264681b5a5863820413041705cfdc505"
+      observation:
+        result: "pass"
+        deployment: "kyverno-background-controller"
+        desired: 2
+        available: 2
+        observedGenerationMatches: true
+      profileStillRestored:
+        result: "pass"
+        profile: "kyverno-hx-sveltos-env-prod-a"
+        interval: "1m0s"
+        profileMatchesApprovedRevision: true
+    gateState:
+      gate: "platform/require-approval/vet-approvedby"
+      result: "blocked"
+      observation: "apply-gate-present-approval-absent"
+      approvalAbsent: true
+      pendingHeadRevision: 7
+  fleetAudit:
+    result: "pass"
+    expected:
+      hx-sveltos-env-pilot: 4
+      hx-sveltos-env-prod-a: 2
+      hx-sveltos-env-prod-b: 4
+      hx-sveltos-env-staging: 4
+    revisionsInPlay:
+      startingPoint: 2
+      advance: 3
+      heldAdvance: 4
+    heldCluster: "hx-sveltos-env-prod-a"
+    clusters:
+      -
+        cluster: "hx-sveltos-env-pilot"
+        environment: "pilot"
+        space: "hx-sveltos-env-pilot-20260821140804"
+        headRevision: 6
+        approvedRevision: 6
+        approvalsOnHead: 1
+        gateKeysOnHead:
+          []
+        releasedDigest: "sha256:1093b15c38d4d2c24d24d4e9e59ccbc8fd162e0515f718aebe99f9b097f480cd"
+        expectedReplicas: 4
+        observedReplicas: 4
+        observation:
+          result: "pass"
+          deployment: "kyverno-background-controller"
+          desired: 4
+          available: 4
+          observedGenerationMatches: true
+        departuresKept: true
+        pendingUpgrade: false
+        state: "advanced"
+      -
+        cluster: "hx-sveltos-env-staging"
+        environment: "staging"
+        space: "hx-sveltos-env-staging-20260821140804"
+        headRevision: 6
+        approvedRevision: 6
+        approvalsOnHead: 1
+        gateKeysOnHead:
+          []
+        releasedDigest: "sha256:e69c1c79e8e7606739dd2dd219899b730f8b218c1a98f6f2f76f48493cc6575d"
+        expectedReplicas: 4
+        observedReplicas: 4
+        observation:
+          result: "pass"
+          deployment: "kyverno-background-controller"
+          desired: 4
+          available: 4
+          observedGenerationMatches: true
+        departuresKept: true
+        pendingUpgrade: false
+        state: "advanced"
+      -
+        cluster: "hx-sveltos-env-prod-a"
+        environment: "prod"
+        space: "hx-sveltos-env-prod-a-20260821140804"
+        headRevision: 7
+        approvedRevision: 6
+        approvalsOnHead: 0
+        gateKeysOnHead:
+          - "platform/require-approval/vet-approvedby"
+        releasedDigest: "sha256:916145d87591cf65fa8a33b0a0227440264681b5a5863820413041705cfdc505"
+        expectedReplicas: 2
+        observedReplicas: 2
+        observation:
+          result: "pass"
+          deployment: "kyverno-background-controller"
+          desired: 2
+          available: 2
+          observedGenerationMatches: true
+        departuresKept: true
+        pendingUpgrade: true
+        state: "held-at-restored-revision"
+      -
+        cluster: "hx-sveltos-env-prod-b"
+        environment: "prod"
+        space: "hx-sveltos-env-prod-b-20260821140804"
+        headRevision: 6
+        approvedRevision: 6
+        approvalsOnHead: 1
+        gateKeysOnHead:
+          []
+        releasedDigest: "sha256:211aeb54d8ae4550548f9ee743e36915f2b81b997b7e567bf4100b3b0a0143dd"
+        expectedReplicas: 4
+        observedReplicas: 4
+        observation:
+          result: "pass"
+          deployment: "kyverno-background-controller"
+          desired: 4
+          available: 4
+          observedGenerationMatches: true
+        departuresKept: true
+        pendingUpgrade: false
+        state: "advanced"
+  checkpoints:
+    -
+      id: "baseline"
+      phase: "advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+    -
+      id: "after-wave-1"
+      phase: "advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+    -
+      id: "after-wave-2"
+      phase: "advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+    -
+      id: "after-wave-3"
+      phase: "advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+    -
+      id: "baseline"
+      phase: "held-advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+    -
+      id: "after-wave-1"
+      phase: "held-advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 4
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 4
+            available: 4
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+    -
+      id: "after-wave-2"
+      phase: "held-advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 4
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 4
+            available: 4
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 4
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 4
+            available: 4
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 3
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 3
+            available: 3
+            observedGenerationMatches: true
+    -
+      id: "after-wave-3"
+      phase: "held-advance"
+      observations:
+        -
+          cluster: "hx-sveltos-env-pilot-20260821140804"
+          logicalCluster: "hx-sveltos-env-pilot"
+          environment: "pilot"
+          expectedBackgroundReplicas: 4
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 4
+            available: 4
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-staging-20260821140804"
+          logicalCluster: "hx-sveltos-env-staging"
+          environment: "staging"
+          expectedBackgroundReplicas: 4
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 4
+            available: 4
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-a"
+          environment: "prod"
+          expectedBackgroundReplicas: 2
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 2
+            available: 2
+            observedGenerationMatches: true
+        -
+          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          logicalCluster: "hx-sveltos-env-prod-b"
+          environment: "prod"
+          expectedBackgroundReplicas: 4
+          observation:
+            result: "pass"
+            deployment: "kyverno-background-controller"
+            desired: 4
+            available: 4
+            observedGenerationMatches: true
+  cleanup:
+    mode: "kept"
+    keptDeliberately: true
+    note: "This chapter created no clusters and no Spaces. It continued the chapter-three cohort and leaves it standing, exactly as it found it."
+    results:
+      cohortClusters: "kept"
+      cohortSpaces: "kept"
+      localFiles: "pass"
+    kept:
+      -
+        kind: "kind cluster"
+        name: "hx-sveltos-envmgmt-20260821140804"
+        removeWith: "kind delete cluster --name hx-sveltos-envmgmt-20260821140804"
+      -
+        kind: "kind cluster"
+        name: "hx-sveltos-env-pilot-20260821140804"
+        removeWith: "kind delete cluster --name hx-sveltos-env-pilot-20260821140804"
+      -
+        kind: "kind cluster"
+        name: "hx-sveltos-env-staging-20260821140804"
+        removeWith: "kind delete cluster --name hx-sveltos-env-staging-20260821140804"
+      -
+        kind: "kind cluster"
+        name: "hx-sveltos-env-prod-a-20260821140804"
+        removeWith: "kind delete cluster --name hx-sveltos-env-prod-a-20260821140804"
+      -
+        kind: "kind cluster"
+        name: "hx-sveltos-env-prod-b-20260821140804"
+        removeWith: "kind delete cluster --name hx-sveltos-env-prod-b-20260821140804"
+      -
+        kind: "ConfigHub Space"
+        name: "hx-sveltos-env-base-20260821140804"
+        removeWith: "cub space delete hx-sveltos-env-base-20260821140804 --recursive-force"
+      -
+        kind: "ConfigHub Space"
+        name: "hx-sveltos-env-mgmt-20260821140804"
+        removeWith: "cub space delete hx-sveltos-env-mgmt-20260821140804 --recursive-force"
+      -
+        kind: "ConfigHub Space"
+        name: "hx-sveltos-env-pilot-20260821140804"
+        removeWith: "cub space delete hx-sveltos-env-pilot-20260821140804 --recursive-force"
+      -
+        kind: "ConfigHub Space"
+        name: "hx-sveltos-env-staging-20260821140804"
+        removeWith: "cub space delete hx-sveltos-env-staging-20260821140804 --recursive-force"
+      -
+        kind: "ConfigHub Space"
+        name: "hx-sveltos-env-prod-a-20260821140804"
+        removeWith: "cub space delete hx-sveltos-env-prod-a-20260821140804 --recursive-force"
+      -
+        kind: "ConfigHub Space"
+        name: "hx-sveltos-env-prod-b-20260821140804"
+        removeWith: "cub space delete hx-sveltos-env-prod-b-20260821140804 --recursive-force"
+  limits:
+    - "This chapter created no clusters and no Spaces. It continued the chapter-three cohort and left it standing."
+    - "The restore moved one cluster to one exact earlier revision through the same approval gate as every advance. It is not a single action that halts and reverses a rollout across the fleet."
+    - "The hold is the absence of one approval on one variant's pending head revision. No new mechanism was added to hold it."
+    - "The pending head's merged content is recorded as observed, not asserted, because a local change to the same field a base change writes wins the merge silently in the recorded ConfigHub finding."
+    - "The held cluster's released tag was not re-read from the registry; the evidence is the recorded publish, the unapproved gate on the pending head, the live profile still matching the restored revision, and the cluster's observed state."
+    - "The reviewed ClusterProfiles were delivered through ConfigHub and its OCI gateway by the cohort's standing wiring. This chapter installed nothing on any cluster."
+    - "The proof used the cohort's four local kind workload clusters. It does not prove a large production fleet."
+status:
+  result: "pass"
+  claim: "ConfigHub restored one production cluster, hx-sveltos-env-prod-a, to its exact pre-advance revision through the same approval gate that governed every advance, with the publish refused while the restored head was unapproved, while its twin hx-sveltos-env-prod-b stayed on the newer release. A further reviewed advance then moved pilot, staging, and hx-sveltos-env-prod-b to 4 replicas while hx-sveltos-env-prod-a was deliberately held by not approving its pending revision. The closing audit shows the fleet at three different points on purpose, every one of them a recorded fact: three clusters advanced, one held at the restored revision with its approval deliberately absent."

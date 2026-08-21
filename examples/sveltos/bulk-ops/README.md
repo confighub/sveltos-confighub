@@ -28,10 +28,11 @@ three checkpoints: the baseline, the state after the fan-out, and the
 zero-drift audit with its repair results. The receipt will live at
 `runs/sveltos-bulk-ops-proof/receipt.yaml`.
 
-Neither is recorded yet. The runner delivers through the ConfigHub OCI
-gateway, the way chapter three was recorded, and no live run of this chapter
-has been recorded on that path. Every observed cell in the matrix stays
-honestly empty until one is.
+Both are recorded. The runner delivered through the ConfigHub OCI gateway
+the way chapter three was recorded, and the
+[committed receipt](../../../runs/sveltos-bulk-ops-proof/receipt.yaml)
+carries the fan-out, the zero-drift audit, and the repair results the
+observed matrix cells come from.
 
 ## How it works
 
@@ -143,3 +144,10 @@ npm run sveltos-bulk-ops:generate
 The run builds its own kind fleet, installs the pinned Sveltos, and removes
 every cluster and Space it created. Fleet proofs run serially against the
 organization, never in parallel.
+
+## Chapter six
+
+The fleet now advances and repairs as one governed object. Chapter six makes
+the opposite move under the same gate: one production cluster restored to an
+exact earlier revision and held there on purpose while its twin advances.
+Continue with [the held cluster](../held-cluster/README.md).

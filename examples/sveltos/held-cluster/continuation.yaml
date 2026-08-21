@@ -1,0 +1,17 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosHeldClusterContinuation
+metadata:
+  name: held-cluster-continues-env-rollout
+spec:
+  continues: env-rollout
+  fleet: ../env-rollout/fleet.yaml
+  records: newest recorded cohort in runs/sveltos-env-rollout-proof/receipt.yaml
+  createsClusters: false
+  createsRecords: false
+  reason: >-
+    The premise of this chapter is a fleet that has already advanced. Restoring
+    a cluster to an exact earlier revision only means something when that
+    revision exists in the record, so this chapter deliberately operates on the
+    environment-rollout cohort instead of building a fresh one. The runner reads
+    the newest committed receipt, asserts those clusters and Spaces still
+    respond, and refuses to run against anything else.

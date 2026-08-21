@@ -22,10 +22,10 @@ tag, and Sveltos followed it.
 
 | Wave | Cluster | Space | Departure kept through the change | Changed release digest | Sveltos |
 | --- | --- | --- | --- | --- | --- |
-| 1 | hx-sveltos-env-pilot | hx-sveltos-env-pilot-20260814213928 |  | `sha256:188690c931bd7960747dfbba6784962a652115e4b015c21dba4a070fe71e7244` | Provisioned |
-| 2 | hx-sveltos-env-staging | hx-sveltos-env-staging-20260814213928 |  | `sha256:3e066c40dcdd9147c602c8b2533e4ad8900846f643c1e76298e7a6e0a2a382a4` | Provisioned |
-| 3 | hx-sveltos-env-prod-a | hx-sveltos-env-prod-a-20260814213928 |  | `sha256:b15edfc605f88e1a41b28f9816d870fb685585630f31e19279887f17db238217` | Provisioned |
-| 3 | hx-sveltos-env-prod-b | hx-sveltos-env-prod-b-20260814213928 |  | `sha256:9217fa516c6aab978f6a4ac64fcbfbfffb49f7c29b6a689e85bf3dbf7cfeb354` | Provisioned |
+| 1 | hx-sveltos-env-pilot | hx-sveltos-env-pilot-20260821140804 |  | `sha256:b309ed9d4429cf0c9786d344b9c6cd8a95489443d1b0ef8525ee88cb4ad70767` | Provisioned |
+| 2 | hx-sveltos-env-staging | hx-sveltos-env-staging-20260821140804 |  | `sha256:bad5e795bd2d58954b242dfdd5b010daf2b0cf202ff2354f77984204dab7001b` | Provisioned |
+| 3 | hx-sveltos-env-prod-a | hx-sveltos-env-prod-a-20260821140804 |  | `sha256:e7d752ba6ddbe2d6787d60253d1d30171955d8487859104d93069b0c6ad17740` | Provisioned |
+| 3 | hx-sveltos-env-prod-b | hx-sveltos-env-prod-b-20260821140804 |  | `sha256:dd39be5dc38bbdb6c98925b641c57e0bb8a7db7edac4ca5e3429ed3b11c31bec` | Provisioned |
 
 | Wave | Group | Variants selected | Approvals recorded |
 | --- | --- | --- | --- |
