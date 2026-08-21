@@ -36,8 +36,10 @@ against anything else.
 
 ## See the result
 
-Read the [summary](../../../data/sveltos-held-cluster/summary.md) and the
-[receipt](../../../runs/sveltos-held-cluster-proof/receipt.yaml). The receipt
+Read the [summary](../../../data/sveltos-held-cluster/summary.md), the
+[matrix](../../../data/sveltos-held-cluster/matrix.md), and the
+[receipt](../../../runs/sveltos-held-cluster-proof/receipt.yaml). The matrix
+shows each cluster's expected and observed point side by side. The receipt
 records the advance, the refused-then-approved restore, the held advance, and
 a closing audit naming each cluster's revision, released digest, and observed
 state.
