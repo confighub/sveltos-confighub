@@ -117,4 +117,4 @@ CUB_CONTEXT=<your-helm-catalog-context> npm run sveltos-example:hub-verify
 ```
 
 The [fleet chapters page](./fleet-chapters.md) places this example in the
-five-chapter fleet story and lists every offline proof.
+six-chapter fleet story and lists every offline proof.

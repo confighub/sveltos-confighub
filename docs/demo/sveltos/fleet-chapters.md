@@ -1,13 +1,14 @@
 # The Sveltos fleet chapters
 
-This page ties the five Sveltos fleet chapters into one story. Config comes
+This page ties the six Sveltos fleet chapters into one story. Config comes
 from ConfigHub, which publishes changes as OCI images on its OCI gateway.
 Sveltos fetches the configuration from that gateway and sends it to all
 Sveltos-managed clusters. A platform team manages one fleet: a management
 cluster running Sveltos, and four workload clusters grouped as pilot,
 staging, and two production clusters. ConfigHub keeps every reviewed record
-and its approval history; OCI carries exact digests; Sveltos selects
-clusters by label and reconciles them. Each
+and its approval history; OCI carries exact digests; Sveltos delivers to
+the one cluster each variant's clusterRefs entry names, and labels group
+the fleet into waves. Each
 chapter makes one operational claim and backs it with a machine-checked
 matrix, a receipt contract, and deterministic self-tests.
 
@@ -52,16 +53,18 @@ matrix, a receipt contract, and deterministic self-tests.
    every cluster. The [matrix](../../../data/sveltos-bulk-ops/matrix.md)
    shows all three checkpoints.
 
-The chapters share one fleet design and hand their state forward: chapter
-four starts from chapter three's outcome and chapter five from chapter
-four's, and the repository gate enforces that continuity mechanically.
-
 6. **[The held cluster](../../../examples/sveltos/held-cluster/README.md)**:
    the move the earlier chapters deliberately did not claim. One production
    cluster is restored to an exact earlier revision under the same approval
    gate, then held there on purpose through the next fleet advance while its
    twin moves forward. The fleet ends at three points, each one a recorded
    fact. Recorded live on the gateway.
+
+The chapters share one fleet design and hand their state forward: chapter
+four starts from chapter three's outcome and chapter five from chapter
+four's, and the repository gate enforces that continuity mechanically.
+Chapter six continues chapter three's recorded cohort directly, and its
+runner refuses to run without one standing.
 
 ## What is proven today and what is not
 
