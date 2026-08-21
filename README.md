@@ -147,6 +147,18 @@ committed [receipt](runs/sveltos-env-rollout-proof/receipt.yaml): four
 clusters at four checkpoints, each carrying its own departure through the
 change.
 
+Chapter six continues that same recorded fleet and makes the opposite move.
+One production cluster was restored to its exact pre-advance revision, the
+approval gate armed on the restored head like on any other revision, and
+the publish was refused until the restore itself was approved. A further
+reviewed advance then moved three clusters forward while the restored
+cluster was held by not approving its pending revision. The
+[held-cluster matrix](data/sveltos-held-cluster/matrix.md) shows the fleet
+at three points on purpose, and every observed cell comes from the
+committed [receipt](runs/sveltos-held-cluster-proof/receipt.yaml): three
+clusters advanced, one held at the restored revision with its approval
+deliberately absent.
+
 Chapters one and two hold the same shape, and the
 [recorded canary](data/sveltos-oci-delivery-proof/summary.md) shows what it
 buys: two records, two approvals, two release digests. Wave one approved and
@@ -192,12 +204,13 @@ and records its phase timings.
    its twin moves forward. The restore is a revision like any other; the
    hold is the absence of an approval. Recorded live on the gateway.
 
-The first five chapters are recorded live on the per-cluster design over the
+All six chapters are recorded live on the per-cluster design over the
 gateway: each cluster with its own governed variant, its own named Target,
 and its own clusterRefs address, every wave's approval carrying the
 checkpoint evidence that unlocked it, and every observed matrix cell
-coming from a committed receipt. Every receipt records the addon
-controller image its run used.
+coming from a committed receipt. Every receipt that builds a fleet records
+the addon controller image its run used; chapter six builds nothing and
+names the recorded cohort that does.
 
 ## How to run it
 

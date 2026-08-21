@@ -118,6 +118,7 @@ npm run sveltos-cve-patch:self-test
 npm run sveltos-cve-patch-proof:self-test
 npm run sveltos-bulk-ops:self-test
 npm run sveltos-bulk-ops-proof:self-test
+npm run sveltos-held-cluster:self-test
 npm run sveltos-held-cluster-proof:self-test
 ```
 
