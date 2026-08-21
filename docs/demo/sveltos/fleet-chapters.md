@@ -11,7 +11,7 @@ clusters by label and reconciles them. Each
 chapter makes one operational claim and backs it with a machine-checked
 matrix, a receipt contract, and deterministic self-tests.
 
-## The five chapters
+## The six chapters
 
 1. **[Kyverno across the fleet](../../../examples/sveltos/kyverno-fleet/README.md)**
    installs admission policy through one reviewed variant per cluster, each
@@ -55,6 +55,13 @@ matrix, a receipt contract, and deterministic self-tests.
 The chapters share one fleet design and hand their state forward: chapter
 four starts from chapter three's outcome and chapter five from chapter
 four's, and the repository gate enforces that continuity mechanically.
+
+6. **[The held cluster](../../../examples/sveltos/held-cluster/README.md)**:
+   the move the earlier chapters deliberately did not claim. One production
+   cluster is restored to an exact earlier revision under the same approval
+   gate, then held there on purpose through the next fleet advance while its
+   twin moves forward. The fleet ends at three points, each one a recorded
+   fact. Recorded live on the gateway.
 
 ## What is proven today and what is not
 
@@ -111,6 +118,7 @@ npm run sveltos-cve-patch:self-test
 npm run sveltos-cve-patch-proof:self-test
 npm run sveltos-bulk-ops:self-test
 npm run sveltos-bulk-ops-proof:self-test
+npm run sveltos-held-cluster-proof:self-test
 ```
 
 The delivery machinery the chapters share can be rehearsed today with no

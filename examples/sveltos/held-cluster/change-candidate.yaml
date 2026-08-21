@@ -1,0 +1,45 @@
+apiVersion: catalog.confighub.com/v1alpha1
+kind: SveltosHeldClusterChange
+metadata:
+  name: two-advances-around-a-hold
+spec:
+  description: >-
+    Two reviewed edits to the shared base, made and promoted exactly as the
+    environment rollout chapter promotes them. The first advance carries every
+    cluster. The second advance carries every cluster except the held one.
+  valuesPath: backgroundController.replicas
+  editedRecord: base
+  advances:
+    - name: advance
+      from: 2
+      to: 3
+      waves:
+        - wave: 1
+          environment: pilot
+        - wave: 2
+          environment: staging
+        - wave: 3
+          environment: prod
+      note: All four clusters converge. This is the environment-rollout motion, repeated so the restore that follows has something real to restore from.
+    - name: held-advance
+      from: 3
+      to: 4
+      waves:
+        - wave: 1
+          environment: pilot
+        - wave: 2
+          environment: staging
+        - wave: 3
+          environment: prod
+          approved:
+            - hx-sveltos-env-prod-b
+          held:
+            - hx-sveltos-env-prod-a
+      note: The held cluster's variant is upgraded and then deliberately not approved. Its gate state is the evidence of the hold.
+  closingAudit:
+    expect:
+      hx-sveltos-env-pilot: 4
+      hx-sveltos-env-staging: 4
+      hx-sveltos-env-prod-b: 4
+      hx-sveltos-env-prod-a: 2
+    note: Four clusters at three points, on purpose, every one a queryable fact.

@@ -162,7 +162,7 @@ The [fleet rehearsal](examples/sveltos/fleet-rehearsal/README.md) proves the
 delivery machinery on a five-cluster fleet with no ConfigHub account at all,
 and records its phase timings.
 
-## The five chapters
+## The six chapters
 
 1. **[Kyverno across the fleet](examples/sveltos/kyverno-fleet/README.md)**
    installs admission policy through one reviewed variant per cluster, each
@@ -186,8 +186,13 @@ and records its phase timings.
    Recorded live on the per-cluster design, closing with the zero-drift
    audit naming the management record's armed schema-vet gate as the
    recorded bootstrap boundary.
+6. **[The held cluster](examples/sveltos/held-cluster/README.md)**: one
+   production cluster restored to an exact earlier revision under the same
+   approval gate, then held on purpose through the next fleet advance while
+   its twin moves forward. The restore is a revision like any other; the
+   hold is the absence of an approval. Recorded live on the gateway.
 
-All five chapters are recorded live on the per-cluster design over the
+The first five chapters are recorded live on the per-cluster design over the
 gateway: each cluster with its own governed variant, its own named Target,
 and its own clusterRefs address, every wave's approval carrying the
 checkpoint evidence that unlocked it, and every observed matrix cell
