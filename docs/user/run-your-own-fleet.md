@@ -150,6 +150,15 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    `addons.projectsveltos.io/cluster-profile` holding a `cub auth get-token`
    token, and one bootstrap ClusterProfile per workload Space pointing at
    that Space's gateway address.
+9. **Restore and hold when you need to**:
+   `cub unit update --space <space> <unit> --restore <revision>` writes an
+   exact earlier revision as a new head, the approval gate arms on it like
+   on any other revision, and publish is refused until the restore itself
+   is approved. Holding a cluster back is the absence of one approval: its
+   variant rides the same set upgrade as the rest of the fleet and is
+   simply not approved, so Sveltos keeps serving the last approved
+   release. [The held cluster](../../examples/sveltos/held-cluster/README.md)
+   records both moves.
 
 ## What keeps this true
 

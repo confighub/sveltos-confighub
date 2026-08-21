@@ -25,7 +25,7 @@ pulled back.
 
 The [matrix](../../../data/sveltos-bulk-ops/matrix.md) shows every cluster at
 three checkpoints: the baseline, the state after the fan-out, and the
-zero-drift audit with its repair results. The receipt will live at
+zero-drift audit with its repair results. The receipt is committed at
 `runs/sveltos-bulk-ops-proof/receipt.yaml`.
 
 Both are recorded. The runner delivered through the ConfigHub OCI gateway
