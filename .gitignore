@@ -1,3 +1,8 @@
 node_modules/
 .DS_Store
 package-lock.json
+
+# What `npm run onboard` writes when run from the repository root
+/onboard/
+/my-fleet.yaml
+/clusters.yaml

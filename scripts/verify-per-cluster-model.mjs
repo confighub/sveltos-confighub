@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // One rule keeps the model honest for future users: a committed
 // ClusterProfile addresses at most one cluster, structurally. It carries no
-// clusterSelector at all — a label query can fan out — and its
-// spec.clusterRefs holds either one reference naming a SveltosCluster (a
-// variant's own cluster) or none (the base, which reaches nothing). The
+// clusterSelector or setRefs at all — a label query or a ClusterSet can fan
+// out — and its spec.clusterRefs holds either one reference naming a
+// SveltosCluster or a Cluster API Cluster (a variant's own cluster) or none
+// (the base, which reaches nothing). The
 // address is Sveltos's own API naming one cluster, not a convention a label
 // edit could widen.
 //
@@ -15,6 +16,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 import { parseDocs } from "./lib/proof-common.mjs";
 
 const repoRoot = join(new URL(".", import.meta.url).pathname, "..");
@@ -50,13 +52,18 @@ export function loadSurfaces(root) {
   return files;
 }
 
-function addressedStructurally(doc) {
+// Sveltos addresses a cluster it registered as a SveltosCluster, and a Cluster
+// API cluster directly as its Cluster.
+const CLUSTER_KINDS = new Set(["SveltosCluster", "Cluster"]);
+
+export function addressedStructurally(doc) {
   if (doc?.spec?.clusterSelector !== undefined) return false;
+  if (doc?.spec?.setRefs !== undefined) return false;
   const refs = doc?.spec?.clusterRefs;
   if (!Array.isArray(refs) || refs.length > 1) return false;
   if (refs.length === 0) return true;
   const ref = refs[0];
-  return ref?.kind === "SveltosCluster"
+  return CLUSTER_KINDS.has(ref?.kind)
     && typeof ref.name === "string" && ref.name.length > 0
     && typeof ref.namespace === "string" && ref.namespace.length > 0;
 }
@@ -79,7 +86,7 @@ export function assess(files, legacy) {
       for (const doc of violating) {
         findings.push(
           `${path}: ${doc.kind} ${doc?.metadata?.name ?? "(unnamed)"} does not address at most one cluster structurally; ` +
-            `carry no clusterSelector and at most one clusterRefs entry naming a SveltosCluster`,
+            `carry no clusterSelector or setRefs and at most one clusterRefs entry naming a SveltosCluster or a Cluster API Cluster`,
         );
       }
     }
@@ -116,6 +123,14 @@ function selfTest() {
     throw new Error("self-test: a selector should refuse even when narrowed by convention");
   }
 
+  const capi = assess(new Map([["c.yaml", [profile("c", { clusterRefs: [{ apiVersion: "cluster.x-k8s.io/v1beta1", kind: "Cluster", name: "hx-c", namespace: "default" }] })]]]), []);
+  if (capi.length !== 0) throw new Error(`self-test: a Cluster API Cluster is a structural address:\n${capi.join("\n")}`);
+
+  const clusterSet = assess(new Map([["s.yaml", [profile("s", { clusterRefs: [], setRefs: ["prod-set"] })]]]), []);
+  if (!clusterSet.some((f) => f.includes("does not address at most one cluster structurally"))) {
+    throw new Error("self-test: a ClusterSet reference should refuse, because the set picks clusters at delivery time");
+  }
+
   const fanOut = assess(new Map([["a.yaml", [profile("a", { clusterRefs: [refTo("hx-a"), refTo("hx-b")] })]]]), []);
   if (!fanOut.some((f) => f.includes("does not address at most one cluster structurally"))) {
     throw new Error("self-test: two clusterRefs should refuse");
@@ -139,7 +154,7 @@ function selfTest() {
     throw new Error(`self-test expects the committed tree to pass:\n${committed.join("\n")}`);
   }
 
-  console.log("per-cluster model self-test passed: the structural pass, the empty-refs base, the selector and fan-out refusals, the listed file, the two shrink-the-list refusals, and the committed tree");
+  console.log("per-cluster model self-test passed: the structural pass, the empty-refs base, the Cluster API address, the selector, ClusterSet and fan-out refusals, the listed file, the two shrink-the-list refusals, and the committed tree");
 }
 
 function verify() {
@@ -160,10 +175,12 @@ function verify() {
   );
 }
 
-const mode = process.argv[2];
-if (mode === "--self-test") selfTest();
-else if (mode === "--verify" || mode === undefined) verify();
-else {
-  console.error(`unknown mode ${mode}; use --verify or --self-test`);
-  process.exit(1);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const mode = process.argv[2];
+  if (mode === "--self-test") selfTest();
+  else if (mode === "--verify" || mode === undefined) verify();
+  else {
+    console.error(`unknown mode ${mode}; use --verify or --self-test`);
+    process.exit(1);
+  }
 }

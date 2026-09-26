@@ -1,0 +1,42 @@
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: ingress-nginx
+spec:
+  clusterSelector:
+    matchLabels:
+      env: prod
+  helmCharts:
+  - chartName: ingress-nginx/ingress-nginx
+    chartVersion: 4.15.1
+    helmChartAction: Install
+    releaseName: ingress-nginx
+    releaseNamespace: ingress-nginx
+    repositoryName: ingress-nginx
+    repositoryURL: https://kubernetes.github.io/ingress-nginx
+  syncMode: ContinuousWithDriftDetection
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno
+spec:
+  clusterSelector:
+    matchExpressions:
+    - key: env
+      operator: In
+      values:
+      - staging
+      - prod
+  helmCharts:
+  - chartName: kyverno/kyverno
+    chartVersion: 3.8.1
+    helmChartAction: Install
+    releaseName: kyverno
+    releaseNamespace: kyverno
+    repositoryName: kyverno
+    repositoryURL: https://kyverno.github.io/kyverno/
+    values: |
+      admissionController:
+        replicas: 3
+  syncMode: ContinuousWithDriftDetection

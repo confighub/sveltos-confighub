@@ -5,6 +5,16 @@ fleet and states it for a fleet of any size. Everything here comes from a
 committed receipt or a measured lesson in this repository; where something is
 not built yet, the guide says so and links the issue.
 
+Already running Sveltos? You do not have to build this shape by hand:
+[Onboard your Sveltos fleet](onboard-your-sveltos-fleet.md) reads your
+ClusterProfiles and SveltosClusters and writes it for you.
+
+If you keep one Git repository per cluster, you already have the variants;
+what they lack is inheritance. A fix to shared configuration then means an
+edit in every repository. Here the fix is made once, on the base, and every
+variant takes it while keeping its own departures, and each cluster's copy
+still ships only when it is approved for that cluster.
+
 ## The shape
 
 One ConfigHub variant per Sveltos cluster, including the management cluster,
@@ -113,9 +123,15 @@ These were each paid for once so you do not have to.
   shipped in Sveltos v1.14.0, and chapter three is recorded on the released
   v1.15.0 with its stock controller and no override. Every receipt records
   the image its run used.
-- **The gateway auth secret must be typed** `addons.projectsveltos.io/cluster-profile`
-  with the token under the `token` key; an Opaque secret is rejected. The
-  ORAS client is HTTPS-only.
+- **The gateway auth secret must be typed** `addons.projectsveltos.io/cluster-profile`;
+  an Opaque secret is rejected. The ORAS client is HTTPS-only. For a fleet
+  that runs longer than a day, put the Targets' server worker in it, its ID
+  under `username` and its secret under `password`: the gateway lets a
+  Target's own worker pull that Target's releases, and the credential does
+  not expire (measured on 2026-09-26 with Sveltos v1.15.0). A `cub auth
+  get-token` login token under `token` also works, which is what the chapter
+  runs use, but it expires within a day. Give each worker its own Secret:
+  the gateway refuses a worker that is not the Target's own with 403.
 - **A Space serves from the gateway only with a release target set and a
   release published.** Until both exist the gateway answers with an error,
   which is the correct inert state for an unapproved record.
@@ -237,9 +253,11 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    release at `oci://oci.hub.confighub.com/space/<space>:latest`, and
    publishing is what moves the tag the fleet follows.
 10. **Let Sveltos fetch**: the management cluster carries a Secret of type
-    `addons.projectsveltos.io/cluster-profile` holding a `cub auth get-token`
-    token, and one bootstrap ClusterProfile per workload Space pointing at
-    that Space's gateway address.
+    `addons.projectsveltos.io/cluster-profile` holding the Targets' server
+    worker as `username` and `password` (a credential that does not expire),
+    and one bootstrap ClusterProfile per workload Space pointing at that
+    Space's gateway address. [Onboard your Sveltos fleet](onboard-your-sveltos-fleet.md)
+    writes both for you.
 11. **Restore and hold when you need to**:
     `cub unit update --space <space> <unit> --restore <revision>` writes an
     exact earlier revision as a new head. Holding a cluster back is the

@@ -23,6 +23,20 @@ cd sveltos-confighub
 npm run verify
 ```
 
+**Already running Sveltos?** Point the onboarding plan at what your
+management cluster already knows. Offline, it shows the fleet ConfigHub would
+govern: one base per ClusterProfile, and one variant per cluster the profile
+selects today.
+
+```bash
+kubectl get clusterprofiles,sveltosclusters -A -o yaml > my-fleet.yaml
+npm run onboard -- plan my-fleet.yaml --stage-label env --stages staging,prod
+```
+
+[Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md) takes it
+from there: one more command writes the steps as a script to read and run,
+and live profiles hand over to their variants without reinstalling anything.
+
 Reading a release from the ConfigHub gateway needs an addon controller that
 decompresses gzipped layers. That fix shipped in Sveltos v1.14.0, and
 chapter three is recorded on the released **Sveltos v1.15.0**
@@ -275,6 +289,9 @@ attestations next
 offline self-tests keep walking the old path against their own fakes.
 
 ## How to run it
+
+Already running Sveltos? [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md)
+turns the ClusterProfiles you have into this shape with three commands.
 
 To stand this shape up for your own fleet, at any size, read
 [Run your own fleet on one variant per cluster](docs/user/run-your-own-fleet.md):

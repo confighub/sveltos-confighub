@@ -1,0 +1,56 @@
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: confighub-sveltos-kyverno-staging-eu
+spec:
+  clusterRefs:
+  - apiVersion: lib.projectsveltos.io/v1beta1
+    kind: SveltosCluster
+    namespace: mgmt
+    name: mgmt
+  policyRefs:
+  - deploymentType: Remote
+    remoteURL:
+      url: oci://oci.hub.confighub.com/space/sveltos-kyverno-staging-eu:latest
+      interval: 1m0s
+      secretRef:
+        name: confighub-sveltos-targets
+        namespace: projectsveltos
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: confighub-sveltos-kyverno-prod-eu
+spec:
+  clusterRefs:
+  - apiVersion: lib.projectsveltos.io/v1beta1
+    kind: SveltosCluster
+    namespace: mgmt
+    name: mgmt
+  policyRefs:
+  - deploymentType: Remote
+    remoteURL:
+      url: oci://oci.hub.confighub.com/space/sveltos-kyverno-prod-eu:latest
+      interval: 1m0s
+      secretRef:
+        name: confighub-sveltos-targets
+        namespace: projectsveltos
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: confighub-sveltos-kyverno-prod-us
+spec:
+  clusterRefs:
+  - apiVersion: lib.projectsveltos.io/v1beta1
+    kind: SveltosCluster
+    namespace: mgmt
+    name: mgmt
+  policyRefs:
+  - deploymentType: Remote
+    remoteURL:
+      url: oci://oci.hub.confighub.com/space/sveltos-kyverno-prod-us:latest
+      interval: 1m0s
+      secretRef:
+        name: confighub-sveltos-targets
+        namespace: projectsveltos
