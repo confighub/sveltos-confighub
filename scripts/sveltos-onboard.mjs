@@ -469,11 +469,13 @@ function workflowText(stages) {
 // Showing it
 // ---------------------------------------------------------------------------
 
+const count = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
 export function renderPlan(plan) {
   const out = [];
   const variants = plan.profiles.reduce((n, p) => n + p.variants.length, 0);
   const clusters = new Set(plan.profiles.flatMap((p) => p.variants.map((v) => v.clusterKey))).size;
-  out.push(`Onboarding plan: ${plan.profiles.length} profile${plan.profiles.length === 1 ? "" : "s"} over ${clusters} cluster${clusters === 1 ? "" : "s"}, one variant per cluster per profile (${variants} variants).`);
+  out.push(`Onboarding plan: ${count(plan.profiles.length, "profile")} over ${count(clusters, "cluster")}, one variant per cluster per profile (${count(variants, "variant")}).`);
   out.push("Nothing has changed. This is what ConfigHub would hold.");
   for (const profile of plan.profiles) {
     out.push("");
@@ -487,7 +489,7 @@ export function renderPlan(plan) {
       out.push(`  stage ${stage}`);
       for (const v of profile.variants.filter((row) => row.stage === stage)) {
         out.push(`    ${v.cluster.padEnd(12)} variant ${v.space}  ->  Target ${plan.targetsSpace}/${v.target}`);
-        out.push(`    ${"".padEnd(12)} departs in ${v.departures.join(", ")}`);
+        out.push(`    ${"".padEnd(12)} differs from the base in ${v.departures.join(", ")}`);
       }
     }
   }
@@ -505,10 +507,10 @@ export function renderPlan(plan) {
   }
   out.push("");
   out.push("In ConfigHub");
-  out.push(`  ${plan.targets.length} Targets in ${plan.targetsSpace}, one per cluster, on a server-hosted worker`);
-  out.push(`  ${plan.profiles.length} components, each one base, ${variants} variants, 1 management record`);
+  out.push(`  ${count(plan.targets.length, "Target")} in ${plan.targetsSpace}, one per cluster, on a server-hosted worker`);
+  out.push(`  ${count(plan.profiles.length, "component")}, each one base, ${count(variants, "variant")}, 1 management record`);
   const spaceCount = 1 + plan.profiles.reduce((n, p) => n + 1 + p.variants.length, 0) + (plan.management ? 1 : 0);
-  out.push(`  ${spaceCount} Spaces and ${variants} upgrade Links (check your organization's quotas for both first)`);
+  out.push(`  ${count(spaceCount, "Space")} and ${count(variants, "Link")}, one tying each variant to its base (check your organization's quotas for both first)`);
   out.push(`  first rollout: ${plan.profiles.map((p) => `${p.name} in ${p.stages.length} stage${p.stages.length === 1 ? "" : "s"}`).join(", ")}; one approval per stage, one release per variant`);
   for (const note of plan.notes) {
     out.push("");
