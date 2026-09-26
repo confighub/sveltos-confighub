@@ -149,16 +149,29 @@ export function normalizeDigest(value) {
 // verb leaked into another and every self-test stayed green while the live
 // CLI refused. The surface the runners use is small and known, so a fake
 // hub refuses any flag outside it, in the CLI's own words.
+//
+// The ChangeWorkflow verbs are listed with exactly the flags chapter three
+// uses, each one present in cub v0.6.2's own help: a component, a Space
+// attached to it, a variant labelled with its stage, one workflow, one change
+// order, a promotion into a named stage, and a release pinned to where the
+// change arrived.
 const knownCubFlags = new Map([
   ["auth get-token", []],
   ["context get", ["o"]],
   ["filter get", ["space", "o"]],
   ["trigger get", ["space", "o"]],
-  ["space create", ["label", "trigger-filter", "where-trigger", "quiet"]],
-  ["space update", ["release-target", "refresh-triggers", "patch", "quiet"]],
+  ["component create", ["label", "quiet"]],
+  ["component get", ["o"]],
+  ["component delete", ["quiet"]],
+  ["space create", ["label", "trigger-filter", "where-trigger", "component", "quiet"]],
+  ["space update", ["release-target", "refresh-triggers", "patch", "component", "quiet"]],
   ["space get", ["o"]],
   ["space delete", ["recursive-force", "quiet"]],
-  ["variant create", ["space-pattern", "quiet"]],
+  ["variant create", ["space-pattern", "stage", "quiet"]],
+  ["variant promote", ["change-order", "target-stage", "change-desc", "quiet"]],
+  ["changeworkflow create", ["space", "stage", "prerequisites", "quiet"]],
+  ["changeorder create", ["space", "change-workflow", "description", "quiet"]],
+  ["changeorder get", ["space", "o"]],
   ["target create", ["space", "provider", "toolchain", "label", "allow-exists", "quiet"]],
   ["target get", ["space", "o"]],
   ["unit create", ["space", "target", "upstream-space", "upstream-unit", "label", "change-desc", "quiet"]],
@@ -167,7 +180,7 @@ const knownCubFlags = new Map([
   ["unit list", ["space", "where", "quiet", "o"]],
   ["unit approve", ["space", "where", "revision", "wait", "quiet"]],
   ["unit set-target", ["space", "quiet"]],
-  ["release publish", ["o"]],
+  ["release publish", ["revision", "o"]],
 ]);
 
 export function unknownCubFlag(positionals, flags) {
@@ -181,6 +194,29 @@ export function unknownCubFlag(positionals, flags) {
   return null;
 }
 
+// unknownCubFlag lets a command outside the table through, which is how a
+// fake that grows a new verb ends up parsing its flags permissively again. A
+// fake that wants the whole surface closed asks this first and refuses a
+// command the table does not name, so a verb joins the fake only by joining
+// the table with its flags.
+export function knownCubCommand(positionals) {
+  return knownCubFlags.has(positionals.slice(0, 2).join(" "));
+}
+
+// A component is per run, never shared across runs. Recorded Spaces from
+// earlier runs are kept on purpose, and a change order's scope is every Space
+// attached to its base's component, so a component shared across runs would
+// put an old run's variants in a new change order's scope, where a promotion
+// into a stage would reach them. The management Space gets a component of its
+// own for the same reason: it is not a variant of the base, and attached to
+// the base's component it would sit in every change order's scope.
+export function runScopedComponents(componentLabel, runId) {
+  return {
+    base: spaceName(`${componentLabel}-${runId}`),
+    management: spaceName(`${componentLabel}-management-${runId}`),
+  };
+}
+
 // Docker Hub throttles anonymous pulls, and a fleet lane multiplies every
 // image by every node: five clusters pulling ten images cold is how a
 // converge that takes seconds on a quiet day dies at its timeout on a busy
@@ -189,19 +225,63 @@ export function unknownCubFlag(positionals, flags) {
 // image however many clusters it builds. Kyverno's images come from ghcr.io
 // and are not throttled, so they are left alone. The agent image is pinned
 // by digest because Sveltos deploys it into workload clusters by digest.
+// Only v1.13.0's agent digest is known here. For a version without one the
+// agent is not preloaded: Sveltos deploys it into each workload cluster by
+// digest, digest pins stay out of the archive anyway (see below), and the
+// workload nodes pull it directly, which is what a receipt records rather
+// than a digest nobody measured.
 const sveltosAgentDigests = {
   "v1.13.0": "docker.io/projectsveltos/sveltos-agent@sha256:3f1fb4a8159b5acc6d77d117b8623bbacce0213e32d92ebdc7938d3fd97a3dca",
 };
 
-export function preloadSveltosImages({ clusters, version, addonControllerImage }) {
+export function sveltosAgentPreloaded(version) {
+  return Boolean(sveltosAgentDigests[version]);
+}
+
+// The image lines of a manifest, each image once, in the order they appear.
+export function manifestImages(text) {
   const images = [
-    ...[
-      "access-manager", "classifier", "event-manager", "healthcheck-manager",
-      "mcp-server", "shard-controller", "sveltoscluster-manager", "techsupport",
-    ].map((name) => `docker.io/projectsveltos/${name}:${version}`),
+    ...String(text).matchAll(/^[ \t]*image:[ \t]*["']?([^\s"']+)["']?[ \t]*$/gm),
+  ].map((match) => match[1]);
+  return [...new Set(images)];
+}
+
+// Which images a lane preloads. Given the pinned manifest's own image lines,
+// the list is exactly those, with the pinned addon controller replaced by the
+// image the lane runs, so a release that adds a controller cannot slip past
+// the preload and be pulled from Docker Hub mid-lane. Without them, the list
+// is the one every chapter pinned to v1.13.0 has always preloaded.
+export function sveltosPreloadList({ version, addonControllerImage, images }) {
+  const agent = sveltosAgentDigests[version] ? [sveltosAgentDigests[version]] : [];
+  if (!Array.isArray(images)) {
+    return [
+      ...[
+        "access-manager", "classifier", "event-manager", "healthcheck-manager",
+        "mcp-server", "shard-controller", "sveltoscluster-manager", "techsupport",
+      ].map((name) => `docker.io/projectsveltos/${name}:${version}`),
+      addonControllerImage,
+      ...agent,
+    ];
+  }
+  const pinnedAddonController = `docker.io/projectsveltos/addon-controller:${version}`;
+  return [...new Set([
+    ...images.map((image) =>
+      (image === pinnedAddonController ? addonControllerImage : image)),
+    ...agent,
+  ])];
+}
+
+export function preloadSveltosImages({
+  clusters,
+  version,
+  addonControllerImage,
+  images: pinnedManifestImages,
+}) {
+  const images = sveltosPreloadList({
+    version,
     addonControllerImage,
-    ...(sveltosAgentDigests[version] ? [sveltosAgentDigests[version]] : []),
-  ];
+    images: pinnedManifestImages,
+  });
   const host = (tool, args, timeout) =>
     spawnSync(tool, args, { encoding: "utf8", timeout });
   const unique = [...new Set(images)];
@@ -422,7 +502,12 @@ export function governedRecords(deps) {
     variantRecordLabel,
   } = deps;
 
-  function createPolicySpace(context, space) {
+  // A chapter that promotes through a ChangeWorkflow passes the component the
+  // Space belongs to. A component label is not enough for that: a change
+  // order's stages select within the component ENTITY the Space is attached
+  // to, and a Space without one is refused. Chapters that pass nothing get
+  // exactly the Space they always did.
+  function createPolicySpace(context, space, { component } = {}) {
     assertPublishableSpaceName(space, probeRecord);
     cub(context, [
       "space", "create", space,
@@ -439,10 +524,80 @@ export function governedRecords(deps) {
       "--label", "SourceType=sveltos",
       "--trigger-filter", approvalFilterRef,
       "--where-trigger", "-",
+      ...(component ? ["--component", component] : []),
       "--quiet",
     ]);
     cub(context, [
       "space", "update", "--patch", space, "--refresh-triggers", "--quiet",
+    ]);
+  }
+
+  // The component entity a ChangeWorkflow's stages select within. It carries
+  // the run's labels so an operator can find what a run left behind.
+  function createComponent(context, slug, runId) {
+    cub(context, [
+      "component", "create", slug,
+      "--label", `App=${appLabel}`,
+      "--label", `Proof=${proofLabel}`,
+      "--label", `Run=${runId}`,
+      "--quiet",
+    ]);
+    return slug;
+  }
+
+  // One workflow per run, held in the base Space. Each stage selects the
+  // variants of the change order's component whose Space carries that Stage
+  // label, which is what `cub variant create --stage` sets. The prerequisites
+  // are gates the server evaluates over every Space of the stage ahead.
+  function createChangeWorkflow(context, { space, slug, stages, prerequisites }) {
+    cub(context, [
+      "changeworkflow", "create", "--space", space, slug,
+      ...stages.flatMap((stage) => ["--stage", stage]),
+      "--prerequisites", prerequisites.join(","),
+      "--quiet",
+    ]);
+    return { space, slug, ref: `${space}/${slug}`, stages, prerequisites };
+  }
+
+  // A change order created after the reviewed edit lands on the base captures
+  // that edit as the change. Its scope is every Space attached to the base's
+  // component, which the server records as InScopeSpaceIDs, so it is read
+  // back rather than assumed.
+  function createChangeOrder(context, { space, slug, workflowRef, description }) {
+    cub(context, [
+      "changeorder", "create", "--space", space, slug,
+      "--change-workflow", workflowRef,
+      "--description", description,
+      "--quiet",
+    ]);
+    const answer = cubJson(context, [
+      "changeorder", "get", "--space", space, slug, "-o", "json",
+    ]);
+    const changeOrder = answer?.ChangeOrder ?? answer;
+    check(
+      Array.isArray(changeOrder?.InScopeSpaceIDs),
+      `${space}/${slug} answered without InScopeSpaceIDs (keys: ${Object.keys(changeOrder ?? {}).join(", ") || "none"}), so its scope cannot be checked`,
+    );
+    return {
+      space,
+      slug,
+      ref: `${space}/${slug}`,
+      workflowRef,
+      description,
+      inScopeSpaceIds: [...changeOrder.InScopeSpaceIDs].map(String).sort(),
+    };
+  }
+
+  // Promote exactly the change order's change into every variant one stage of
+  // its workflow selects. The server checks the gates of the stage ahead once
+  // for the whole stage, so a refusal comes back from here unchanged.
+  function promoteStage(context, { changeOrderRef, stage, changeDesc }) {
+    return cubTry(context, [
+      "variant", "promote",
+      "--change-order", changeOrderRef,
+      "--target-stage", stage,
+      "--change-desc", changeDesc,
+      "--quiet",
     ]);
   }
 
@@ -591,14 +746,23 @@ export function governedRecords(deps) {
     };
   }
 
-  function publishRelease(context, space) {
+  // With no revision a release bundles each unit at its head, which is what
+  // every chapter recorded so far publishes. A chapter promoting a change
+  // order passes `ChangeOrder:<slug>`, so the release bundles each unit where
+  // that change arrived; that is also what the Released gate reads when the
+  // next stage asks whether this one has released the change.
+  function publishRelease(context, space, revision) {
     let lastPending = "";
     let response;
     for (let attempt = 0; attempt < publishGateAttempts; attempt += 1) {
       try {
         response = cubJson(
           context,
-          ["release", "publish", space, "-o", "json"],
+          [
+            "release", "publish", space,
+            ...(revision ? ["--revision", revision] : []),
+            "-o", "json",
+          ],
           { timeout: 300_000 },
         );
         break;
@@ -625,6 +789,7 @@ export function governedRecords(deps) {
       space,
       reference: gatewayReference(space),
       tag: releaseTag,
+      ...(revision ? { revision } : {}),
       manifestDigest,
       bundleDigest: normalizeDigest(release.Digest ?? release.digest),
       releaseId: String(release.ReleaseID ?? release.releaseId ?? ""),
@@ -674,7 +839,11 @@ export function governedRecords(deps) {
         `ConfigHub rejected the ${stageName} approval for ${cluster} before recording it: ${result.error}`,
       );
     }
-    phase(`${stageName} approvals recorded; waiting for delayed trigger completion`);
+    // The lib has no phase printer of its own. This line used to call the
+    // runners' one, which is out of scope here, so the one path that reaches
+    // it, a bulk approve that reports a delayed trigger after recording every
+    // approval, would have stopped a live run with a ReferenceError.
+    console.log(`[${proofLabel}] ${stageName} approvals recorded; waiting for delayed trigger completion`);
   }
 
   // The gate armed with no approval, one set approval bound to each unit's own
@@ -735,7 +904,7 @@ export function governedRecords(deps) {
       // approved exactly like every other record; it is simply not published.
       const release = member.publishesRelease === false
         ? null
-        : publishRelease(policyContext, member.space);
+        : publishRelease(policyContext, member.space, member.releaseRevision);
       records[member.cluster] = {
         cluster: member.cluster,
         space: member.space,
@@ -775,8 +944,9 @@ export function governedRecords(deps) {
     topology,
     runId,
     policySpacesCreated,
+    component,
   }) {
-    createPolicySpace(policyContext, space);
+    createPolicySpace(policyContext, space, { component });
     policySpacesCreated.add(space);
     assertPolicySpace(
       policyContext,
@@ -803,6 +973,7 @@ export function governedRecords(deps) {
     return {
       space,
       unit: policyUnit,
+      ...(component ? { component } : {}),
       revisionId: plan.base.revisions.baseline,
       revision: Number(stored.HeadRevisionNum),
       contentHash: stored.ContentHash,
@@ -829,14 +1000,19 @@ export function governedRecords(deps) {
     runId,
     workRoot,
     policySpacesCreated,
+    stage,
   }) {
     // The server derives the new Space's slug from labels, so the declared
     // slug is pinned explicitly: the gateway only serves lowercase slugs, and
     // the committed variants declaration is the reviewed source of the name.
+    // A chapter promoting through a ChangeWorkflow names the stage too: the
+    // Space's Stage label is what a workflow stage selects, and the clone
+    // inherits the base Space's component, so the stage selects it there.
     assertPublishableSpaceName(space, probeRecord);
     cub(policyContext, [
       "variant", "create", cluster.cluster, baseSpace,
       "--space-pattern", `template:${space}`,
+      ...(stage ? ["--stage", stage] : []),
       "--quiet",
     ]);
     policySpacesCreated.add(space);
@@ -904,6 +1080,7 @@ export function governedRecords(deps) {
       cluster: cluster.cluster,
       environment: cluster.environment,
       wave: cluster.wave,
+      ...(stage ? { stage } : {}),
       space,
       unit: policyUnit,
       profile: cluster.profileName,
@@ -977,8 +1154,9 @@ export function governedRecords(deps) {
     workRoot,
     policySpacesCreated,
     workloadSpaces,
+    component,
   }) {
-    createPolicySpace(policyContext, space);
+    createPolicySpace(policyContext, space, { component });
     policySpacesCreated.add(space);
     const target = establishClusterTarget(
       policyContext,
@@ -1021,6 +1199,7 @@ export function governedRecords(deps) {
       cluster: plan.management.cluster,
       space,
       unit: policyUnit,
+      ...(component ? { component } : {}),
       documents,
       manifestPath,
       revisionId: `m1-${sha256(stableJson(documents)).slice(0, 12)}`,
@@ -1111,11 +1290,15 @@ spec:
     assertPolicySpace,
     assertUpstreamLineage,
     blockedDryRun,
+    createChangeOrder,
+    createChangeWorkflow,
+    createComponent,
     createPolicySpace,
     establishBase,
     establishClusterTarget,
     establishVariant,
     gatewayReference,
+    promoteStage,
     publishRelease,
     reviewSet,
     selectSet,

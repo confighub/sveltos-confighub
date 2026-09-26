@@ -135,10 +135,25 @@ const releaseTag = "latest";
 const remoteFetchInterval = "1m0s";
 const registrationNamespace = "projectsveltos";
 const gatewaySecretName = "confighub-gateway";
-// The cohort's management cluster already runs the addon controller build
-// with the gzip fix. This chapter installs nothing; it checks the cohort
-// receipt recorded that build and rides the running fleet.
+// The cohort's management cluster already runs an addon controller with the
+// gzip fix. This chapter installs nothing; it checks the cohort receipt
+// recorded such a controller and rides the running fleet. A cohort recorded
+// on Sveltos v1.13.0 ran this build, which carried the fix before it shipped.
 const expectedAddonControllerImage = "docker.io/projectsveltos/addon-controller:v1.13.0-ch";
+
+// The fix shipped in Sveltos v1.14.0, and chapter three now pins a release
+// that carries it and runs that release's own controller, not overridden. A
+// cohort recorded that way is one this chapter can continue too.
+function cohortControllerReadsGatewayLayers(prerequisite) {
+  const image = String(prerequisite?.addonControllerImage ?? "");
+  if (image === expectedAddonControllerImage) return true;
+  const version = /^v(\d+)\.(\d+)\.(\d+)$/.exec(String(prerequisite?.version ?? ""));
+  if (!version) return false;
+  const [major, minor] = [Number(version[1]), Number(version[2])];
+  return (major > 1 || (major === 1 && minor >= 14))
+    && prerequisite?.addonControllerImageOverridden === false
+    && image === `docker.io/projectsveltos/addon-controller:${prerequisite.version}`;
+}
 // A Target needs a BridgeWorker with announced support for its ConfigType, so
 // the cohort's Targets live in the catalog's infrastructure Space. This
 // chapter mints none, but the wiring names the same host the cohort used.
@@ -406,8 +421,8 @@ function loadCohort(root = repoRoot) {
     "the chapter-three receipt records no convergence outcome to start from",
   );
   check(
-    receipt.spec?.prerequisite?.addonControllerImage === expectedAddonControllerImage,
-    `the cohort runs a different addon controller than ${expectedAddonControllerImage}`,
+    cohortControllerReadsGatewayLayers(receipt.spec?.prerequisite),
+    `the cohort runs an addon controller that cannot read the gateway's layers: neither ${expectedAddonControllerImage} nor a released controller from v1.14.0 on, run as released`,
   );
   // The set queries reuse chapter three's committed selection template, because
   // the records carry chapter three's labels and this chapter relabels nothing.
@@ -1941,6 +1956,46 @@ function selfTest() {
         === "1:1,2:1,3:2",
       "the cohort loader lost the chapter-three shape",
     );
+    // Chapter three now pins a release that ships the gzip fix. A cohort
+    // recorded on it, with the release's own controller run as released, is
+    // one this chapter continues; an override on it, or the stock v1.13.0
+    // controller that cannot read the layers, is refused.
+    const cohortFile = join(fixtureRoot, cohortReceiptRepoPath);
+    const recordedCohort = readFileSync(cohortFile, "utf8");
+    for (const [label, prerequisite, continues] of [
+      ["released v1.15.0", {
+        version: "v1.15.0",
+        addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.15.0",
+        addonControllerImageOverridden: false,
+      }, true],
+      ["overridden v1.15.0", {
+        version: "v1.15.0",
+        addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.15.0-ch",
+        addonControllerImageOverridden: true,
+      }, false],
+      ["stock v1.13.0", {
+        version: "v1.13.0",
+        addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.13.0",
+        addonControllerImageOverridden: false,
+      }, false],
+    ]) {
+      const edited = readYaml(cohortFile);
+      edited.spec.prerequisite = prerequisite;
+      writeYaml(cohortFile, edited);
+      if (continues) {
+        check(
+          loadCohort(fixtureRoot).runId === cohort.runId,
+          `a cohort on the ${label} controller must be one this chapter continues`,
+        );
+      } else {
+        expectFailure(
+          () => loadCohort(fixtureRoot),
+          /cannot read the gateway's layers/,
+          `a cohort on the ${label} controller`,
+        );
+      }
+    }
+    writeFileSync(cohortFile, recordedCohort);
     check(
       waveQuery(cohort, "pilot").includes("'sveltos-env-rollout'")
         && waveQuery(cohort, "pilot").includes(cohort.runId)

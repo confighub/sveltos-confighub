@@ -3,13 +3,29 @@
 One reviewed values change moves from pilot to staging to production, and
 every wave is approved before any cluster in it sees the change. ConfigHub
 holds one variant per cluster, so it can answer which cluster runs which
-revision from its own records.
+revision from its own records. Each wave is a stage of a ConfigHub
+ChangeWorkflow, so ConfigHub, not the runner, enforces the order: it refuses
+to promote the change into a stage until every variant of the stage ahead
+has released it.
 
 [Sveltos](https://projectsveltos.io) delivers the change and keeps each
 cluster reconciled; ConfigHub holds the reviewed records, gates them, and
 publishes each approved revision as an OCI image that Sveltos fetches. The
-runner pins Sveltos v1.13.0 and expects the addon controller build that
-decompresses gzipped layers, which the ConfigHub gateway serves.
+runner pins the released Sveltos v1.15.0, whose own addon controller
+decompresses the gzipped layers the ConfigHub gateway serves, so it runs that
+controller as released and refuses an image override. The committed
+recording ran Sveltos v1.13.0 with the `v1.13.0-ch` addon controller build,
+which carried the gzip fix before it shipped in v1.14.0, and its receipt
+names that image.
+
+The runner preloads exactly the images the pinned manifest names into every
+cluster, so a release that adds a controller cannot be pulled from Docker
+Hub halfway through a lane. The manifest's `register-mgmt-cluster` Job
+registers the management cluster as the unlabelled SveltosCluster
+`mgmt/mgmt`, as the v1.13.0 manifest did too. Nothing in this chapter
+selects it: the bootstrap profiles select the runner's own `role: management`
+registration, and each workload profile names its SveltosCluster through
+clusterRefs. The [lock](source-lock.yaml) records both of these.
 
 ## One variant per cluster
 
@@ -59,6 +75,16 @@ the one view where a reader would look to see that a variant and a cluster
 stand one to one. A run whose Spaces lacked them would be invisible in that
 view, so the repository gate refuses a run that does not set them.
 
+A label is not enough for a ChangeWorkflow, though. A workflow's stages select
+within a Component entity, so the run also creates one and attaches the base
+Space to it, and every variant cloned from the base inherits it. The entity
+belongs to the run, named for its run id, because a change order is headed
+for every Space attached to its base's component: a component shared across
+runs would put an earlier run's kept variants in the new change order's
+scope. The management Space gets a run-scoped component of its own for the
+same reason. It is not a variant of the base, so it must never sit in a
+change order's scope, and it still has a home in the component view.
+
 ## Why this chapter exists
 
 Promoting a change through environments is the operation every platform team
@@ -103,23 +129,71 @@ departures stay. The departures are declared, not hand-written into five
 copies of the same file:
 
 - `metadata.name`, so each cluster's profile is its own object.
-- `spec.clusterSelector.matchLabels.cluster`, which addresses that cluster
-  and nothing else.
+- `spec.clusterRefs`, one entry naming that cluster's SveltosCluster and
+  nothing else.
 - `spec.stopMatchingBehavior`, which is the behaviour that genuinely differs.
   The two production clusters leave their policies in place if the record
   stops matching them; pilot and staging withdraw them.
 
+Each variant is created with its environment as its stage
+(`cub variant create <cluster> <base-space> --stage <environment>`), which
+labels its Space `Stage=pilot`, `Stage=staging`, or `Stage=prod`. The run
+creates one ChangeWorkflow in the base Space whose stages are pilot, then
+staging, then prod, each gated on `Released`.
+
 The [change candidate](change-candidate.yaml) is one values edit that raises
 `backgroundController.replicas` from 1 to 2 in the Kyverno 3.8.1 chart. It is
-made once, on the base. Each wave then selects its variants with one query
-over the labels the records carry, upgrades that set from the base in one
-operation, and approves that set in one operation. ConfigHub records one
-approval per cluster, each bound to that cluster's own exact revision.
+made once, on the base, and the run then creates one ChangeOrder under the
+workflow, which captures exactly that edit as the change. Each wave then:
+
+1. checks that its reviewed label query and its stage both select exactly
+   the wave's variants,
+2. promotes the change into the stage with
+   `cub variant promote --change-order <base-space>/<change-order> --target-stage <environment>`,
+3. checks that every variant came out carrying the inherited change and its
+   own departures,
+4. approves the set in one operation, so ConfigHub records one approval per
+   cluster, each bound to that cluster's own exact revision, and
+5. publishes each variant where the change arrived, with
+   `cub release publish <space> --revision ChangeOrder:<change-order>`.
 
 Every approved revision is published as a release the ConfigHub OCI gateway
 serves. The management cluster fetches each release itself and applies the
 reviewed profile, and Sveltos sends the chart to the one cluster the profile
 addresses.
+
+## ConfigHub enforces the stage order
+
+The earlier runner moved each wave with a set upgrade it issued itself, so
+the order of the waves was the runner's choreography. Now it is ConfigHub's.
+The `Released` gate on each stage is evaluated by the server over every Space
+of the stage ahead, for every client: staging cannot take the change until
+pilot has published a release carrying it, and production cannot take it
+until staging has.
+
+The runner does not take that on trust. Right after it creates the change
+order, and before wave one, it asks ConfigHub to promote the change straight
+into staging. ConfigHub must refuse, because pilot has not released anything
+yet. The run fails if the promotion succeeds, and it checks that the staging
+variant did not move. The receipt records the refusal in the server's own
+words under `changeManagement.gateRefusal`.
+
+The workflow declares `Released` and not `Healthy`. The `Healthy` gate reads
+the `confighub.com/live-status` annotation and passes only on the words
+`Synced`, `Succeeded`, and `Healthy`. Nothing writes that annotation for a
+Sveltos-delivered Space yet: the Sveltos reporter is
+[#33](https://github.com/confighub/sveltos-confighub/issues/33), and ConfigHub
+does not yet recognise the provider (confighubai/confighub#5049). Until both
+exist, the runner's own checkpoints stay the observed-health layer: no wave's
+approval is requested until the preceding checkpoint shows the clusters it
+depends on reporting healthy, and every wave records that evidence as
+`unlockedBy`.
+
+Approval still clears the apply gate with the proven set approval,
+`cub unit approve --space "*" --where <query> --revision HeadRevisionNum`.
+`cub variant approve` records approvals of a change order in a stage, but it
+is not yet shown to clear the `platform/require-approval/vet-approvedby` gate
+every Space carries.
 
 ## What a departure may not touch
 
@@ -130,8 +204,9 @@ sat on a map the base also wrote received none of the base's changes while
 its upstream pointer advanced to the base head.
 
 So the runner refuses a departure that collides with the field the change
-writes, before it builds anything, and it checks after every upgrade that the
-variant came out carrying both the inherited change and its own departures.
+writes, before it builds anything, and it checks after every promotion that
+the variant came out carrying both the inherited change and its own
+departures.
 This is why the per-cluster departure is a profile field rather than a chart
 value: the chart values ride in one string field of the profile, so any
 values departure would collide with any values change.
@@ -174,9 +249,10 @@ governed itself from the beginning.
 ## What this costs
 
 A fleet-wide change is now N approvals and N publishes rather than one label
-edit. The wave is one operation for the operator, because the query selects
-the set and one approve command covers it, but ConfigHub still records one
-approval and one release per cluster, and the receipt counts them that way.
+edit. The wave is two commands for the operator, because one promotion covers
+every variant the stage selects and one approve command covers the set, but
+ConfigHub still records one approval and one release per cluster, and the
+receipt counts them that way.
 That is the trade taken deliberately: the mapping is worth more than the
 saved keystrokes, because it is what makes per-cluster approval and
 per-cluster rollback possible at all.
@@ -194,16 +270,27 @@ comes from a live run, and empty cells stay empty until a run earns them.
 
 ## Current status
 
-The per-cluster design is recorded live. The committed receipt at
+The per-cluster design is recorded live with waves the runner issued. The
+committed receipt at
 [runs/sveltos-env-rollout-proof/receipt.yaml](../../../runs/sveltos-env-rollout-proof/receipt.yaml)
-records five governed records over one base, one set approval per wave, and
-the per-cluster observations the matrix compiles from, so every observed cell
-is earned rather than asserted.
+records five governed records over one base, one set upgrade and one set
+approval per wave, and the per-cluster observations of that run. Its
+[summary](../../../data/sveltos-env-rollout/summary.md) stays as recorded.
+
+The runner now promotes through a ChangeWorkflow, as described above, and
+that design awaits its live re-record. The verifier recognises the committed
+receipt by its shape, says that it predates the ChangeWorkflow design, and
+fills nothing from it, so every observed cell in the matrix stays empty until
+the re-record earns it.
 
 Before it builds anything the runner probes the approval gate on a throwaway
 Space and Unit, so a wiring problem refuses in seconds instead of failing
 after the fleet build. Its self-test proves the same governance walk offline
-against fake ConfigHub and cluster surfaces, with no account or cluster.
+against fake ConfigHub and cluster surfaces, with no account or cluster. The
+fake answers the ChangeWorkflow verbs the way a live probe on 2026-09-26
+recorded the server answering, including the `Released` gate's refusal in the
+server's own words, and it refuses any verb or flag the runner is not known
+to use.
 
 ## Chapter four
 
@@ -225,18 +312,21 @@ npm run sveltos-env-rollout:verify
 # self-contained HTML contract. No account, cluster, or network access.
 npm run sveltos-env-rollout:self-test
 
-# Deterministic self-test of the live runner: the gate preflight, the base
-# and its five variants, the set queries with their refusals, all nine
-# approval brackets, and the receipt tamper battery, against fake ConfigHub
-# and OCI surfaces. A few seconds.
+# Deterministic self-test of the live runner: the ChangeWorkflow probe
+# replayed against the fake hub, the gate preflight, the base and its five
+# variants in their components, the change order and the server's refusal to
+# skip a stage, the set queries with their refusals, all nine approval
+# brackets, and the receipt tamper battery, against fake ConfigHub and OCI
+# surfaces. A few seconds.
 npm run sveltos-env-rollout-proof:self-test
 ```
 
 The live proof builds a self-contained kind fleet, creates one base record and
-five per-cluster variants, approves each wave as one set operation, publishes
-each approved revision as an OCI image that Sveltos fetches itself, and closes
-with a convergence audit. Fleet proofs run serially against the organization,
-never in parallel.
+five per-cluster variants, promotes one change order through the workflow's
+stages, approves each wave as one set operation, publishes each approved
+revision as an OCI image that Sveltos fetches itself, and closes with a
+convergence audit. Fleet proofs run serially against the organization, never
+in parallel.
 
 Confirm the approval wiring first. The probe wires one throwaway Space,
 creates one probe Unit, watches for the approval gate, and cleans up after
@@ -252,7 +342,6 @@ Spaces are created:
 ```bash
 HELM_EXPT_ALLOW_LIVE_SVELTOS_ENV_ROLLOUT=1 \
 CUB_CONTEXT=my-policy \
-SVELTOS_ADDON_CONTROLLER_IMAGE=docker.io/projectsveltos/addon-controller:v1.13.0-ch \
 npm run sveltos-env-rollout-proof:run
 
 # Then refresh the summary and the observed matrix columns.
@@ -260,8 +349,9 @@ npm run sveltos-env-rollout-proof:generate
 npm run sveltos-env-rollout:generate
 ```
 
-The run removes its clusters and its Spaces when it finishes. To look at them
-afterwards, set `HELM_EXPT_KEEP_SVELTOS_ARTIFACTS=1`. The run then prints
-exactly what it left behind and the command that removes each one, and its
-receipt records that the artifacts were kept deliberately rather than reading
-as a failed cleanup.
+The run removes its clusters, its Spaces, and its two components when it
+finishes, the variant Spaces before the base and the components last. To look
+at them afterwards, set `HELM_EXPT_KEEP_SVELTOS_ARTIFACTS=1`. The run then
+prints exactly what it left behind and the command that removes each one, and
+its receipt records that the artifacts were kept deliberately rather than
+reading as a failed cleanup.

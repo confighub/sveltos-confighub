@@ -34,6 +34,11 @@ import {
   writePath,
   writeStoredDocuments,
   preloadSveltosImages,
+  knownCubCommand,
+  manifestImages,
+  runScopedComponents,
+  sveltosAgentPreloaded,
+  sveltosPreloadList,
   unknownCubFlag,
 } from "./lib/per-cluster-fleet.mjs";
 import {
@@ -65,9 +70,9 @@ const approvalFilterRef = "platform/helm-catalog-prod-gates";
 const approvalGate = "platform/require-approval/vet-approvedby";
 // The approval gate attaches about a second after a Unit is created; the
 // report that said otherwise was our own misreading, now withdrawn. The
-// runner now governs one variant per cluster, and no live run has been
-// recorded on that shape yet.
-const pendingReason = "the per-cluster variant rework has not been recorded live yet";
+// runner now moves its waves through a ConfigHub ChangeWorkflow, and no live
+// run has been recorded on that shape yet.
+const pendingReason = "the ChangeWorkflow design has not been recorded live yet";
 const policyPath = join(
   repoRoot,
   "config-catalog",
@@ -130,6 +135,31 @@ const gatewaySecretName = "confighub-gateway";
 const gatewaySecretType = "addons.projectsveltos.io/cluster-profile";
 const gatewaySecretKey = "token";
 const addonControllerRepository = "docker.io/projectsveltos/addon-controller";
+// Each wave is a stage of one ConfigHub ChangeWorkflow per run. A stage
+// selects the variants of the run's component whose Space carries that Stage
+// label, and the server enforces each stage's entry gates, evaluated over
+// every Space of the stage ahead, for every client. The runner no longer
+// decides the order; it asks, and ConfigHub refuses what the order forbids.
+//
+// Released is the one gate declared: the stage ahead must have published a
+// release carrying the change before the next stage may take it. Healthy is
+// deliberately not declared, for the reason recorded in every receipt.
+const workflowPrerequisites = ["Released"];
+const healthyNotDeclaredReason = "Healthy reads the confighub.com/live-status annotation and passes only on the literal words Synced, Succeeded and Healthy. Sveltos has no reporter that writes it yet (confighub/sveltos-confighub#33), and ConfigHub does not yet recognise the provider (confighubai/confighub#5049), so declaring it would hold every stage forever. Until both exist, the checkpoint evidence each wave records as unlockedBy is the observed-health layer.";
+const managementComponentReason = "The management Space is not a variant of the base, and a change order's scope is every Space attached to its base's component, so the management Space has a run-scoped component of its own: it keeps a home in the component view and never sits in a change order's scope.";
+const baseComponentReason = "Recorded Spaces from earlier runs are kept on purpose, and a change order's scope is every Space attached to its base's component, so the component is per run: a component shared across runs would put an earlier run's variants in this change order's scope, where a promotion into a stage would reach them.";
+const workflowSlug = (runId) => `rollout-${runId}`;
+// Short on purpose: the server's refusal names the change order, and error
+// text passes through a redaction that hides any run of forty or more
+// identifier characters.
+const changeOrderSlug = (runId) => `bg-replicas-${runId}`;
+const promoteCommand = (stage) =>
+  `cub variant promote --change-order <base-space>/<change-order> --target-stage ${stage}`;
+const releaseCommand = "cub release publish <space> --revision ChangeOrder:<change-order>";
+const setApprovalCommand = 'cub unit approve --space "*" --where <query> --revision HeadRevisionNum';
+// What every wave of a receipt recorded before this design carries instead of
+// a promotion: the set upgrade the runner issued itself.
+const recordedUpgradeCommand = 'cub unit update --patch --space "*" --where <query> --upgrade';
 
 // The chapters differ in what they prove, not in how a governed record works,
 // so the record machinery comes from one place and is told this chapter's own
@@ -143,11 +173,15 @@ const {
   assertPolicySpace,
   assertUpstreamLineage,
   blockedDryRun,
+  createChangeOrder,
+  createChangeWorkflow,
+  createComponent,
   createPolicySpace,
   establishBase,
   establishClusterTarget,
   establishVariant,
   gatewayReference,
+  promoteStage,
   publishRelease,
   reviewSet,
   selectSet,
@@ -213,7 +247,7 @@ if (mode === "--run") {
   const receipt = readYaml(receiptPath);
   check(
     verifyReceipt(receipt),
-    `${relativeRepo(receiptPath)} predates the per-cluster design; record a live run before regenerating its summary`,
+    `${relativeRepo(receiptPath)} predates the current design; record a live run before regenerating its summary`,
   );
   write(summaryPath, renderSummary(receipt));
   console.log(`wrote ${relativeRepo(summaryPath)}`);
@@ -247,6 +281,21 @@ function supersededReceipt(receipt) {
   return !Array.isArray(receipt?.spec?.variants);
 }
 
+// A receipt recorded before the ChangeWorkflow design moved its waves itself:
+// every wave carries the set upgrade the runner issued and nothing records a
+// component, a workflow, or a change order. That is the shape of the receipt
+// committed on 2026-08-21. It is recognized by that shape, so a receipt of the
+// current design that merely lost its change management is refused as a
+// tamper rather than waved through as an old recording.
+function predatesChangeWorkflow(receipt) {
+  const waves = receipt?.spec?.waves ?? [];
+  return receipt?.spec?.changeManagement === undefined
+    && waves.length > 0
+    && waves.every((wave) =>
+      wave.upgrade?.command === recordedUpgradeCommand
+      && wave.promotion === undefined);
+}
+
 function run() {
   const policyContext = process.env.CUB_CONTEXT?.trim() ?? "";
   check(
@@ -276,6 +325,7 @@ function run() {
   const plan = loadRolloutPlan();
   const sveltos = loadSveltosPin();
   const addonControllerImage = resolveAddonControllerImage(sveltos);
+  assertAddonControllerFitsPin(sveltos, addonControllerImage);
 
   const topology = readApprovalTopology(policyContext);
 
@@ -300,6 +350,13 @@ function run() {
     [plan.management.cluster, spaceName(`${plan.management.cluster}-${runId}`)],
   ]);
   const policySpaces = [baseSpace, ...Object.values(spaceFor)];
+  // A Space is removed before the Space it depends on: every variant before
+  // the base it was cloned from, whose units its upstream links point at.
+  const spaceRemovalOrder = [...Object.values(spaceFor), baseSpace];
+  // One component per run for the base and its variants, and one per run for
+  // the management Space. Both are run-scoped for the reasons the receipt
+  // records under changeManagement.
+  const components = runScopedComponents(componentLabel, runId);
   const cleanup = {
     mode: keepArtifacts ? "kept" : "removed",
     keptDeliberately: keepArtifacts,
@@ -308,6 +365,7 @@ function run() {
       managementCluster: "not-created",
       workloadClusters: "not-created",
       policySpaces: "not-created",
+      components: "not-created",
       localFiles: "pending",
     },
     kept: [],
@@ -315,6 +373,7 @@ function run() {
   let managementStarted = false;
   const workloadsStarted = new Set();
   const policySpacesCreated = new Set();
+  const componentsCreated = new Set();
   let receipt;
 
   // The approval gate is probed before any cluster work, so a Space whose
@@ -333,9 +392,18 @@ function run() {
     for (const space of policySpaces) {
       check(!spacePresent(policyContext, space), `refusing to reuse ${space}`);
     }
+    for (const slug of [components.base, components.management]) {
+      check(
+        !componentPresent(policyContext, slug),
+        `refusing to reuse the component ${slug}; a component shared across runs would put another run's variants in this change order's scope`,
+      );
+    }
     for (const row of [managementName, ...fleetClusters.map((item) => item.cluster)]) {
       check(!clusterPresent(row), `refusing to reuse the kind cluster ${row}`);
     }
+    // The pinned manifest is fetched and checked against the lock before any
+    // cluster exists, because its own image lines are the preload list.
+    const pinnedManifest = fetchPinnedManifest({ workRoot, sveltos });
 
     createCluster(managementName, managementKubeconfig);
     managementStarted = true;
@@ -349,19 +417,24 @@ function run() {
     cleanup.results.workloadClusters = "pending";
     phase("four workload clusters ready");
 
-    preloadSveltosImages({
+    const preloadedImages = preloadSveltosImages({
       clusters: [managementName, ...fleetClusters.map((row) => row.cluster)],
       version: sveltos.version,
       addonControllerImage,
+      images: manifestImages(pinnedManifest),
     });
-    phase("the Sveltos images loaded into every cluster from the local daemon");
+    phase(`the ${preloadedImages.length} images the pinned manifest names loaded into every cluster from the local daemon`);
 
-    const sveltosInstall = installSveltos({
-      managementKubeconfig,
-      workRoot,
-      sveltos,
-      addonControllerImage,
-    });
+    const sveltosInstall = {
+      ...installSveltos({
+        managementKubeconfig,
+        workRoot,
+        sveltos,
+        addonControllerImage,
+        pinnedManifest,
+      }),
+      imagePreload: imagePreloadRecord(sveltos, preloadedImages),
+    };
     phase(`Sveltos controllers converged on ${sveltosInstall.addonControllerImage}`);
 
     const registrations = fleetClusters.map((row) =>
@@ -388,6 +461,9 @@ function run() {
     phase("the management cluster can fetch its own profiles from the gateway");
 
     cleanup.results.policySpaces = "pending";
+    cleanup.results.components = "pending";
+    createComponent(policyContext, components.base, runId);
+    componentsCreated.add(components.base);
     const baseRecord = establishBase({
       policyContext,
       space: baseSpace,
@@ -395,8 +471,9 @@ function run() {
       topology,
       runId,
       policySpacesCreated,
+      component: components.base,
     });
-    phase("the base record holds the content every cluster shares");
+    phase(`the base record holds the content every cluster shares, in the run's own component ${components.base}`);
 
     const variantRecords = {};
     for (const row of plan.clusters) {
@@ -409,10 +486,13 @@ function run() {
         runId,
         workRoot,
         policySpacesCreated,
+        stage: row.environment,
       });
     }
-    phase("four per-cluster variants cloned from the base, each carrying its own departures");
+    phase("four per-cluster variants cloned from the base, each carrying its own departures and its environment as its stage");
 
+    createComponent(policyContext, components.management, runId);
+    componentsCreated.add(components.management);
     const managementVariant = establishManagement({
       policyContext,
       space: spaceFor[plan.management.cluster],
@@ -425,8 +505,24 @@ function run() {
         cluster: row.cluster,
         space: spaceFor[row.cluster],
       })),
+      component: components.management,
     });
-    phase("the management record holds one bootstrap profile per workload Space");
+    phase("the management record holds one bootstrap profile per workload Space, in a component of its own");
+
+    const membership = assertComponentMembership({
+      policyContext,
+      baseSpace,
+      spaceFor,
+      plan,
+      components,
+    });
+    const workflow = openChangeWorkflow({
+      policyContext,
+      baseSpace,
+      plan,
+      runId,
+    });
+    phase(`the ChangeWorkflow ${workflow.ref} holds the stages ${workflow.stages.join(", ")}, each gated on ${workflowPrerequisites.join(", ")}`);
 
     const baselineMembers = [
       ...plan.clusters.map((row) => ({
@@ -504,6 +600,25 @@ function run() {
     });
     phase("the reviewed change landed once on the base record");
 
+    const changeOrder = openChangeOrder({
+      policyContext,
+      baseSpace,
+      plan,
+      runId,
+      workflow,
+      membership,
+      baseChange,
+    });
+    phase(`the change order ${changeOrder.ref} captured the edit, headed for exactly the base and its four variants`);
+
+    const gateRefusal = assertStageGateRefuses({
+      policyContext,
+      plan,
+      changeOrder,
+      spaceFor,
+    });
+    phase(`ConfigHub refused to promote into ${gateRefusal.targetStage} before ${gateRefusal.stageAhead} released the change: ${gateRefusal.message}`);
+
     const waveRecords = [];
     for (const wave of plan.waves) {
       waveRecords.push(promoteWave({
@@ -516,6 +631,8 @@ function run() {
         runId,
         variantRecords,
         checkpoints,
+        changeOrder,
+        membership,
       }));
       checkpoints.push(recordCheckpoint({
         id: `after-wave-${wave.wave}`,
@@ -524,7 +641,7 @@ function run() {
         fleetClusters,
         managementKubeconfig,
       }));
-      phase(`wave ${wave.wave} (${wave.environment}) promoted as one set operation over ${wave.clusters.length} variant(s) and observed`);
+      phase(`wave ${wave.wave} promoted the change order into the ${wave.environment} stage, ${wave.clusters.length} variant(s), released and observed`);
     }
 
     const convergenceAudit = auditConvergence({
@@ -557,13 +674,22 @@ function run() {
       checkpoints,
       convergenceAudit,
       cleanup,
+      changeManagement: {
+        membership,
+        workflow,
+        changeOrder,
+        gateRefusal,
+      },
     });
   } finally {
     if (keepArtifacts) {
-      phase("keeping the clusters and the Spaces, because the keep-alive flag is set");
+      phase("keeping the clusters, the Spaces, and the components, because the keep-alive flag is set");
       cleanup.results.managementCluster = "kept";
       cleanup.results.workloadClusters = "kept";
       cleanup.results.policySpaces = "kept";
+      cleanup.results.components = componentsCreated.size > 0
+        ? "kept"
+        : "not-created";
       cleanup.kept = [
         ...[managementName, ...fleetClusters.map((row) => row.cluster)]
           .filter((name) => clusterPresent(name))
@@ -572,13 +698,22 @@ function run() {
             name,
             removeWith: `kind delete cluster --name ${name}`,
           })),
-        ...policySpaces
+        ...spaceRemovalOrder
           .filter((space) =>
             policySpacesCreated.has(space) || spacePresent(policyContext, space))
           .map((space) => ({
             kind: "ConfigHub Space",
             name: space,
             removeWith: `cub space delete ${space} --recursive-force`,
+          })),
+        // A component outlives its Spaces, so it is listed after them and
+        // removed last.
+        ...[components.base, components.management]
+          .filter((slug) => componentsCreated.has(slug))
+          .map((slug) => ({
+            kind: "ConfigHub Component",
+            name: slug,
+            removeWith: `cub component delete ${slug}`,
           })),
       ];
     } else {
@@ -604,7 +739,7 @@ function run() {
         ? "fail"
         : "pass";
 
-      for (const space of policySpaces) {
+      for (const space of spaceRemovalOrder) {
         if (policySpacesCreated.has(space) || spacePresent(policyContext, space)) {
           cubTry(policyContext, [
             "space", "delete", space, "--recursive-force", "--quiet",
@@ -613,6 +748,18 @@ function run() {
       }
       cleanup.results.policySpaces = policySpaces.some((space) =>
         spacePresent(policyContext, space))
+        ? "fail"
+        : "pass";
+
+      // The components go last, once no Space is attached to them. The
+      // workflow and the change order lived in the base Space and went with it.
+      for (const slug of [components.base, components.management]) {
+        if (componentsCreated.has(slug) || componentPresent(policyContext, slug)) {
+          cubTry(policyContext, ["component", "delete", slug, "--quiet"]);
+        }
+      }
+      cleanup.results.components = [components.base, components.management]
+        .some((slug) => componentPresent(policyContext, slug))
         ? "fail"
         : "pass";
     }
@@ -970,28 +1117,83 @@ function baselineQuery(plan, runId) {
 }
 
 // Chapter three pins its own Sveltos release, because it runs the gateway
-// fetch path the earlier chapters were recorded without.
+// fetch path the earlier chapters were recorded without. The lock also says
+// whether that release's own addon controller reads the gateway's gzipped
+// layers, which decides whether a run may override the controller image.
 function loadSveltosPin(path = sourceLockPath) {
   const lock = readYaml(path);
   const sveltos = lock.spec?.sveltos ?? {};
   check(
     lock.kind === "SveltosEnvRolloutLock"
+      && /^v\d+\.\d+\.\d+$/.test(String(sveltos.version ?? ""))
       && /^[0-9a-f]{64}$/.test(String(sveltos.manifestSha256))
-      && String(sveltos.manifestUrl ?? "").includes(String(sveltos.version ?? " ")),
-    "the environment rollout lock lost its Sveltos pin",
+      && String(sveltos.manifestUrl ?? "").includes(String(sveltos.version ?? " "))
+      && typeof sveltos.releasedControllerReadsGatewayLayers === "boolean",
+    "the environment rollout lock lost its Sveltos pin or its word on whether the released addon controller reads the gateway's layers",
   );
   return {
     version: String(sveltos.version),
     manifestUrl: String(sveltos.manifestUrl),
     manifestSha256: String(sveltos.manifestSha256),
+    releasedControllerReadsGatewayLayers:
+      sveltos.releasedControllerReadsGatewayLayers,
+  };
+}
+
+function pinnedAddonControllerImage(sveltos) {
+  return `${addonControllerRepository}:${sveltos.version}`;
+}
+
+// A pin whose released addon controller reads the gateway's layers runs that
+// controller as released, and its receipt says so. An override there would
+// record a run the verifier refuses, so the run refuses it before building
+// anything. The override mechanism itself stays, for a pin that needs it.
+function assertAddonControllerFitsPin(sveltos, addonControllerImage) {
+  check(
+    !sveltos.releasedControllerReadsGatewayLayers
+      || addonControllerImage === pinnedAddonControllerImage(sveltos),
+    `the pinned Sveltos ${sveltos.version} addon controller reads the gateway's gzipped layers itself, so this chapter runs ${pinnedAddonControllerImage(sveltos)} as released; unset SVELTOS_ADDON_CONTROLLER_IMAGE rather than record an override this pin does not need`,
+  );
+}
+
+// The pinned manifest, fetched once and checked against the lock before a
+// byte of it is used: its image lines are the preload list, and its text is
+// what the install applies.
+function fetchPinnedManifest({ workRoot, sveltos }) {
+  const manifestPath = join(workRoot, "sveltos-manifest.yaml");
+  command("curl", ["-fsSL", sveltos.manifestUrl, "-o", manifestPath], {
+    timeout: 180_000,
+  });
+  const downloaded = readFileSync(manifestPath, "utf8");
+  // The pin covers the bytes upstream published, so it is checked before the
+  // image substitution rewrites any of them.
+  check(
+    sha256(downloaded) === sveltos.manifestSha256,
+    "the downloaded Sveltos manifest differs from the source lock",
+  );
+  return downloaded;
+}
+
+// What the receipt says about the preload: that the list came from the pinned
+// manifest's own image lines, and what happened to the sveltos-agent, which
+// no manifest line names because Sveltos deploys it into each workload
+// cluster itself.
+function imagePreloadRecord(sveltos, images) {
+  return {
+    source: "the image lines of the pinned manifest",
+    images,
+    sveltosAgent: sveltosAgentPreloaded(sveltos.version)
+      ? "preloaded by the digest the shared fleet library pins for this version"
+      : `not preloaded: no sveltos-agent digest is recorded for ${sveltos.version}, so each workload node pulls the agent directly by the digest Sveltos deploys it with`,
   };
 }
 
 // The gateway serves each release as a gzipped tar layer, so this run needs an
-// addon controller that gunzips. The pinned image is the default, and an
-// operator holding the build with the gzip fix names it in the environment.
+// addon controller that gunzips. The pinned image is the default. For a pin
+// whose released controller does not gunzip, an operator holding a build with
+// the fix names it in the environment.
 function resolveAddonControllerImage(sveltos) {
-  const pinnedImage = `${addonControllerRepository}:${sveltos.version}`;
+  const pinnedImage = pinnedAddonControllerImage(sveltos);
   const override = process.env.SVELTOS_ADDON_CONTROLLER_IMAGE?.trim() ?? "";
   if (!override) return pinnedImage;
   check(
@@ -1089,6 +1291,225 @@ function changeBaseRecord({ policyContext, space, plan, workRoot }) {
   };
 }
 
+// The workflow's stages select within the component ENTITY a Space is
+// attached to, by the Space's Stage label, so the run reads every Space it
+// created back and checks the shape the design depends on before any change
+// exists: the base and its four variants in the run's own component, each
+// variant carrying its environment as its Stage, the base carrying no Stage so
+// no stage ever selects it, the Component label every other surface groups by
+// still on each Space, and the management Space in a component of its own.
+function assertComponentMembership({
+  policyContext,
+  baseSpace,
+  spaceFor,
+  plan,
+  components,
+}) {
+  const read = (space) =>
+    cubJson(policyContext, ["space", "get", space, "-o", "json"]).Space;
+  const managementSpace = spaceFor[plan.management.cluster];
+  const rows = [
+    { space: baseSpace, stage: undefined },
+    ...plan.clusters.map((row) => ({
+      space: spaceFor[row.cluster],
+      stage: row.environment,
+    })),
+    { space: managementSpace, stage: undefined },
+  ].map((row) => ({ ...row, record: read(row.space) }));
+  for (const row of rows) {
+    check(
+      row.record?.Labels?.Component === componentLabel,
+      `${row.space} lost its Component label, so the component view no longer groups it with the run`,
+    );
+  }
+  const componentOf = (row) => String(row.record?.ComponentID ?? "");
+  const base = rows[0];
+  const componentId = componentOf(base);
+  check(
+    componentId.length > 0,
+    `${baseSpace} is attached to no component, so a ChangeWorkflow has no component for its stages to select within`,
+  );
+  check(
+    !base.record?.Labels?.Stage,
+    `${baseSpace} carries the Stage label ${base.record?.Labels?.Stage}, so a workflow stage would select the base`,
+  );
+  const variants = rows.slice(1, -1);
+  for (const row of variants) {
+    check(
+      componentOf(row) === componentId,
+      `${row.space} is not attached to the base's component ${components.base}, so no stage of the workflow can select it`,
+    );
+    check(
+      row.record?.Labels?.Stage === row.stage,
+      `${row.space} carries Stage=${row.record?.Labels?.Stage ?? "none"} rather than ${row.stage}, so the ${row.stage} stage would not select it`,
+    );
+  }
+  const management = rows.at(-1);
+  const managementComponentId = componentOf(management);
+  check(
+    managementComponentId.length > 0 && managementComponentId !== componentId,
+    `the management Space ${managementSpace} must sit in a component of its own, never in the base's, or it would join every change order's scope`,
+  );
+  const spaceIds = Object.fromEntries(
+    rows.map((row) => [row.space, String(row.record?.SpaceID ?? "")]),
+  );
+  check(
+    Object.values(spaceIds).every((id) => id.length > 0),
+    "a Space the run created answered without its SpaceID",
+  );
+  return {
+    component: {
+      slug: components.base,
+      id: componentId,
+      label: componentLabel,
+      runScoped: true,
+      reason: baseComponentReason,
+      spaces: [baseSpace, ...variants.map((row) => row.space)],
+    },
+    managementComponent: {
+      slug: components.management,
+      id: managementComponentId,
+      runScoped: true,
+      reason: managementComponentReason,
+      spaces: [managementSpace],
+    },
+    spaceIds,
+  };
+}
+
+// The Spaces a stage selects: those of the run's component whose Stage label
+// names the stage. Read live before each wave, because the workflow selects
+// on what the Spaces carry now, not on what they carried at creation.
+function stageMembers({ policyContext, membership, stage }) {
+  return membership.component.spaces
+    .filter((space) => {
+      const record = cubJson(policyContext, [
+        "space", "get", space, "-o", "json",
+      ]).Space;
+      return String(record?.ComponentID ?? "") === membership.component.id
+        && record?.Labels?.Stage === stage;
+    })
+    .sort();
+}
+
+// One workflow per run, in the base Space, whose stages are the reviewed
+// waves in their reviewed order.
+function openChangeWorkflow({ policyContext, baseSpace, plan, runId }) {
+  const stages = plan.waves.map((wave) => wave.environment);
+  const created = createChangeWorkflow(policyContext, {
+    space: baseSpace,
+    slug: workflowSlug(runId),
+    stages,
+    prerequisites: workflowPrerequisites,
+  });
+  return {
+    space: created.space,
+    slug: created.slug,
+    ref: created.ref,
+    stages,
+    stageSelector: "Labels.Stage = '<stage>' within the change order's component",
+    prerequisites: [...workflowPrerequisites],
+    healthy: { declared: false, reason: healthyNotDeclaredReason },
+    command: `cub changeworkflow create --space <base-space> <workflow> ${stages.map((stage) => `--stage ${stage}`).join(" ")} --prerequisites ${workflowPrerequisites.join(",")}`,
+  };
+}
+
+// The change order is created after the reviewed edit landed on the base, so
+// it captures exactly that edit as the change. Its scope is read back from the
+// server and must be exactly the base and its four variants: a Space of an
+// earlier run, or the management Space, in that scope is the failure the
+// run-scoped components exist to prevent.
+function openChangeOrder({
+  policyContext,
+  baseSpace,
+  plan,
+  runId,
+  workflow,
+  membership,
+  baseChange,
+}) {
+  const created = createChangeOrder(policyContext, {
+    space: baseSpace,
+    slug: changeOrderSlug(runId),
+    workflowRef: workflow.ref,
+    description: `Raise ${plan.change.spec.valuesPath} from ${plan.change.spec.before} to ${plan.change.spec.after} on the base record`,
+  });
+  return {
+    space: created.space,
+    slug: created.slug,
+    ref: created.ref,
+    workflow: workflow.ref,
+    description: created.description,
+    createdAfterBaseRevision: baseChange.revision,
+    inScopeSpaces: assertChangeOrderScope(created, membership),
+    command: "cub changeorder create --space <base-space> <change-order> --change-workflow <base-space>/<workflow> --description <text>",
+  };
+}
+
+function assertChangeOrderScope(changeOrder, membership) {
+  const slugFor = Object.fromEntries(
+    Object.entries(membership.spaceIds).map(([space, id]) => [id, space]),
+  );
+  const inScope = changeOrder.inScopeSpaceIds.map((id) => slugFor[id] ?? id);
+  const managementSpace = membership.managementComponent.spaces[0];
+  check(
+    !inScope.includes(managementSpace),
+    `${changeOrder.ref} holds the management Space ${managementSpace} in its scope; it must sit in a component of its own`,
+  );
+  check(
+    sameSet(inScope, membership.component.spaces),
+    `${changeOrder.ref} is headed for ${[...inScope].sort().join(", ") || "nothing"} rather than exactly the base and its four variants; a Space outside this run is in its scope`,
+  );
+  return [...inScope].sort();
+}
+
+// Before wave one, the change is asked to skip straight into the second stage.
+// Nothing in the first stage has released it, so the Released gate cannot
+// hold, and the server must refuse. The refusal is the evidence that the stage
+// order is ConfigHub's to enforce rather than this runner's to choreograph, so
+// a promotion that succeeds here stops the run. The message is recorded as the
+// server wrote it; the runner does not depend on its wording, only on the
+// refusal and on the second stage's variants not having moved.
+function assertStageGateRefuses({ policyContext, plan, changeOrder, spaceFor }) {
+  const [first, second] = plan.waves;
+  const heads = () => Object.fromEntries(second.clusters.map((cluster) => [
+    cluster,
+    Number(cubJson(policyContext, [
+      "unit", "get", "--space", spaceFor[cluster], policyUnit, "-o", "json",
+    ]).Unit.HeadRevisionNum),
+  ]));
+  const before = heads();
+  const attempt = promoteStage(policyContext, {
+    changeOrderRef: changeOrder.ref,
+    stage: second.environment,
+    changeDesc: `Attempt ${changeOrder.slug} in ${second.environment} before ${first.environment} has released it`,
+  });
+  check(
+    !attempt.ok,
+    `ConfigHub promoted ${changeOrder.ref} into ${second.environment} before ${first.environment} released it; the Released gate did not hold the stage order`,
+  );
+  const message = String(attempt.error ?? "").trim();
+  check(
+    message.length > 0 && !/unknown (flag|command)/i.test(message),
+    `the promotion into ${second.environment} failed for a reason other than its gate: ${message || "no message"}`,
+  );
+  const after = heads();
+  check(
+    stableJson(before) === stableJson(after),
+    `the refused promotion still moved a ${second.environment} variant: ${stableJson(before)} became ${stableJson(after)}`,
+  );
+  return {
+    command: promoteCommand(second.environment),
+    attempted: "after the change order was created and before wave 1",
+    targetStage: second.environment,
+    stageAhead: first.environment,
+    refused: true,
+    enforcedBy: "the ConfigHub server",
+    message,
+    headsUnchanged: true,
+  };
+}
+
 function promoteWave({
   policyContext,
   managementKubeconfig,
@@ -1099,12 +1520,17 @@ function promoteWave({
   runId,
   variantRecords,
   checkpoints,
+  changeOrder,
+  membership,
 }) {
   // Before this wave touches anything, the preceding checkpoint must show the
   // clusters it depends on reporting healthy: the whole fleet at the baseline
   // for wave one, the environment the previous wave promoted after that. An
   // unhealthy cluster refuses the wave here, before its set is even listed,
-  // and the record of what unlocked the wave goes into the receipt.
+  // and the record of what unlocked the wave goes into the receipt. The
+  // server's Released gate says the stage ahead published the change; this
+  // evidence says its clusters are running it, which ConfigHub cannot yet
+  // read for itself.
   const previous = wave.wave === 1
     ? null
     : plan.waves.find((row) => row.wave === wave.wave - 1);
@@ -1120,23 +1546,33 @@ function promoteWave({
   const clusters = wave.clusters.map((name) =>
     plan.clusters.find((row) => row.cluster === name));
   const expectedUnits = clusters.map((row) => `${spaceFor[row.cluster]}/${policyUnit}`);
-  // Selecting before upgrading means a query that reaches past the wave stops
-  // the wave, rather than carrying a cluster the wave never named.
+  // Selecting before promoting means a query that reaches past the wave stops
+  // the wave, rather than carrying a cluster the wave never named. The label
+  // query is what the set approval uses; the stage is what the promotion
+  // uses. Both must name exactly the wave's variants before anything moves.
   const preflight = selectSet({
     policyContext,
     stageName: `wave ${wave.wave}`,
     query,
     expectedUnits,
   });
-  const upgrade = cubTry(policyContext, [
-    "unit", "update", "--patch", "--space", "*", "--where", query, "--upgrade",
-    "--change-desc",
-    `Inherit ${plan.change.spec.valuesPath}=${plan.change.spec.after} from the base into the ${wave.environment} variants`,
-    "--quiet",
-  ]);
+  const stageSpaces = stageMembers({
+    policyContext,
+    membership,
+    stage: wave.environment,
+  });
   check(
-    upgrade.ok,
-    `the wave ${wave.wave} upgrade did not run: ${upgrade.error}`,
+    sameSet(stageSpaces, clusters.map((row) => spaceFor[row.cluster])),
+    `the ${wave.environment} stage selects ${stageSpaces.join(", ") || "no Space"} rather than the wave's variants; refusing to promote a stage that is not the wave`,
+  );
+  const promotion = promoteStage(policyContext, {
+    changeOrderRef: changeOrder.ref,
+    stage: wave.environment,
+    changeDesc: `Promote ${changeOrder.slug}: inherit ${plan.change.spec.valuesPath}=${plan.change.spec.after} from the base into the ${wave.environment} variants`,
+  });
+  check(
+    promotion.ok,
+    `ConfigHub did not promote ${changeOrder.ref} into the ${wave.environment} stage: ${promotion.error}`,
   );
   for (const row of clusters) {
     assertMergeKeptDepartures({
@@ -1146,6 +1582,9 @@ function promoteWave({
       plan,
     });
   }
+  // Each variant's release bundles its unit where the change arrived, which
+  // is what the next stage's Released gate reads.
+  const releaseRevision = `ChangeOrder:${changeOrder.slug}`;
   const members = clusters.map((row) => ({
     cluster: row.cluster,
     space: spaceFor[row.cluster],
@@ -1153,6 +1592,7 @@ function promoteWave({
     revisionId: row.revisions.changed,
     minimumRevision:
       Number(variantRecords[row.cluster].baseline.approval.revision) + 1,
+    releaseRevision,
   }));
   const reviewed = reviewSet({
     policyContext,
@@ -1195,6 +1635,7 @@ function promoteWave({
       revisionId: record.revisionId,
       recordedApprovals: record.approval.recordedApprovals,
       releaseManifestDigest: record.release.manifestDigest,
+      releaseRevision: record.release.revision,
       inheritedFields: row.inheritedFields,
       departedFields: row.departurePaths,
     });
@@ -1204,10 +1645,23 @@ function promoteWave({
     environment: wave.environment,
     unlockedBy,
     selection: { ...preflight, ...reviewed.selection },
-    upgrade: {
-      command: `cub unit update --patch --space "*" --where <query> --upgrade`,
+    stage: {
+      name: wave.environment,
+      members: stageSpaces,
+    },
+    promotion: {
+      command: promoteCommand(wave.environment),
+      changeOrder: changeOrder.ref,
+      targetStage: wave.environment,
+      serverGate: previous
+        ? `${workflowPrerequisites.join(", ")} over the ${previous.environment} stage`
+        : "none; the first stage's gates are never evaluated",
       appliedAsOneOperation: true,
       members: clusters.length,
+    },
+    release: {
+      command: releaseCommand,
+      revision: releaseRevision,
     },
     approval: reviewed.approval,
     clusters: promoted,
@@ -1446,7 +1900,9 @@ function buildReceipt({
   checkpoints,
   convergenceAudit,
   cleanup,
+  changeManagement,
 }) {
+  const { membership, workflow, changeOrder, gateRefusal } = changeManagement;
   const variants = [
     ...plan.clusters.map((row) => {
       const record = variantRecords[row.cluster];
@@ -1455,6 +1911,8 @@ function buildReceipt({
         role: "workload",
         environment: row.environment,
         wave: row.wave,
+        stage: record.stage,
+        component: membership.component.slug,
         space: record.space,
         gatewayReference: gatewayReference(record.space),
         unit: policyUnit,
@@ -1476,6 +1934,7 @@ function buildReceipt({
       role: "management",
       environment: "management",
       wave: 0,
+      component: membership.managementComponent.slug,
       space: managementVariant.space,
       gatewayReference: gatewayReference(managementVariant.space),
       unit: policyUnit,
@@ -1500,8 +1959,8 @@ function buildReceipt({
     spec: {
       recordedAt,
       flow: {
-        path: "source -> one reviewed base record in ConfigHub -> one variant per cluster -> approval per variant -> ConfigHub release -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes",
-        promotion: "one reviewed values change made once on the base and inherited by the variants pilot, then staging, then both production clusters",
+        path: "source -> one reviewed base record in ConfigHub -> one variant per cluster -> one change order promoted stage by stage through a ChangeWorkflow -> approval per variant -> ConfigHub release of the change order -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes",
+        promotion: "one reviewed values change made once on the base, captured by one change order, and promoted by ConfigHub into the pilot stage, then staging, then the production stage holding both production clusters, each stage entered only once every variant of the stage ahead had released the change",
         mapping: "ConfigHub holds one record per cluster, so this receipt answers which cluster runs which revision without reading a Sveltos selector or a cluster",
       },
       source: {
@@ -1551,6 +2010,22 @@ function buildReceipt({
         evidenceGated: true,
         rule: "No wave's approval is requested until the preceding checkpoint shows every cluster the wave depends on reporting healthy: the whole fleet at the baseline for wave one, the environment the previous wave promoted after that. Each wave records the evidence that unlocked it.",
       },
+      changeManagement: {
+        component: membership.component,
+        managementComponent: membership.managementComponent,
+        workflow,
+        changeOrder,
+        gateRefusal,
+        release: {
+          command: releaseCommand,
+          baseline: "The baseline carries no change order, so each baseline release bundles its unit at its head.",
+        },
+        approval: {
+          command: setApprovalCommand,
+          reason: "cub variant approve records approvals of a change order in a stage, but it is not yet shown to clear the platform/require-approval/vet-approvedby apply gate every Space carries, so the proven set approval clears it.",
+        },
+        observedHealth: "The server's Released gate says the stage ahead published the change. The unlockedBy evidence on each wave says its clusters are running it, which ConfigHub cannot yet read for itself.",
+      },
       waves: waveRecords,
       gatewayDelivery: {
         host: configHubOciHost,
@@ -1595,15 +2070,19 @@ function buildReceipt({
         "The pinned Sveltos controllers were installed directly as a prerequisite on the throwaway management cluster.",
         "The reviewed ClusterProfiles, not the Sveltos controller installation, were delivered through ConfigHub and its OCI gateway.",
         "The management record was applied out of band with kubectl, because it is the record that opens the gateway path.",
-        "The gateway serves each release as a gzipped tar layer, so the run needs an addon controller that gunzips. The image it ran is recorded above.",
+        sveltosInstall.addonControllerImageOverridden
+          ? "The gateway serves each release as a gzipped tar layer, and the pinned release's addon controller does not gunzip, so the run replaced it with a build that does. The image it ran is recorded above."
+          : "The gateway serves each release as a gzipped tar layer, and the pinned release's own addon controller gunzips it, so the run installed the manifest's images as released. The image it ran is recorded above.",
         "The management cluster read the gateway with the operator's own ConfigHub token, taken once at the start of the run and removed with the clusters.",
         "The proof used four local kind workload clusters. It does not prove a large production fleet or a failure-and-pause rollout.",
         "The proof covers one reviewed values change to this Kyverno base, not a chart version bump.",
+        "The ChangeWorkflow declares Released and not Healthy, because nothing reports Sveltos's view of a cluster to ConfigHub yet. The observed-health evidence is the runner's own checkpoints.",
+        "Approvals clear the apply gate with the set approval rather than cub variant approve, which is not yet shown to clear that gate.",
       ],
     },
     status: {
       result: "pass",
-      claim: "ConfigHub held one variant per cluster over a shared base, each carrying its own departures, and one reviewed change made on the base was inherited wave by wave. Each wave selected its variants with one query and approved that set in one operation, and every approval bound one cluster's record to its own exact revision. Each approved revision was published as a release the ConfigHub OCI gateway serves, Sveltos fetched each release itself, and every cluster converged on its own reviewed state with its departures intact, with the clusters outside the wave verified stable at every checkpoint.",
+      claim: "ConfigHub held one variant per cluster over a shared base, each carrying its own departures and its environment as its stage, and one reviewed change made on the base was captured by one change order under a ChangeWorkflow. ConfigHub refused to promote that change into staging before pilot had released it, then promoted it stage by stage, pilot, staging, and production, each stage entered only once the stage ahead had released it. Each wave approved its variants in one set operation, every approval bound one cluster's record to its own exact revision, and each variant published the release the change order arrived at. The ConfigHub OCI gateway served each release, Sveltos fetched it itself, and every cluster converged on its own reviewed state with its departures intact, with the clusters outside the wave verified stable at every checkpoint.",
     },
   };
 }
@@ -1633,6 +2112,17 @@ function verifyReceipt(receipt) {
   if (!targeted) {
     console.log(
       "the recorded receipt predates the per-cluster Target model and releases to a shared catalog target; it awaits its re-record",
+    );
+    return false;
+  }
+
+  // A receipt recorded before the ChangeWorkflow design moved each wave with
+  // a set upgrade the runner issued, and ConfigHub held no stage order of its
+  // own. It is kept as recorded, recognized by that shape, and fills nothing,
+  // so the re-record replaces it rather than this verifier rewriting history.
+  if (predatesChangeWorkflow(receipt)) {
+    console.log(
+      "the recorded receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued rather than stages ConfigHub promoted and gated; it awaits a live re-record",
     );
     return false;
   }
@@ -1681,6 +2171,7 @@ function verifyReceipt(receipt) {
   );
   verifyBaseRecord(receipt, plan);
   verifyVariants(receipt, plan);
+  verifyChangeManagement(receipt, plan);
   verifyWaves(receipt, plan);
   verifyGatewayDelivery(receipt, plan);
   check(
@@ -1797,6 +2288,110 @@ function verifyBaseRecord(receipt, plan) {
   );
 }
 
+// The ChangeWorkflow design, checked as one block: a run-scoped component
+// holding exactly the base and its four variants, the management Space in a
+// run-scoped component of its own, one workflow whose stages are the reviewed
+// waves gated on Released and not on Healthy, one change order headed for
+// exactly the base's component, and the server's own refusal to skip a stage.
+function requireChangeManagement(receipt) {
+  const managed = receipt.spec?.changeManagement;
+  check(
+    managed && typeof managed === "object"
+      && managed.component && managed.managementComponent
+      && managed.workflow && managed.changeOrder,
+    "the receipt must record its change management: the component, the workflow, the change order, and the server's gate refusal",
+  );
+  return managed;
+}
+
+function verifyChangeManagement(receipt, plan) {
+  const managed = requireChangeManagement(receipt);
+  const baseSpace = String(receipt.spec?.base?.space ?? "");
+  const runId = /^hx-sveltos-env-base-(\d{8,14})$/.exec(baseSpace)?.[1];
+  check(runId, `the base Space ${baseSpace || "(missing)"} carries no run id to scope its component by`);
+  const expected = runScopedComponents(componentLabel, runId);
+  const variants = receipt.spec?.variants ?? [];
+  const workloadSpaces = variants
+    .filter((row) => row.role === "workload")
+    .map((row) => row.space);
+  const managementSpace = variants.find((row) => row.role === "management")?.space;
+  const component = managed.component ?? {};
+  const managementComponent = managed.managementComponent ?? {};
+  check(
+    component.slug === expected.base
+      && component.runScoped === true
+      && component.label === componentLabel
+      && String(component.id ?? "").length > 0,
+    `the base's component must be run-scoped as ${expected.base}; a component shared across runs puts another run's variants in the change order's scope`,
+  );
+  check(
+    !(component.spaces ?? []).includes(managementSpace),
+    "the management Space must not join the base's component; it is not a variant of the base, and there it would sit in every change order's scope",
+  );
+  check(
+    sameSet(component.spaces ?? [], [baseSpace, ...workloadSpaces]),
+    "the base's component must hold exactly the base and its four variants",
+  );
+  check(
+    managementComponent.slug === expected.management
+      && managementComponent.runScoped === true
+      && String(managementComponent.id ?? "").length > 0
+      && managementComponent.id !== component.id
+      && managementComponent.slug !== component.slug
+      && sameSet(managementComponent.spaces ?? [], [managementSpace]),
+    `the management Space must sit alone in its own run-scoped component ${expected.management}`,
+  );
+
+  const workflow = managed.workflow ?? {};
+  const stages = plan.waves.map((wave) => wave.environment);
+  check(
+    workflow.space === baseSpace
+      && workflow.ref === `${baseSpace}/${workflow.slug}`
+      && stableJson(workflow.stages ?? []) === stableJson(stages)
+      && stableJson(workflow.prerequisites ?? []) === stableJson(workflowPrerequisites),
+    `the ChangeWorkflow must live in the base Space, hold the stages ${stages.join(", ")} in that order, and gate each on ${workflowPrerequisites.join(", ")}`,
+  );
+  check(
+    !(workflow.prerequisites ?? []).includes("Healthy")
+      && workflow.healthy?.declared === false
+      && /#33\b/.test(String(workflow.healthy?.reason ?? ""))
+      && /#5049\b/.test(String(workflow.healthy?.reason ?? "")),
+    "the Healthy gate must stay undeclared, with its reason recorded, until a Sveltos reporter exists (#33) and ConfigHub recognises the provider (confighubai/confighub#5049)",
+  );
+
+  const changeOrder = managed.changeOrder ?? {};
+  check(
+    changeOrder.space === baseSpace
+      && changeOrder.ref === `${baseSpace}/${changeOrder.slug}`
+      && changeOrder.workflow === workflow.ref
+      && Number(changeOrder.createdAfterBaseRevision)
+        === Number(receipt.spec?.base?.change?.revision),
+    "the change order must live in the base Space, be governed by the run's workflow, and be created after the reviewed edit landed on the base",
+  );
+  check(
+    !(changeOrder.inScopeSpaces ?? []).includes(managementSpace)
+      && sameSet(changeOrder.inScopeSpaces ?? [], component.spaces ?? []),
+    "the change order must be headed for exactly the base's component, never the management Space or another run's variants",
+  );
+
+  const refusal = managed.gateRefusal;
+  check(
+    refusal
+      && refusal.refused === true
+      && refusal.targetStage === stages[1]
+      && refusal.stageAhead === stages[0]
+      && refusal.command === promoteCommand(stages[1])
+      && refusal.headsUnchanged === true
+      && String(refusal.message ?? "").trim().length > 0,
+    `the receipt must record the server refusing to promote into ${stages[1]} before ${stages[0]} released the change, in the server's own words`,
+  );
+  check(
+    managed.release?.command === releaseCommand
+      && managed.approval?.command === setApprovalCommand,
+    "the change management must record the release and approval commands the waves used",
+  );
+}
+
 // The whole point of the rework: one record per cluster, each addressing its
 // own cluster and nothing else, each holding its own departures.
 function verifyVariants(receipt, plan) {
@@ -1883,6 +2478,8 @@ function verifyVariants(receipt, plan) {
       }
     }
   }
+  const managed = requireChangeManagement(receipt);
+  const changedRevision = `ChangeOrder:${managed.changeOrder.slug}`;
   for (const row of plan.clusters) {
     const variant = variants.find((item) => item.cluster === row.cluster);
     check(
@@ -1891,6 +2488,23 @@ function verifyVariants(receipt, plan) {
         && variant.wave === row.wave
         && variant.profile === row.profileName,
       `the ${row.cluster} variant identity changed`,
+    );
+    // The workflow's stages select on the Space's Stage label within the
+    // base's component, so a variant outside either is a cluster no stage
+    // can reach.
+    check(
+      variant.stage === row.environment
+        && variant.component === managed.component.slug,
+      `the ${row.cluster} variant must carry ${row.environment} as its stage inside the base's component`,
+    );
+    // The baseline carries no change order and publishes at the head; the
+    // change publishes where the change order arrived, which is what the next
+    // stage's Released gate reads.
+    const [baselineRecord, changedRecord] = variant.records ?? [];
+    check(
+      baselineRecord?.release?.revision === undefined
+        && changedRecord?.release?.revision === changedRevision,
+      `the ${row.cluster} changed release must bundle ${changedRevision}, and its baseline release the head`,
     );
     check(
       variant.clusterRef?.kind === "SveltosCluster"
@@ -1955,6 +2569,11 @@ function verifyManagementBoundary(receipt, plan, variants) {
   check(
     variant?.role === "management" && variant.upstream === null,
     "the management record must be recorded as the management cluster's own record",
+  );
+  check(
+    variant.stage === undefined
+      && variant.component === requireChangeManagement(receipt).managementComponent.slug,
+    "the management record must sit in its own component and carry no stage, so no workflow stage can select it",
   );
   const boundary = variant.boundary ?? {};
   check(
@@ -2067,9 +2686,29 @@ function verifyWaves(receipt, plan) {
         ),
       `wave ${wave.wave} must record the query that selected its set and the units it matched`,
     );
+    // A wave is a stage of the change order's workflow, promoted by ConfigHub.
+    // The runner-issued set upgrade it replaced may not come back.
+    const managed = requireChangeManagement(receipt);
     check(
-      wave.upgrade?.appliedAsOneOperation === true
-        && wave.upgrade.members === members.length
+      wave.upgrade === undefined
+        && wave.promotion?.command === promoteCommand(wave.environment)
+        && wave.promotion.changeOrder === managed.changeOrder.ref
+        && wave.promotion.targetStage === wave.environment,
+      `wave ${wave.wave} must be the ${wave.environment} stage promoted with ${promoteCommand(wave.environment)}, not a set upgrade the runner issued`,
+    );
+    check(
+      wave.stage?.name === wave.environment
+        && sameSet(wave.stage.members ?? [], members.map((row) => row.space)),
+      `wave ${wave.wave} must record that the ${wave.environment} stage selected exactly its variants`,
+    );
+    check(
+      wave.release?.command === releaseCommand
+        && wave.release.revision === `ChangeOrder:${managed.changeOrder.slug}`,
+      `wave ${wave.wave} must publish each variant where the change order arrived`,
+    );
+    check(
+      wave.promotion.appliedAsOneOperation === true
+        && wave.promotion.members === members.length
         && wave.approval?.appliedAsOneOperation === true
         && wave.approval.recordedApprovals === members.length,
       `wave ${wave.wave} must promote its set in one operation and record one approval per member`,
@@ -2083,6 +2722,7 @@ function verifyWaves(receipt, plan) {
           && member.recordedApprovals >= 1
           && normalizeDigest(member.releaseManifestDigest)
           === member.releaseManifestDigest
+          && member.releaseRevision === wave.release.revision
           && sameSet(member.inheritedFields ?? [], planCluster.inheritedFields)
           && sameSet(member.departedFields ?? [], planCluster.departurePaths),
         `wave ${wave.wave} recorded a different approval for ${member.cluster}`,
@@ -2124,6 +2764,32 @@ function verifyGatewayDelivery(receipt, plan) {
       && delivery.addonControllerImage
       === receipt.spec?.prerequisite?.addonControllerImage,
     "the receipt must record the addon controller image the run used",
+  );
+  // Pin-aware: a pin whose released controller reads the gateway's layers
+  // must have run that controller as released. A receipt recorded on the
+  // v1.13.0 pin with the v1.13.0-ch build predates this check and is
+  // recognised before any check here is reached.
+  const sveltos = loadSveltosPin();
+  if (sveltos.releasedControllerReadsGatewayLayers) {
+    check(
+      receipt.spec.prerequisite.addonControllerImage
+        === pinnedAddonControllerImage(sveltos)
+        && receipt.spec.prerequisite.addonControllerImageOverridden === false,
+      `the pinned Sveltos ${sveltos.version} addon controller reads the gateway's layers itself, so the run must record ${pinnedAddonControllerImage(sveltos)} as released and not overridden`,
+    );
+  }
+  const preload = receipt.spec.prerequisite.imagePreload ?? {};
+  const preloaded = preload.images ?? [];
+  check(
+    preload.source === "the image lines of the pinned manifest"
+      && preloaded.length > 0
+      && preloaded.includes(receipt.spec.prerequisite.addonControllerImage)
+      && preloaded.every((image) =>
+        image === receipt.spec.prerequisite.addonControllerImage
+        || image.includes("@sha256:")
+        || image.endsWith(`:${sveltos.version}`))
+      && String(preload.sveltosAgent ?? "").length > 0,
+    `the receipt must record the images preloaded from the pinned manifest, each at ${sveltos.version}, and what happened to the sveltos-agent`,
   );
   const digests = [];
   for (const row of plan.clusters) {
@@ -2185,7 +2851,7 @@ function verifyCleanup(receipt) {
     (cleanup.kept ?? []).every((row) =>
       typeof row.kind === "string"
       && typeof row.name === "string"
-      && /^(kind delete cluster|cub space delete) /.test(String(row.removeWith ?? ""))),
+      && /^(kind delete cluster|cub space delete|cub component delete) /.test(String(row.removeWith ?? ""))),
     "a kept artifact must record what it is and the command that removes it",
   );
 }
@@ -2196,12 +2862,19 @@ function renderSummary(receipt) {
     .filter((variant) => variant.role === "workload")
     .map((variant) => {
       const changed = variant.records[1];
-      return `| ${variant.wave} | ${variant.cluster} | ${variant.space} | ${variant.departedFields.filter((path) => path.startsWith("values.")).join(", ")} | \`${changed.release.manifestDigest}\` | ${changed.delivery.status} |`;
+      // The departure worth showing is the one beyond addressing: the name
+      // and the clusterRefs entry every variant carries say nothing here.
+      const kept = variant.departedFields
+        .filter((path) => !["metadata.name", "spec.clusterRefs"].includes(path))
+        .map((path) => `\`${path}=${variant.departures[path]}\``)
+        .join(", ");
+      return `| ${variant.wave} | ${variant.cluster} | ${variant.space} | ${kept} | \`${changed.release.manifestDigest}\` | ${changed.delivery.status} |`;
     });
   const waves = receipt.spec.waves.map((wave) =>
-    `| ${wave.wave} | ${wave.environment} | ${wave.clusters.length} | ${wave.approval.recordedApprovals} |`);
+    `| ${wave.wave} | ${wave.environment} | ${wave.promotion.serverGate} | ${wave.clusters.length} | ${wave.approval.recordedApprovals} |`);
   const finalCheckpoint = receipt.spec.checkpoints.at(-1);
   const delivery = receipt.spec.gatewayDelivery;
+  const managed = receipt.spec.changeManagement;
   // A receipt recorded before evidence-gated advance carries no unlock
   // records, and its summary stays exactly as recorded.
   const advance = receipt.spec.advance?.evidenceGated === true
@@ -2222,16 +2895,30 @@ This run starts with four workload clusters and a management cluster. ConfigHub
 holds one reviewed base record and one variant per cluster, so the answer to
 which cluster runs which revision comes from ConfigHub rather than from a
 selector on a cluster. Each variant carries its own departures from the base,
-and its selector addresses its own cluster and nothing else.
+and its clusterRefs entry names its own cluster and nothing else.
 
 One reviewed change raises \`${change.valuesPath}\` from ${change.before} to
-${change.after} on the base record. Each wave selected its variants with one
-query over the labels they carry and approved that set in one operation, so the
-operator acted once per wave and ConfigHub still recorded one approval per
-cluster against that cluster's own exact revision. Every approved revision was
-published as a release the OCI gateway serves, and Sveltos fetched each release
-itself from \`oci://${delivery.host}/space/<space>:${delivery.tag}\` on a
-${delivery.interval} interval.
+${change.after} on the base record. The change order \`${managed.changeOrder.slug}\`
+captured that edit under the ChangeWorkflow \`${managed.workflow.slug}\`, whose
+stages are ${managed.workflow.stages.join(", then ")}, each gated on
+${managed.workflow.prerequisites.join(", ")}. Every wave was one of those stages:
+\`cub variant promote --change-order\` moved exactly the change into the
+variants the stage selects, the base and its four variants sitting in the
+run's own component \`${managed.component.slug}\` and the management record in
+a component of its own. Before wave one, ConfigHub itself refused to promote
+the change into ${managed.gateRefusal.targetStage} while ${managed.gateRefusal.stageAhead} had
+not released it:
+
+> ${managed.gateRefusal.message}
+
+Each wave approved its variants in one set operation, so the operator acted
+once per wave and ConfigHub still recorded one approval per cluster against
+that cluster's own exact revision. Each variant published the release its
+change order arrived at, and Sveltos fetched each release itself from
+\`oci://${delivery.host}/space/<space>:${delivery.tag}\` on a
+${delivery.interval} interval. The Healthy gate is not declared: nothing
+reports Sveltos's view of a cluster to ConfigHub yet, so the checkpoints below
+are the observed-health evidence.
 
 The management record holds one bootstrap profile per workload Space. It was
 applied out of band with kubectl, because it is the record that opens the
@@ -2242,8 +2929,8 @@ tag, and Sveltos followed it.
 | --- | --- | --- | --- | --- | --- |
 ${rows.join("\n")}
 
-| Wave | Group | Variants selected | Approvals recorded |
-| --- | --- | --- | --- |
+| Wave | Stage | Gate ConfigHub checked | Variants promoted | Approvals recorded |
+| --- | --- | --- | --- | --- |
 ${waves.join("\n")}
 ${advance}
 | Check | Result |
@@ -2406,7 +3093,7 @@ function waitForRemoteDeploy({
         };
         check(
           !looksLikeGzipDecodeFailure(failureMessage),
-          `the addon controller could not read the ${cluster} release: it decoded gzipped bytes as YAML. The gateway serves each release as a gzipped tar layer, so this run needs an addon controller that gunzips. Set SVELTOS_ADDON_CONTROLLER_IMAGE to that build and see ${probeRecord}.`,
+          `the addon controller could not read the ${cluster} release: it decoded gzipped bytes as YAML. The gateway serves each release as a gzipped tar layer, so this run needs an addon controller that gunzips, which released Sveltos does from v1.14.0; check the image the run installed against the pin in ${relativeRepo(sourceLockPath)} and see ${probeRecord}.`,
         );
         check(
           feature.status !== "Failed",
@@ -2558,19 +3245,16 @@ function installSveltos({
   workRoot,
   sveltos,
   addonControllerImage,
+  pinnedManifest,
 }) {
-  const manifestPath = join(workRoot, "sveltos-manifest.yaml");
-  command("curl", ["-fsSL", sveltos.manifestUrl, "-o", manifestPath], {
-    timeout: 180_000,
-  });
-  const downloaded = readFileSync(manifestPath, "utf8");
-  // The pin covers the bytes upstream published, so it is checked before the
-  // image substitution rewrites any of them.
+  // A run fetches the manifest before building anything and hands it in; a
+  // caller that has not fetched it gets the same checked fetch here.
+  const downloaded = pinnedManifest ?? fetchPinnedManifest({ workRoot, sveltos });
   check(
     sha256(downloaded) === sveltos.manifestSha256,
     "the downloaded Sveltos manifest differs from the source lock",
   );
-  const pinnedImage = `${addonControllerRepository}:${sveltos.version}`;
+  const pinnedImage = pinnedAddonControllerImage(sveltos);
   const overridden = addonControllerImage !== pinnedImage;
   // The substitution matches whole image lines. A plain string replacement
   // would also fire inside a longer tag, and the build carrying the gzip fix
@@ -2911,6 +3595,10 @@ function spacePresent(context, space) {
   return cubTry(context, ["space", "get", space, "-o", "json"]).ok;
 }
 
+function componentPresent(context, slug) {
+  return cubTry(context, ["component", "get", slug, "-o", "json"]).ok;
+}
+
 function getByRef(context, entity, ref) {
   const [space, slug] = ref.split("/");
   return cubJson(context, [entity, "get", "--space", space, slug, "-o", "json"]);
@@ -3225,18 +3913,40 @@ function selfTest() {
     );
 
     // The pin this chapter reads, and the controller image rule the gateway
-    // forces on top of it.
+    // forces on top of it. The checks read the lock rather than naming a
+    // version, the way the rehearsal checks its own pin.
     const sveltos = loadSveltosPin();
-    const pinnedImage = `${addonControllerRepository}:${sveltos.version}`;
+    const pinnedImage = pinnedAddonControllerImage(sveltos);
     check(
-      sveltos.version === "v1.13.0"
+      /^v\d+\.\d+\.\d+$/.test(sveltos.version)
         && sveltos.manifestUrl.includes(sveltos.version)
-        && /^[0-9a-f]{64}$/.test(sveltos.manifestSha256),
+        && /^[0-9a-f]{64}$/.test(sveltos.manifestSha256)
+        && typeof sveltos.releasedControllerReadsGatewayLayers === "boolean",
       "the chapter three Sveltos pin lost its shape",
+    );
+    // The committed pin is a release whose own controller reads the gateway's
+    // layers, so the run records it as released and never overrides it.
+    check(
+      sveltos.releasedControllerReadsGatewayLayers === true
+        && pinnedImage === `${addonControllerRepository}:${sveltos.version}`,
+      "the chapter three pin must be a release whose addon controller reads the gateway's layers",
     );
     check(
       resolveAddonControllerImage(sveltos) === pinnedImage,
       "the default addon controller image no longer follows the pin",
+    );
+    const overrideImage = `${pinnedImage}-ch`;
+    assertAddonControllerFitsPin(sveltos, pinnedImage);
+    expectFailure(
+      () => assertAddonControllerFitsPin(sveltos, overrideImage),
+      /reads the gateway's gzipped layers itself, so this chapter runs .* as released; unset SVELTOS_ADDON_CONTROLLER_IMAGE/,
+      "override on a pin whose released controller reads the layers",
+    );
+    // A pin whose released controller does not read the layers, as v1.13.0's
+    // did not, still takes the override; the mechanism stays for that case.
+    assertAddonControllerFitsPin(
+      { ...sveltos, releasedControllerReadsGatewayLayers: false },
+      overrideImage,
     );
     expectFailure(
       () => installSveltos({
@@ -3251,13 +3961,59 @@ function selfTest() {
 
     // A small pinned manifest exercises the install path and the image
     // override without downloading twenty thousand lines.
-    const overrideImage = `${addonControllerRepository}:v1.13.0-ch`;
-    download.bytes = fakeSveltosManifest(pinnedImage);
+    download.bytes = fakeSveltosManifest(pinnedImage, sveltos.version);
     const syntheticPin = {
       version: sveltos.version,
       manifestUrl: sveltos.manifestUrl,
       manifestSha256: sha256(download.bytes),
+      releasedControllerReadsGatewayLayers: false,
     };
+    // The preload list is the manifest's own image lines: every controller it
+    // names, the one the hardcoded list never knew included, with the pinned
+    // addon controller swapped for the image the lane runs, and no agent
+    // digest invented for a version that has none recorded.
+    const pinnedManifest = fetchPinnedManifest({ workRoot, sveltos: syntheticPin });
+    const fromManifest = manifestImages(pinnedManifest);
+    check(
+      fromManifest.length === 2
+        && fromManifest.includes(pinnedImage)
+        && fromManifest.includes(`docker.io/projectsveltos/register-mgmt-cluster:${sveltos.version}`),
+      "the manifest's image lines must be read once each",
+    );
+    const releasedPreload = sveltosPreloadList({
+      version: sveltos.version,
+      addonControllerImage: pinnedImage,
+      images: fromManifest,
+    });
+    const overriddenPreload = sveltosPreloadList({
+      version: sveltos.version,
+      addonControllerImage: overrideImage,
+      images: fromManifest,
+    });
+    check(
+      sameSet(releasedPreload, fromManifest)
+        && overriddenPreload.includes(overrideImage)
+        && !overriddenPreload.includes(pinnedImage)
+        && sveltosAgentPreloaded(sveltos.version) === false
+        && !releasedPreload.some((image) => image.includes("sveltos-agent")),
+      "the preload must be exactly the pinned manifest's images, with no agent digest invented",
+    );
+    // The other chapters pass no manifest and keep the list they always had.
+    const legacyPreload = sveltosPreloadList({
+      version: "v1.13.0",
+      addonControllerImage: `${addonControllerRepository}:v1.13.0-ch`,
+    });
+    check(
+      legacyPreload.length === 10
+        && legacyPreload.includes(`${addonControllerRepository}:v1.13.0-ch`)
+        && legacyPreload.some((image) => image.includes("sveltos-agent@sha256:"))
+        && !legacyPreload.some((image) => image.includes("register-mgmt-cluster")),
+      "the v1.13.0 chapters' preload list must stay exactly as it was",
+    );
+    check(
+      imagePreloadRecord(sveltos, releasedPreload).sveltosAgent.startsWith("not preloaded"),
+      "the receipt must say the agent is pulled by the nodes when no digest is recorded",
+    );
     const installed = installSveltos({
       managementKubeconfig,
       workRoot,
@@ -3275,7 +4031,7 @@ function selfTest() {
         && !cluster.appliedText().includes(`"${pinnedImage}"`),
       "the addon controller image override did not reach the applied manifest",
     );
-    download.bytes = fakeSveltosManifest("docker.io/projectsveltos/other:v1");
+    download.bytes = fakeSveltosManifest("docker.io/projectsveltos/other:v1", sveltos.version);
     expectFailure(
       () => installSveltos({
         managementKubeconfig,
@@ -3417,15 +4173,30 @@ function selfTest() {
     );
     hub.state.neverPopulateGates = false;
 
-    // The whole path: one base record, four variants cloned from it, the
-    // management record, one set approval for the baseline, delivery through
-    // the gateway, one change on the base, and three waves of set promotion.
+    // The fake answers the ChangeWorkflow verbs the way the live probe of
+    // 2026-09-26 recorded the server answering, before the walk relies on it.
+    replayChangeWorkflowProbe(hub, workRoot);
+
+    // The whole path: one run-scoped component, one base record in it, four
+    // variants cloned from it each carrying its environment as its stage, the
+    // management record in a component of its own, one set approval for the
+    // baseline, delivery through the gateway, one change on the base captured
+    // by one change order, the server refusing a skipped stage, and three
+    // stages promoted by ConfigHub.
     const policySpacesCreated = new Set();
     const baseSpace = spaceName(`hx-sveltos-env-base-${runId}`);
     const spaceFor = Object.fromEntries([
       ...plan.clusters.map((row) => [row.cluster, spaceName(`${row.cluster}-${runId}`)]),
       [plan.management.cluster, spaceName(`${plan.management.cluster}-${runId}`)],
     ]);
+    const components = runScopedComponents(componentLabel, runId);
+    check(
+      components.base === `${componentLabel}-${runId}`
+        && components.management === `${componentLabel}-management-${runId}`
+        && components.base !== runScopedComponents(componentLabel, "20260812091501").base,
+      "each run must get components of its own, named for the run",
+    );
+    createComponent(policyContext, components.base, runId);
     const baseRecord = establishBase({
       policyContext,
       space: baseSpace,
@@ -3433,12 +4204,14 @@ function selfTest() {
       topology,
       runId,
       policySpacesCreated,
+      component: components.base,
     });
     check(
       baseRecord.published === false
         && baseRecord.target === "none"
+        && baseRecord.component === components.base
         && baseRecord.revisionId === plan.base.revisions.baseline,
-      "the base record must be stored without a target and without a release",
+      "the base record must be stored in the run's component without a target and without a release",
     );
     const variantRecords = {};
     for (const row of plan.clusters) {
@@ -3451,14 +4224,17 @@ function selfTest() {
         runId,
         workRoot,
         policySpacesCreated,
+        stage: row.environment,
       });
     }
     check(
       plan.clusters.every((row) =>
         variantRecords[row.cluster].upstream.space === baseSpace
         && variantRecords[row.cluster].upstream.unitLinked === true
+        && variantRecords[row.cluster].stage === row.environment
+        && hub.spaceLabels(spaceFor[row.cluster])?.Stage === row.environment
         && variantRecords[row.cluster].clusterRef.name === row.cluster),
-      "every variant must be linked to the base and address its own cluster",
+      "every variant must be linked to the base, carry its environment as its stage, and address its own cluster",
     );
     // A variant can be linked to the base and still be unable to inherit from
     // it. When ConfigHub reports the base resource deleted and a different one
@@ -3500,6 +4276,7 @@ function selfTest() {
       "--recursive-force", "--quiet",
     ]);
 
+    createComponent(policyContext, components.management, runId);
     const managementVariant = establishManagement({
       policyContext,
       space: spaceFor[plan.management.cluster],
@@ -3512,7 +4289,72 @@ function selfTest() {
         cluster: row.cluster,
         space: spaceFor[row.cluster],
       })),
+      component: components.management,
     });
+    const membershipArgs = {
+      policyContext,
+      baseSpace,
+      spaceFor,
+      plan,
+      components,
+    };
+    const membership = assertComponentMembership(membershipArgs);
+    check(
+      membership.component.slug === components.base
+        && sameSet(membership.component.spaces, [
+          baseSpace,
+          ...plan.clusters.map((row) => spaceFor[row.cluster]),
+        ])
+        && membership.managementComponent.id !== membership.component.id
+        && sameSet(membership.managementComponent.spaces, [
+          spaceFor[plan.management.cluster],
+        ]),
+      "the base and its four variants must share the run's component and the management Space must sit alone in its own",
+    );
+    // The management Space attached to the base's component is the shape that
+    // would put it in every change order's scope, so membership refuses it.
+    hub.handle([
+      "space", "update", spaceFor[plan.management.cluster],
+      "--component", components.base, "--quiet",
+    ]);
+    expectFailure(
+      () => assertComponentMembership(membershipArgs),
+      /must sit in a component of its own, never in the base's/,
+      "management Space in the base's component",
+    );
+    hub.handle([
+      "space", "update", spaceFor[plan.management.cluster],
+      "--component", components.management, "--quiet",
+    ]);
+    // A variant whose Space lost its Stage label is a cluster no stage reaches.
+    hub.setSpaceLabel(spaceFor["hx-sveltos-env-staging"], "Stage", "prod");
+    expectFailure(
+      () => assertComponentMembership(membershipArgs),
+      /carries Stage=prod rather than staging/,
+      "variant carrying the wrong stage",
+    );
+    hub.setSpaceLabel(spaceFor["hx-sveltos-env-staging"], "Stage", "staging");
+    // The base carrying a Stage label would be selected by a stage.
+    hub.setSpaceLabel(baseSpace, "Stage", "pilot");
+    expectFailure(
+      () => assertComponentMembership(membershipArgs),
+      /so a workflow stage would select the base/,
+      "base carrying a stage",
+    );
+    hub.setSpaceLabel(baseSpace, "Stage", undefined);
+    const workflow = openChangeWorkflow({
+      policyContext,
+      baseSpace,
+      plan,
+      runId,
+    });
+    check(
+      workflow.ref === `${baseSpace}/${workflowSlug(runId)}`
+        && workflow.stages.join(",") === "pilot,staging,prod"
+        && workflow.prerequisites.join(",") === "Released"
+        && workflow.healthy.declared === false,
+      "the run must hold one workflow in the base Space with the reviewed stages, gated on Released alone",
+    );
     // The component view groups Spaces by Component and files them under
     // Owner. A run whose Spaces lack those labels is invisible in the one view
     // that shows a base and its per-cluster variants together, so the labels
@@ -3639,6 +4481,72 @@ function selfTest() {
       "the base change record changed",
     );
 
+    // A Space outside the run attached to the run's component is the shape a
+    // shared component produces: an earlier run's variant in this change
+    // order's scope. The scope check refuses it.
+    const strayVariant = spaceName(`hx-sveltos-env-staging-20260101000000`);
+    hub.handle([
+      "space", "create", strayVariant,
+      "--label", `Component=${componentLabel}`,
+      "--trigger-filter", approvalFilterRef, "--where-trigger", "-",
+      "--component", components.base, "--quiet",
+    ]);
+    const strayOrder = createChangeOrder(policyContext, {
+      space: baseSpace,
+      slug: "self-test-stray-scope",
+      workflowRef: workflow.ref,
+      description: "Change order created while another run's Space shares the component",
+    });
+    expectFailure(
+      () => assertChangeOrderScope(strayOrder, membership),
+      /rather than exactly the base and its four variants; a Space outside this run is in its scope/,
+      "another run's variant in the change order's scope",
+    );
+    hub.handle(["space", "delete", strayVariant, "--recursive-force", "--quiet"]);
+
+    const changeOrder = openChangeOrder({
+      policyContext,
+      baseSpace,
+      plan,
+      runId,
+      workflow,
+      membership,
+      baseChange,
+    });
+    check(
+      changeOrder.ref === `${baseSpace}/${changeOrderSlug(runId)}`
+        && changeOrder.workflow === workflow.ref
+        && sameSet(changeOrder.inScopeSpaces, membership.component.spaces)
+        && !changeOrder.inScopeSpaces.includes(spaceFor[plan.management.cluster]),
+      "the change order must be headed for exactly the base and its four variants",
+    );
+
+    // The runner fails if the server lets the change skip a stage. With the
+    // gate switched off in the fake the skipped promotion lands, the runner
+    // refuses to record it, and the variants it moved are put back.
+    hub.state.ignoreStageGates = true;
+    expectFailure(
+      () => assertStageGateRefuses({ policyContext, plan, changeOrder, spaceFor }),
+      /promoted .* into staging before pilot released it; the Released gate did not hold the stage order/,
+      "a skipped stage that the server allowed",
+    );
+    hub.state.ignoreStageGates = false;
+    hub.restoreVariantBaselines();
+    const gateRefusal = assertStageGateRefuses({
+      policyContext,
+      plan,
+      changeOrder,
+      spaceFor,
+    });
+    check(
+      gateRefusal.refused === true
+        && gateRefusal.targetStage === "staging"
+        && gateRefusal.stageAhead === "pilot"
+        && gateRefusal.headsUnchanged === true
+        && gateRefusal.message.includes("unable to promote to stage 'staging'"),
+      "the server's refusal to skip into staging must be recorded in its own words",
+    );
+
     // The trap: when the merge hands back the variant's own content, the wave
     // is refused rather than recorded as promoted.
     const walkCheckpoints = synthesizeCheckpoints(plan);
@@ -3654,12 +4562,36 @@ function selfTest() {
         runId,
         variantRecords,
         checkpoints: walkCheckpoints.slice(0, 1),
+        changeOrder,
+        membership,
       }),
       /did not come out of the upgrade as the reviewed merge: inheritedTheChange=false/,
       "silent departure win refusal",
     );
     hub.state.mergeKeepsDepartureOnly = false;
     hub.restoreVariantBaselines();
+
+    // A stage whose Stage labels no longer name the wave is refused before
+    // the promotion runs.
+    hub.setSpaceLabel(spaceFor["hx-sveltos-env-pilot"], "Stage", "staging");
+    expectFailure(
+      () => promoteWave({
+        policyContext,
+        managementKubeconfig,
+        managementName,
+        wave: plan.waves[0],
+        plan,
+        spaceFor,
+        runId,
+        variantRecords,
+        checkpoints: walkCheckpoints.slice(0, 1),
+        changeOrder,
+        membership,
+      }),
+      /the pilot stage selects no Space rather than the wave's variants/,
+      "a stage that is not the wave",
+    );
+    hub.setSpaceLabel(spaceFor["hx-sveltos-env-pilot"], "Stage", "pilot");
 
     // The guard: a wave whose preceding checkpoint shows an unhealthy cluster
     // in the environment just promoted refuses to request the next approval,
@@ -3678,6 +4610,8 @@ function selfTest() {
         runId,
         variantRecords,
         checkpoints: sickCheckpoints,
+        changeOrder,
+        membership,
       }),
       /wave 2 approval refused: .* did not report healthy at after-wave-1/,
       "unhealthy pilot refuses wave two's approval",
@@ -3696,6 +4630,8 @@ function selfTest() {
         runId,
         variantRecords,
         checkpoints: incompleteCheckpoints,
+        changeOrder,
+        membership,
       }),
       /the evidence is incomplete/,
       "a checkpoint missing a cluster is not unlock evidence",
@@ -3713,6 +4649,8 @@ function selfTest() {
         runId,
         variantRecords,
         checkpoints: walkCheckpoints.slice(0, wave.wave),
+        changeOrder,
+        membership,
       }));
     }
     check(
@@ -3723,6 +4661,22 @@ function selfTest() {
         && new Set(waveRecords[2].clusters.map((row) => row.releaseManifestDigest))
           .size === 2,
       "wave three must approve both production variants separately from one operation",
+    );
+    check(
+      waveRecords.every((wave) =>
+        wave.upgrade === undefined
+        && wave.promotion.command === promoteCommand(wave.environment)
+        && wave.promotion.changeOrder === changeOrder.ref
+        && wave.clusters.every((row) =>
+          row.releaseRevision === `ChangeOrder:${changeOrder.slug}`)),
+      "every wave must be a stage ConfigHub promoted, each variant releasing where the change order arrived",
+    );
+    // The fake records which releases carried the change, which is what the
+    // Released gate read before letting each later stage in.
+    check(
+      plan.clusters.every((row) =>
+        hub.releasedChangeOrders(spaceFor[row.cluster]).includes(changeOrder.ref)),
+      "every variant must have released the change order before the rollout closed",
     );
     const walkDigests = [];
     for (const row of plan.clusters) {
@@ -3796,7 +4750,7 @@ function selfTest() {
       topology,
       managementName,
       managementRegistration,
-      sveltosInstall: fakeSveltosInstall(sveltos, overrideImage),
+      sveltosInstall: fakeSveltosInstall(sveltos, pinnedImage, releasedPreload),
       gatewayCredential,
       registrations,
       baseRecord,
@@ -3809,16 +4763,26 @@ function selfTest() {
       checkpoints: synthesizeCheckpoints(plan),
       convergenceAudit: synthesizeAudit(plan),
       cleanup: removedCleanup(),
+      changeManagement: {
+        membership,
+        workflow,
+        changeOrder,
+        gateRefusal,
+      },
     });
-    check(verifyReceipt(receipt) === true, "the self-test receipt was not recognized as a per-cluster record");
+    check(verifyReceipt(receipt) === true, "the self-test receipt was not recognized as a ChangeWorkflow record");
     const summary = renderSummary(receipt);
     check(
       summary.includes(
         receipt.spec.variants[3].records[1].release.manifestDigest,
       )
         && summary.includes(`oci://${configHubOciHost}/space/`)
-        && summary.includes(overrideImage)
-        && summary.includes("Convergence audit"),
+        && summary.includes(pinnedImage)
+        && summary.includes("Convergence audit")
+        && summary.includes(gateRefusal.message)
+        && summary.includes(changeOrder.slug)
+        && summary.includes(workflowSlug(runId))
+        && summary.includes("`spec.stopMatchingBehavior=LeavePolicies`"),
       "the rendered summary lost its evidence",
     );
 
@@ -3860,7 +4824,41 @@ function selfTest() {
       verifyReceipt(untargeted) === false,
       "a receipt without any Target must be recognized as pre-dating the per-cluster Target model",
     );
+    // The shape committed on 2026-08-21: every wave a set upgrade the runner
+    // issued, and no component, workflow, or change order recorded.
+    const preWorkflow = structuredClone(receipt);
+    delete preWorkflow.spec.changeManagement;
+    for (const wave of preWorkflow.spec.waves) {
+      delete wave.promotion;
+      delete wave.stage;
+      delete wave.release;
+      wave.upgrade = {
+        command: recordedUpgradeCommand,
+        appliedAsOneOperation: true,
+        members: wave.clusters.length,
+      };
+    }
+    check(
+      predatesChangeWorkflow(preWorkflow) && verifyReceipt(preWorkflow) === false,
+      "a receipt of the runner-issued upgrade shape must be recognized as pre-dating the ChangeWorkflow design",
+    );
+    // Half of that shape is not that shape: waves still promoted as stages
+    // with the change management removed is a tamper, not an old recording.
+    const halfPreWorkflow = structuredClone(receipt);
+    halfPreWorkflow.spec.waves[0].upgrade = { command: recordedUpgradeCommand };
+    check(
+      !predatesChangeWorkflow(halfPreWorkflow),
+      "a receipt with one upgraded wave among promoted stages must not pass as an old recording",
+    );
 
+    const managementSpaceOf = (c) =>
+      c.spec.variants.find((row) => row.role === "management").space;
+    const renameBaseComponent = (c, slug) => {
+      c.spec.changeManagement.component.slug = slug;
+      for (const row of c.spec.variants) {
+        if (row.role === "workload") row.component = slug;
+      }
+    };
     const tampers = [
       ["kind", (c) => { c.kind = "OtherReceipt"; }, /receipt kind changed/],
       ["result", (c) => { c.status.result = "fail"; }, /proof is not pass/],
@@ -3923,6 +4921,31 @@ function selfTest() {
       ["controller image disagreement", (c) => {
         c.spec.gatewayDelivery.addonControllerImage = `${addonControllerRepository}:v0.0.0`;
       }, /must record the addon controller image/],
+      ["controller overridden on a released pin", (c) => {
+        const override = `${pinnedImage}-ch`;
+        c.spec.prerequisite.addonControllerImage = override;
+        c.spec.prerequisite.addonControllerImageOverridden = true;
+        c.spec.gatewayDelivery.addonControllerImage = override;
+        c.spec.prerequisite.imagePreload.images = c.spec.prerequisite.imagePreload.images
+          .map((image) => (image === pinnedImage ? override : image));
+      }, /reads the gateway's layers itself, so the run must record .* as released and not overridden/],
+      ["controller marked overridden on a released pin", (c) => {
+        c.spec.prerequisite.addonControllerImageOverridden = true;
+      }, /as released and not overridden/],
+      ["the v1.13.0-ch build on the v1.15.0 pin", (c) => {
+        const historical = `${addonControllerRepository}:v1.13.0-ch`;
+        c.spec.prerequisite.addonControllerImage = historical;
+        c.spec.gatewayDelivery.addonControllerImage = historical;
+      }, /as released and not overridden/],
+      ["prerequisite on the old pin", (c) => { c.spec.prerequisite.version = "v1.13.0"; }, /prerequisite record changed/],
+      ["preload list dropped", (c) => { delete c.spec.prerequisite.imagePreload; }, /images preloaded from the pinned manifest/],
+      ["preload from another version", (c) => {
+        c.spec.prerequisite.imagePreload.images.push("docker.io/projectsveltos/classifier:v1.13.0");
+      }, /images preloaded from the pinned manifest, each at/],
+      ["preload without the controller that ran", (c) => {
+        c.spec.prerequisite.imagePreload.images = c.spec.prerequisite.imagePreload.images
+          .filter((image) => image !== pinnedImage);
+      }, /images preloaded from the pinned manifest/],
       ["fetch interval", (c) => { c.spec.gatewayDelivery.interval = "24h0m0s"; }, /gateway delivery contract changed/],
       ["gateway host", (c) => { c.spec.gatewayDelivery.host = "registry.example.com"; }, /gateway delivery contract changed/],
       ["secret type", (c) => { c.spec.gatewayDelivery.secret.type = "Opaque"; }, /requires a Secret of type/],
@@ -3965,7 +4988,62 @@ function selfTest() {
       ["wave member dropped", (c) => { c.spec.waves[2].clusters.pop(); }, /rather than the prod clusters/],
       ["wave approvals miscounted", (c) => { c.spec.waves[2].approval.recordedApprovals = 1; }, /one approval per member/],
       ["wave approval iterated", (c) => { c.spec.waves[2].approval.appliedAsOneOperation = false; }, /one operation/],
-      ["wave upgrade iterated", (c) => { c.spec.waves[2].upgrade.appliedAsOneOperation = false; }, /one operation/],
+      ["wave promotion iterated", (c) => { c.spec.waves[2].promotion.appliedAsOneOperation = false; }, /one operation/],
+      ["change management dropped", (c) => { delete c.spec.changeManagement; }, /must record its change management/],
+      ["gate refusal dropped", (c) => { delete c.spec.changeManagement.gateRefusal; }, /server refusing to promote into staging before pilot released the change/],
+      ["gate not refused", (c) => { c.spec.changeManagement.gateRefusal.refused = false; }, /server refusing to promote into staging/],
+      ["gate refusal message dropped", (c) => { c.spec.changeManagement.gateRefusal.message = ""; }, /in the server's own words/],
+      ["gate refusal moved a variant", (c) => { c.spec.changeManagement.gateRefusal.headsUnchanged = false; }, /server refusing to promote into staging/],
+      ["management Space in the base component", (c) => {
+        c.spec.changeManagement.component.spaces.push(managementSpaceOf(c));
+      }, /management Space must not join the base's component/],
+      ["management Space in the change order's scope", (c) => {
+        c.spec.changeManagement.changeOrder.inScopeSpaces.push(managementSpaceOf(c));
+      }, /headed for exactly the base's component, never the management Space/],
+      // A coherent forgery: the receipt says, everywhere, that the base and
+      // its variants sit in a component another run could share.
+      ["shared component", (c) => { renameBaseComponent(c, componentLabel); }, /must be run-scoped/],
+      ["another run's component", (c) => {
+        renameBaseComponent(c, `${componentLabel}-20260101000000`);
+      }, /must be run-scoped/],
+      ["component not marked run-scoped", (c) => { c.spec.changeManagement.component.runScoped = false; }, /must be run-scoped/],
+      ["management shares the base component", (c) => {
+        c.spec.changeManagement.managementComponent.id = c.spec.changeManagement.component.id;
+      }, /must sit alone in its own run-scoped component/],
+      ["management component shared across runs", (c) => {
+        c.spec.changeManagement.managementComponent.slug = `${componentLabel}-management`;
+        c.spec.variants.find((row) => row.role === "management").component =
+          `${componentLabel}-management`;
+      }, /must sit alone in its own run-scoped component/],
+      ["another run's variant in scope", (c) => {
+        c.spec.changeManagement.changeOrder.inScopeSpaces.push("hx-sveltos-env-staging-20260101000000");
+      }, /headed for exactly the base's component/],
+      ["Healthy declared", (c) => { c.spec.changeManagement.workflow.prerequisites.push("Healthy"); }, /must live in the base Space, hold the stages/],
+      ["Healthy reason dropped", (c) => { c.spec.changeManagement.workflow.healthy.reason = "not needed"; }, /Healthy gate must stay undeclared/],
+      ["workflow stages reordered", (c) => {
+        c.spec.changeManagement.workflow.stages = ["staging", "pilot", "prod"];
+      }, /hold the stages pilot, staging, prod in that order/],
+      ["change order before the edit", (c) => {
+        c.spec.changeManagement.changeOrder.createdAfterBaseRevision = c.spec.base.revision;
+      }, /created after the reviewed edit landed on the base/],
+      ["wave upgrade reintroduced", (c) => {
+        c.spec.waves[1].upgrade = { command: recordedUpgradeCommand, appliedAsOneOperation: true, members: 1 };
+      }, /not a set upgrade the runner issued/],
+      ["wave promoted into another stage", (c) => { c.spec.waves[1].promotion.targetStage = "prod"; }, /must be the staging stage promoted/],
+      ["wave promotion under another change order", (c) => {
+        c.spec.waves[0].promotion.changeOrder = `${c.spec.base.space}/some-other-change`;
+      }, /must be the pilot stage promoted/],
+      ["stage selected the wrong variants", (c) => { c.spec.waves[2].stage.members.pop(); }, /stage selected exactly its variants/],
+      ["wave released at the head", (c) => { delete c.spec.waves[1].release.revision; }, /must publish each variant where the change order arrived/],
+      ["changed release at the head", (c) => { delete c.spec.variants[0].records[1].release.revision; }, /changed release must bundle ChangeOrder:/],
+      ["baseline release under the change order", (c) => {
+        c.spec.variants[1].records[0].release.revision = c.spec.variants[1].records[1].release.revision;
+      }, /changed release must bundle ChangeOrder:/],
+      ["variant outside its stage", (c) => { c.spec.variants[3].stage = "staging"; }, /must carry prod as its stage inside the base's component/],
+      ["variant outside the component", (c) => { c.spec.variants[0].component = `${componentLabel}-management-20260101000000`; }, /must carry pilot as its stage inside the base's component/],
+      ["management given a stage", (c) => {
+        c.spec.variants.find((row) => row.role === "management").stage = "prod";
+      }, /management record must sit in its own component and carry no stage/],
       ["wave unlock dropped", (c) => { delete c.spec.waves[0].unlockedBy; }, /must record the evidence that unlocked its approval/],
       ["wave unlock unmarked", (c) => { c.spec.waves[1].unlockedBy.approvalFollowedEvidence = false; }, /must record the evidence that unlocked its approval/],
       ["wave unlock wrong checkpoint", (c) => { c.spec.waves[2].unlockedBy.precedingCheckpointId = "baseline"; }, /must record the evidence that unlocked its approval/],
@@ -3992,7 +5070,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: one base and five per-cluster variants each naming its own SveltosCluster, the departure collision and clusterRefs-addressing refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, one set approval per wave with wave three approving two variants separately, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: the 2026-09-26 ChangeWorkflow probe replayed against the fake hub, with the Released gate refusing in the server's own words and unknown flags and verbs refused; one base and five per-cluster variants each naming its own SveltosCluster, the base and its four variants in a run-scoped component with each variant's environment as its stage and the management Space in a component of its own, with the management-in-base, wrong-stage, and staged-base refusals; one workflow gated on Released and not Healthy; one change order headed for exactly the run's five Spaces, with another run's Space in its scope refused; the server refusing a promotion into staging before pilot released, and the runner refusing to record a skip the server allowed; the departure collision and clusterRefs-addressing refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, three stages promoted by ConfigHub with one set approval each and wave three approving two variants separately, each variant releasing where the change order arrived, a stage that is not the wave refused, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin read from the lock with its released controller run as released and an override refused on that pin, the preload list taken from the pinned manifest's own image lines with no agent digest invented, the image override mechanism kept for a pin that needs it, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -4000,6 +5078,157 @@ function selfTest() {
     timeSource = realTime;
     rmSync(workRoot, { recursive: true, force: true });
   }
+}
+
+// The live probe of 2026-09-26 against cub v0.6.2, replayed step for step
+// against the fake: a change order needs its base Space attached to a
+// component entity, a label is not enough; --stage labels a variant's Space
+// and the variant inherits the component; a change order created after an
+// edit captures it; a promotion into a stage moves exactly the change; the
+// Released gate refuses the next stage while the one ahead has taken the
+// change without releasing it, in the server's own words; a release pinned
+// to the change order satisfies it; and a Space attached to the component
+// with no Stage label sits in the change order's scope while no stage
+// selects it. The fake is only worth what it answers, so it answers this
+// before the walk depends on it.
+function replayChangeWorkflowProbe(hub, workRoot) {
+  const answer = (args) => hub.handle(args);
+  const must = (args, label) => {
+    const result = answer(args);
+    check(result.ok, `probe replay, ${label}: ${result.error}`);
+    return result;
+  };
+  const probe = "probe-cw";
+  const base = `${probe}-base`;
+  const wiring = ["--trigger-filter", approvalFilterRef, "--where-trigger", "-"];
+  must([
+    "space", "create", base,
+    "--label", `Component=${probe}`,
+    ...wiring, "--quiet",
+  ], "base Space");
+  must([
+    "unit", "create", "--space", base, policyUnit,
+    join(exampleRoot, "clusterprofile-base.yaml"), "--quiet",
+  ], "base unit");
+  must([
+    "changeworkflow", "create", "--space", base, "line",
+    "--stage", "dev", "--stage", "prod",
+    "--prerequisites", "Released", "--quiet",
+  ], "workflow");
+  const detached = answer([
+    "changeorder", "create", "--space", base, "early",
+    "--change-workflow", `${base}/line`, "--description", "Too early", "--quiet",
+  ]);
+  check(
+    !detached.ok
+      && detached.error === `Space '${base}' has no ComponentID, so there is no component for a ChangeWorkflow's stages to select within`,
+    `probe replay: a Space with only a Component label must be refused a change order in the server's words, got ${detached.error || "success"}`,
+  );
+  must(["component", "create", probe, "--quiet"], "component");
+  must(["space", "update", base, "--component", probe, "--quiet"], "attach the base");
+  must(["target", "create", `${probe}-dev`, "{}", targetHost.worker,
+    "--space", targetHost.space, "--provider", "OCI", "--toolchain", "Any",
+    "--quiet"], "dev Target");
+  for (const stage of ["dev", "prod"]) {
+    must([
+      "variant", "create", stage, base,
+      "--space-pattern", `template:${probe}-${stage}`,
+      "--stage", stage, "--quiet",
+    ], `${stage} variant`);
+  }
+  must([
+    "unit", "set-target", policyUnit, `${targetHost.space}/${probe}-dev`,
+    "--space", `${probe}-dev`, "--quiet",
+  ], "dev unit target");
+  const spaceOf = (slug) =>
+    JSON.parse(must(["space", "get", slug, "-o", "json"], `read ${slug}`).output).Space;
+  check(
+    ["dev", "prod"].every((stage) =>
+      spaceOf(`${probe}-${stage}`).Labels?.Stage === stage
+      && spaceOf(`${probe}-${stage}`).ComponentID === spaceOf(base).ComponentID),
+    "probe replay: a variant must carry its --stage as its Stage label and inherit the base's component",
+  );
+  must([
+    "space", "create", `${probe}-loose`,
+    "--label", `Component=${probe}`,
+    ...wiring, "--component", probe, "--quiet",
+  ], "a Space attached with no stage");
+
+  const changedPath = join(workRoot, "probe-cw-changed.yaml");
+  const baseDoc = parseDocs(readFileSync(join(exampleRoot, "clusterprofile-base.yaml"), "utf8"))[0];
+  const changedDoc = structuredClone(baseDoc);
+  changedDoc.metadata.labels = { ...(changedDoc.metadata.labels ?? {}), probe: "changed" };
+  writeStoredDocuments(changedPath, [changedDoc]);
+  must(["unit", "update", "--space", base, policyUnit, changedPath, "--quiet"], "edit the base");
+  must([
+    "changeorder", "create", "--space", base, "bump",
+    "--change-workflow", `${base}/line`, "--description", "Bump", "--quiet",
+  ], "change order after the edit");
+  const order = JSON.parse(must([
+    "changeorder", "get", "--space", base, "bump", "-o", "json",
+  ], "read the change order").output).ChangeOrder;
+  check(
+    sameSet(
+      order.InScopeSpaceIDs,
+      [base, `${probe}-dev`, `${probe}-prod`, `${probe}-loose`]
+        .map((slug) => spaceOf(slug).SpaceID),
+    ),
+    "probe replay: a change order's scope must be every Space attached to the component, the unstaged one included",
+  );
+
+  const devBefore = JSON.parse(must([
+    "unit", "get", "--space", `${probe}-dev`, policyUnit, "-o", "json",
+  ], "read dev").output).Unit;
+  const skipped = answer([
+    "variant", "promote", "--change-order", `${base}/bump`,
+    "--target-stage", "prod", "--change-desc", "Skip dev", "--quiet",
+  ]);
+  check(!skipped.ok, "probe replay: prod must be refused before dev has taken the change");
+  must([
+    "variant", "promote", "--change-order", `${base}/bump`,
+    "--target-stage", "dev", "--change-desc", "Promote dev", "--quiet",
+  ], "promote dev");
+  const devAfter = JSON.parse(must([
+    "unit", "get", "--space", `${probe}-dev`, policyUnit, "-o", "json",
+  ], "read dev").output).Unit;
+  check(
+    Number(devAfter.HeadRevisionNum) === Number(devBefore.HeadRevisionNum) + 1
+      && parseDocs(storedData(devAfter))[0]?.metadata?.labels?.probe === "changed",
+    "probe replay: promoting dev must move exactly the change into dev",
+  );
+  const held = answer([
+    "variant", "promote", "--change-order", `${base}/bump`,
+    "--target-stage", "prod", "--change-desc", "Promote prod", "--quiet",
+  ]);
+  check(
+    !held.ok
+      && held.error === "unable to promote to stage 'prod', Variant 'dev' has taken change order 'bump' but has not released it",
+    `probe replay: prod must be refused in the server's words while dev has not released, got ${held.error || "success"}`,
+  );
+  must([
+    "release", "publish", `${probe}-dev`, "--revision", "ChangeOrder:bump", "-o", "json",
+  ], "release dev at the change order");
+  must([
+    "variant", "promote", "--change-order", `${base}/bump`,
+    "--target-stage", "prod", "--change-desc", "Promote prod", "--quiet",
+  ], "promote prod once dev released");
+
+  // The surface stays closed: a flag the probe never used and a verb the
+  // table does not name are both refused.
+  for (const [args, pattern, label] of [
+    [["changeorder", "create", "--space", base, "wide", "--change-workflow", `${base}/line`, "--in-scope-space", `${probe}-dev`], /unknown flag: --in-scope-space/, "an unused changeorder flag"],
+    [["variant", "promote", "--change-order", `${base}/bump`, "--target-stage", "prod", "--force"], /unknown flag: --force/, "a gate override"],
+    [["variant", "approve", "--change-order", `${base}/bump`, "--stage", "dev"], /unknown command "variant approve"/, "a verb outside the table"],
+    [["changeworkflow", "create", "--space", base, "other", "--stage", "dev", "--allow-exists"], /unknown flag: --allow-exists/, "a stray --allow-exists"],
+  ]) {
+    const result = answer(args);
+    check(!result.ok && pattern.test(result.error), `probe replay: ${label} must be refused, got ${result.error || "success"}`);
+  }
+
+  for (const slug of [`${probe}-dev`, `${probe}-prod`, `${probe}-loose`, base]) {
+    must(["space", "delete", slug, "--recursive-force", "--quiet"], `remove ${slug}`);
+  }
+  must(["component", "delete", probe, "--quiet"], "remove the component");
 }
 
 // A tampered copy of the reviewed example files, so a plan refusal is proved
@@ -4068,7 +5297,7 @@ function keptCleanup() {
 // The install path only needs a manifest with one CRD and one workload, so the
 // self-test writes a small one instead of pulling the pinned twenty thousand
 // lines over the network.
-function fakeSveltosManifest(image) {
+function fakeSveltosManifest(image, version) {
   return `apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -4090,6 +5319,18 @@ spec:
           image: ${image}
         - name: initialization
           image: ${image}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: register-mgmt-cluster-job
+  namespace: ${registrationNamespace}
+spec:
+  template:
+    spec:
+      containers:
+        - name: register-mgmt-cluster
+          image: docker.io/projectsveltos/register-mgmt-cluster:${version}
 `;
 }
 
@@ -4106,18 +5347,18 @@ function gzipDecodeFailureMessage(namesControlCharacters = true) {
   return `failed to decode k8s resource ${noise}${tail}`;
 }
 
-function fakeSveltosInstall(sveltos, addonControllerImage) {
+function fakeSveltosInstall(sveltos, addonControllerImage, preloadedImages) {
   return {
     source: sveltos.manifestUrl,
     version: sveltos.version,
     manifestSha256: sveltos.manifestSha256,
     addonControllerImage,
-    pinnedAddonControllerImage: `${addonControllerRepository}:${sveltos.version}`,
+    pinnedAddonControllerImage: pinnedAddonControllerImage(sveltos),
     addonControllerImageOverridden:
-      addonControllerImage !== `${addonControllerRepository}:${sveltos.version}`,
-    objectCount: 3,
+      addonControllerImage !== pinnedAddonControllerImage(sveltos),
+    objectCount: 4,
     crdCount: 1,
-    appliedObjectCount: 3,
+    appliedObjectCount: 4,
     omittedOptionalServiceMonitorCount: 0,
     deployments: [{
       name: "addon-controller",
@@ -4128,6 +5369,7 @@ function fakeSveltosInstall(sveltos, addonControllerImage) {
       observedGenerationMatches: true,
     }],
     installationMethod: "self-test fake surface",
+    imagePreload: imagePreloadRecord(sveltos, preloadedImages),
   };
 }
 
@@ -4228,9 +5470,36 @@ function createFakeConfigHub() {
     refuseUpstreamLink: false,
     mergeKeepsDepartureOnly: false,
     severUpstreamLineage: false,
+    ignoreStageGates: false,
     triggerIdOverride: null,
     releaseTargetOverride: null,
   };
+  // The ChangeWorkflow model: component entities Spaces attach to, workflows
+  // and change orders held in a Space, and, per Space, the change orders a
+  // release of that Space has carried. A unit that has taken a change order
+  // carries its end tag in `tags`, keyed by the change order.
+  const components = new Map();
+  const workflows = new Map();
+  const changeOrders = new Map();
+  const releasedChangeOrders = new Map();
+  const componentFor = (value) =>
+    components.get(value)
+    ?? [...components.values()].find((row) => row.ComponentID === value)
+    ?? null;
+  const resolveChangeOrder = (ref, fallbackSpace) => {
+    const text = String(ref ?? "");
+    if (text.includes("/")) return changeOrders.get(text) ?? null;
+    const named = [...changeOrders.values()].filter((row) => row.Slug === text);
+    if (fallbackSpace) {
+      const local = named.find((row) => row.SpaceSlug === fallbackSpace);
+      if (local) return local;
+    }
+    return named.length === 1 ? named[0] : null;
+  };
+  const repeated = (value) => [value ?? []].flat()
+    .flatMap((item) => String(item).split(","))
+    .map((item) => item.trim())
+    .filter(Boolean);
   const unitKey = (space, slug) => `${space}/${slug}`;
   const approvalsOn = (unit) =>
     Array.isArray(unit.ApprovedBy) ? unit.ApprovedBy.length : 0;
@@ -4267,6 +5536,12 @@ function createFakeConfigHub() {
   const handle = (args) => {
     const { positionals, flags } = parseCubCommand(args);
     const [entity, verb, ...rest] = positionals;
+    // The surface is closed both ways: a verb the flag table does not name is
+    // refused before its flags are read, and a flag outside a verb's row is
+    // refused in the CLI's own words.
+    if (!knownCubCommand(positionals)) {
+      return refuse(`unknown command "${positionals.slice(0, 2).join(" ")}" for "cub"`);
+    }
     const strayFlag = unknownCubFlag(positionals, flags);
     if (strayFlag) return refuse(strayFlag);
     if (entity === "auth" && verb === "get-token") {
@@ -4278,10 +5553,44 @@ function createFakeConfigHub() {
     if (entity === "trigger" && verb === "get") {
       return ok(JSON.stringify({ Trigger: { TriggerID: `self-test-trigger-${rest[0]}` } }));
     }
+    if (entity === "component" && verb === "create") {
+      const slug = rest[0];
+      if (!slug) return refuse("a component needs a name");
+      if (components.has(slug)) return refuse(`component ${slug} already exists`);
+      components.set(slug, {
+        Slug: slug,
+        ComponentID: `self-test-component-${slug}`,
+        Labels: labelsFrom(flags.label),
+      });
+      return ok("");
+    }
+    if (entity === "component" && verb === "get") {
+      const row = componentFor(rest[0]);
+      if (!row) return refuse(`component ${rest[0]} not found`);
+      return ok(JSON.stringify({ Component: structuredClone(row) }));
+    }
+    // The fake refuses to delete a component while a Space is still attached
+    // to it, which is why the runner removes its Spaces first.
+    if (entity === "component" && verb === "delete") {
+      const row = componentFor(rest[0]);
+      if (!row) return refuse(`component ${rest[0]} not found`);
+      const attached = [...spaces.values()]
+        .filter((space) => space.ComponentID === row.ComponentID)
+        .map((space) => space.Slug);
+      if (attached.length > 0) {
+        return refuse(`the self-test fake hub keeps component ${row.Slug} while ${attached.join(", ")} is attached to it`);
+      }
+      components.delete(row.Slug);
+      return ok("");
+    }
     if (entity === "space" && verb === "create") {
       const slug = rest[0];
       if (flags["trigger-filter"] !== approvalFilterRef) {
         return refuse(`unexpected trigger filter ${flags["trigger-filter"]}`);
+      }
+      const component = flags.component ? componentFor(flags.component) : null;
+      if (flags.component && !component) {
+        return refuse(`component ${flags.component} not found`);
       }
       spaces.set(slug, {
         Slug: slug,
@@ -4289,6 +5598,7 @@ function createFakeConfigHub() {
         TriggerIDs: [],
         ReleaseTargetID: null,
         TriggerFilterID: filterId,
+        ComponentID: component?.ComponentID ?? null,
         Labels: Object.fromEntries((flags.label ?? []).map((pair) => {
           const at = String(pair).indexOf("=");
           return [String(pair).slice(0, at), String(pair).slice(at + 1)];
@@ -4299,6 +5609,13 @@ function createFakeConfigHub() {
     if (entity === "space" && verb === "update") {
       const row = spaces.get(rest[0]);
       if (!row) return refuse(`space ${rest[0]} not found`);
+      if (flags.component === "-") {
+        row.ComponentID = null;
+      } else if (flags.component) {
+        const component = componentFor(flags.component);
+        if (!component) return refuse(`component ${flags.component} not found`);
+        row.ComponentID = component.ComponentID;
+      }
       if (flags["release-target"]) {
         const target = resolveTargetRef(flags["release-target"], rest[0]);
         if (!target) return refuse(`release target ${flags["release-target"]} not found`);
@@ -4350,15 +5667,23 @@ function createFakeConfigHub() {
       if (!spaces.has(slug)) return refuse(`space ${slug} not found`);
       spaces.delete(slug);
       releases.delete(slug);
+      releasedChangeOrders.delete(slug);
       for (const key of [...units.keys()]) {
         if (key.startsWith(`${slug}/`)) units.delete(key);
+      }
+      for (const map of [workflows, changeOrders]) {
+        for (const key of [...map.keys()]) {
+          if (key.startsWith(`${slug}/`)) map.delete(key);
+        }
       }
       return ok("");
     }
     // One verb clones the Space and every unit in it, links each clone to its
     // upstream, stamps the Variant label, and copies the approval wiring from
     // the upstream Space. The release target is deliberately not copied, which
-    // is why the runner sets it afterwards.
+    // is why the runner sets it afterwards. The clone inherits the upstream
+    // Space's component, and --stage sets its Stage label, which is what a
+    // workflow stage selects on.
     if (entity === "variant" && verb === "create") {
       const [variantName, upstreamSlug] = rest;
       const upstream = spaces.get(upstreamSlug);
@@ -4367,6 +5692,8 @@ function createFakeConfigHub() {
       if (!pattern.startsWith("template:") || pattern.includes("{{")) {
         return refuse(`the self-test fake hub resolves only literal space patterns, not ${pattern || "a derived slug"}`);
       }
+      const stages = repeated(flags.stage);
+      if (stages.length > 1) return refuse("a variant carries one stage");
       const slug = pattern.slice("template:".length);
       if (spaces.has(slug)) return refuse(`space ${slug} already exists`);
       spaces.set(slug, {
@@ -4375,7 +5702,12 @@ function createFakeConfigHub() {
         TriggerIDs: state.triggerIdOverride ?? [...upstream.TriggerIDs],
         ReleaseTargetID: null,
         TriggerFilterID: upstream.TriggerFilterID,
-        Labels: { ...(upstream.Labels ?? {}), Variant: variantName },
+        ComponentID: upstream.ComponentID ?? null,
+        Labels: {
+          ...(upstream.Labels ?? {}),
+          Variant: variantName,
+          ...(stages.length === 1 ? { Stage: stages[0] } : {}),
+        },
       });
       for (const [key, row] of [...units.entries()]) {
         if (row.SpaceSlug !== upstreamSlug) continue;
@@ -4454,32 +5786,172 @@ function createFakeConfigHub() {
       unit.Labels = { ...(unit.Labels ?? {}), ...labelsFrom(flags.label) };
       return ok(JSON.stringify({ Unit: projectUnit(unit) }));
     }
+    // Chapter three no longer moves a wave with a set upgrade it issues
+    // itself; ConfigHub promotes a change order stage by stage. The fake
+    // refuses the old verb, so a runner that slid back to it fails here.
     if (entity === "unit" && verb === "update" && flags.patch) {
-      if (!flags.upgrade) return refuse("the self-test fake hub only patches upgrades");
-      const selected = matching(flags.where);
-      if (!selected) return refuse(`unsupported where expression ${flags.where}`);
-      for (const unit of selected) {
-        const upstream = units.get(unit.UpstreamUnitKey ?? "");
-        if (!upstream) return refuse(`${unit.SpaceSlug}/${unit.Slug} has no upstream`);
-        const merged = state.mergeKeepsDepartureOnly
-          ? parseDocs(dataOf(unit))
-          : mergeUpstream(
-            parseDocs(upstream.history.get(unit.UpstreamRevisionNum)),
-            parseDocs(dataOf(upstream)),
-            parseDocs(dataOf(unit)),
-          );
-        unit.snapshot = {
-          HeadRevisionNum: unit.HeadRevisionNum,
-          Data: unit.Data,
-          ContentHash: unit.ContentHash,
-          UpstreamRevisionNum: unit.UpstreamRevisionNum,
+      return refuse("the self-test fake hub refuses a runner-issued set upgrade; chapter three promotes its change order through the workflow's stages");
+    }
+    // A workflow holds its stages in order and one set of gates for every
+    // stage. A stage named with --stage selects Labels.Stage = '<name>' within
+    // the change order's component.
+    if (entity === "changeworkflow" && verb === "create") {
+      const space = spaces.get(flags.space);
+      if (!space) return refuse(`space ${flags.space} not found`);
+      const slug = rest[0];
+      const key = `${space.Slug}/${slug}`;
+      if (!slug) return refuse("a ChangeWorkflow needs a slug");
+      if (workflows.has(key)) return refuse(`ChangeWorkflow ${key} already exists`);
+      const stageNames = repeated(flags.stage);
+      if (stageNames.length === 0) return refuse("a ChangeWorkflow needs at least one stage");
+      const prerequisites = repeated(flags.prerequisites);
+      const unknown = prerequisites.find(
+        (name) => !["Validated", "Released", "Healthy"].includes(name),
+      );
+      if (unknown) return refuse(`unknown prerequisite ${unknown}; a custom prerequisite is written in a file`);
+      workflows.set(key, {
+        Key: key,
+        Slug: slug,
+        SpaceSlug: space.Slug,
+        Stages: stageNames,
+        Prerequisites: prerequisites,
+      });
+      return ok("");
+    }
+    // A change order created after an edit captures it: for each unit of the
+    // Space, the range runs from the revision its downstream clones already
+    // took to the unit's head. Its scope is every Space attached to the
+    // Space's component, whether or not a stage selects it.
+    if (entity === "changeorder" && verb === "create") {
+      const space = spaces.get(flags.space);
+      if (!space) return refuse(`space ${flags.space} not found`);
+      const slug = rest[0];
+      const key = `${space.Slug}/${slug}`;
+      if (!slug) return refuse("a change order needs a slug");
+      if (changeOrders.has(key)) return refuse(`change order ${key} already exists`);
+      const workflowRef = String(flags["change-workflow"] ?? "");
+      const workflow = workflows.get(workflowRef.includes("/")
+        ? workflowRef
+        : `${space.Slug}/${workflowRef}`);
+      if (!workflow) return refuse(`ChangeWorkflow ${workflowRef} not found`);
+      // The live server's words, recorded on 2026-09-26.
+      if (!space.ComponentID) {
+        return refuse(`Space '${space.Slug}' has no ComponentID, so there is no component for a ChangeWorkflow's stages to select within`);
+      }
+      const range = {};
+      for (const [baseKey, unit] of units) {
+        if (unit.SpaceSlug !== space.Slug) continue;
+        const taken = [...units.values()]
+          .filter((row) => row.UpstreamUnitKey === baseKey)
+          .map((row) => row.UpstreamRevisionNum);
+        range[baseKey] = {
+          start: taken.length > 0 ? Math.min(...taken) : unit.HeadRevisionNum,
+          end: unit.HeadRevisionNum,
         };
-        unit.HeadRevisionNum += 1;
-        unit.UpstreamRevisionNum = upstream.HeadRevisionNum;
-        unit.ApprovedBy = [];
-        unit.ApplyGates = { "awaiting/triggers": true };
-        store(unit, documentsToText(merged));
-        pending.add(unitKey(unit.SpaceSlug, unit.Slug));
+      }
+      changeOrders.set(key, {
+        Key: key,
+        Slug: slug,
+        SpaceSlug: space.Slug,
+        ChangeOrderID: `self-test-changeorder-${space.Slug}-${slug}`,
+        ComponentID: space.ComponentID,
+        ChangeWorkflow: workflow.Key,
+        Description: String(flags.description ?? ""),
+        InScopeSpaceIDs: [...spaces.values()]
+          .filter((row) => row.ComponentID === space.ComponentID)
+          .map((row) => row.SpaceID)
+          .sort(),
+        range,
+      });
+      return ok("");
+    }
+    if (entity === "changeorder" && verb === "get") {
+      const row = resolveChangeOrder(
+        String(rest[0]).includes("/") ? rest[0] : `${flags.space}/${rest[0]}`,
+      );
+      if (!row) return refuse(`change order ${flags.space}/${rest[0]} not found`);
+      const { range, Key, ...projected } = row;
+      return ok(JSON.stringify({ ChangeOrder: structuredClone(projected) }));
+    }
+    // Promote exactly a change order's change into every variant one stage
+    // of its workflow selects. The stage's entry gates are evaluated once,
+    // over every Space of the stage ahead, before any variant moves.
+    if (entity === "variant" && verb === "promote") {
+      if (!flags["change-order"] || !flags["target-stage"]) {
+        return refuse("the self-test fake hub promotes a change order into a named stage, nothing else");
+      }
+      const order = resolveChangeOrder(flags["change-order"]);
+      if (!order) return refuse(`change order ${flags["change-order"]} not found`);
+      const workflow = workflows.get(order.ChangeWorkflow);
+      const target = String(flags["target-stage"]);
+      const index = workflow.Stages.indexOf(target);
+      if (index < 0) {
+        return refuse(`stage '${target}' is not a stage of ChangeWorkflow ${workflow.Key}`);
+      }
+      const stageSpaces = (name) => [...spaces.values()]
+        .filter((row) =>
+          row.ComponentID === order.ComponentID
+          && row.Labels?.Stage === name
+          && order.InScopeSpaceIDs.includes(row.SpaceID))
+        .sort((left, right) => left.Slug.localeCompare(right.Slug));
+      const covered = (space) => [...units.values()].filter((unit) =>
+        unit.SpaceSlug === space.Slug && order.range[unit.UpstreamUnitKey ?? ""]);
+      if (index > 0 && !state.ignoreStageGates) {
+        const ahead = workflow.Stages[index - 1];
+        for (const space of stageSpaces(ahead)) {
+          const variant = space.Labels?.Variant ?? space.Slug;
+          const taken = covered(space).length > 0
+            && covered(space).every((unit) => unit.tags?.[order.Key] !== undefined);
+          if (workflow.Prerequisites.includes("Released")) {
+            // Only the second wording below is the live server's, recorded
+            // on 2026-09-26. This first one, for a variant that has not taken
+            // the change at all, is the fake's own; the runner records
+            // whatever the server says and depends on neither.
+            if (!taken) {
+              return refuse(`unable to promote to stage '${target}', Variant '${variant}' has not taken change order '${order.Slug}'`);
+            }
+            if (!(releasedChangeOrders.get(space.Slug) ?? new Set()).has(order.Key)) {
+              return refuse(`unable to promote to stage '${target}', Variant '${variant}' has taken change order '${order.Slug}' but has not released it`);
+            }
+          }
+          // Healthy reads a live-status annotation nothing writes for a
+          // Sveltos-delivered Space, so in this fleet it never holds. The
+          // wording is the fake's own.
+          if (workflow.Prerequisites.includes("Healthy")) {
+            return refuse(`unable to promote to stage '${target}', Variant '${variant}' does not report Healthy`);
+          }
+        }
+      }
+      for (const space of stageSpaces(target)) {
+        for (const unit of covered(space)) {
+          if (unit.tags?.[order.Key] !== undefined) continue;
+          const bounds = order.range[unit.UpstreamUnitKey];
+          if (unit.UpstreamRevisionNum !== bounds.start) {
+            return refuse(`${space.Slug}/${unit.Slug} is not where change order ${order.Slug} starts`);
+          }
+          const upstream = units.get(unit.UpstreamUnitKey);
+          const merged = state.mergeKeepsDepartureOnly
+            ? parseDocs(dataOf(unit))
+            : mergeUpstream(
+              parseDocs(upstream.history.get(bounds.start)),
+              parseDocs(upstream.history.get(bounds.end)),
+              parseDocs(dataOf(unit)),
+            );
+          unit.snapshot = {
+            HeadRevisionNum: unit.HeadRevisionNum,
+            Data: unit.Data,
+            ContentHash: unit.ContentHash,
+            UpstreamRevisionNum: unit.UpstreamRevisionNum,
+            tags: structuredClone(unit.tags ?? {}),
+          };
+          unit.HeadRevisionNum += 1;
+          unit.UpstreamRevisionNum = bounds.end;
+          unit.ApprovedBy = [];
+          unit.ApplyGates = { "awaiting/triggers": true };
+          store(unit, documentsToText(merged));
+          unit.tags = { ...(unit.tags ?? {}), [order.Key]: unit.HeadRevisionNum };
+          pending.add(unitKey(unit.SpaceSlug, unit.Slug));
+        }
       }
       return ok("");
     }
@@ -4568,14 +6040,34 @@ function createFakeConfigHub() {
       }
       return ok("");
     }
+    // With no revision each unit is bundled at its head. With
+    // --revision ChangeOrder:<slug> each unit is bundled where that change
+    // order's end tag marks it, falling back to the head for a unit the change
+    // never reached. A release that bundles every tagged unit at its tag
+    // carries the change, which is what the Released gate reads.
     if (entity === "release" && verb === "publish") {
       const spaceSlug = rest[0];
+      let order = null;
+      if (flags.revision !== undefined) {
+        const boundary = /^ChangeOrder:(.+)$/.exec(String(flags.revision));
+        if (!boundary) {
+          return refuse(`the self-test fake hub publishes at a change order's boundary only, not ${flags.revision}`);
+        }
+        order = resolveChangeOrder(boundary[1]);
+        if (!order) return refuse(`change order ${boundary[1]} not found`);
+      }
       const rows = [...units.values()]
         .filter((unit) => unit.SpaceSlug === spaceSlug && unit.TargetID)
         .sort((left, right) => left.Slug.localeCompare(right.Slug));
       if (rows.length === 0) return refuse(`${spaceSlug} has no unit to publish`);
-      const digestInput = rows
-        .map((unit) => `${unit.Slug}:${unit.ContentHash}:${unit.HeadRevisionNum}`)
+      const bundled = rows.map((unit) => {
+        const revision = order && unit.tags?.[order.Key] !== undefined
+          ? unit.tags[order.Key]
+          : unit.HeadRevisionNum;
+        return { unit, revision, text: unit.history.get(revision) };
+      });
+      const digestInput = bundled
+        .map((row) => `${row.unit.Slug}:${sha256(row.text)}:${row.revision}`)
         .join("|");
       releaseSequence += 1;
       const manifestDigest = `sha256:${sha256(`manifest:${spaceSlug}:${releaseSequence}:${digestInput}`)}`;
@@ -4583,8 +6075,15 @@ function createFakeConfigHub() {
       // bytes and the fake cluster reads them back through the tag.
       releases.set(spaceSlug, {
         manifestDigest,
-        data: rows.map((unit) => dataOf(unit)).join("\n---\n"),
+        data: bundled.map((row) => row.text).join("\n---\n"),
       });
+      const carried = releasedChangeOrders.get(spaceSlug) ?? new Set();
+      const tagged = new Set(bundled.flatMap((row) => Object.keys(row.unit.tags ?? {})));
+      for (const key of tagged) {
+        const reached = bundled.filter((row) => row.unit.tags?.[key] !== undefined);
+        if (reached.every((row) => row.unit.tags[key] === row.revision)) carried.add(key);
+      }
+      releasedChangeOrders.set(spaceSlug, carried);
       return ok(JSON.stringify({
         Release: {
           ReleaseID: `self-test-release-${releaseSequence}`,
@@ -4596,7 +6095,7 @@ function createFakeConfigHub() {
     return refuse(`the self-test fake hub refuses: cub ${args.join(" ")}`);
   };
   const projectUnit = (unit) => {
-    const { history, UpstreamUnitKey, snapshot, ...rest } = unit;
+    const { history, UpstreamUnitKey, snapshot, tags, ...rest } = unit;
     return structuredClone(rest);
   };
   // The refused promotion left the variants a revision ahead, so the walk that
@@ -4612,13 +6111,24 @@ function createFakeConfigHub() {
     }
   };
   const releaseFor = (space) => releases.get(space) ?? null;
+  // A label moved by hand, so the self-test can show a stage that no longer
+  // selects the wave being refused. Undefined removes the label.
+  const setSpaceLabel = (slug, key, value) => {
+    const row = spaces.get(slug);
+    check(row, `the self-test fake hub has no Space ${slug}`);
+    row.Labels = { ...(row.Labels ?? {}) };
+    if (value === undefined) delete row.Labels[key];
+    else row.Labels[key] = value;
+  };
   return {
     state,
     handle,
     tick,
     releaseFor,
     restoreVariantBaselines,
+    setSpaceLabel,
     spaceLabels: (slug) => spaces.get(slug)?.Labels ?? null,
+    releasedChangeOrders: (slug) => [...(releasedChangeOrders.get(slug) ?? [])],
     filterId,
   };
 }
@@ -4672,7 +6182,7 @@ function parseCubCommand(args) {
     "--quiet", "--wait", "--patch", "--refresh-triggers", "--recursive-force",
     "--upgrade",
   ]);
-  const repeatable = new Set(["label"]);
+  const repeatable = new Set(["label", "stage", "prerequisites"]);
   const positionals = [];
   const flags = {};
   for (let index = 0; index < args.length; index += 1) {
