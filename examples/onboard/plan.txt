@@ -5,20 +5,20 @@ ingress-nginx  (selects env=prod)
   base     sveltos-ingress-nginx-base  reaches no cluster: clusterRefs is empty
   stage prod
     prod-eu      variant sveltos-ingress-nginx-prod-eu  ->  Target sveltos-targets/prod-eu
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
     prod-us      variant sveltos-ingress-nginx-prod-us  ->  Target sveltos-targets/prod-us
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
 
 kyverno  (selects env In [staging, prod])
   base     sveltos-kyverno-base  reaches no cluster: clusterRefs is empty
   stage staging
     staging-eu   variant sveltos-kyverno-staging-eu  ->  Target sveltos-targets/staging-eu
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
   stage prod
     prod-eu      variant sveltos-kyverno-prod-eu  ->  Target sveltos-targets/prod-eu
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
     prod-us      variant sveltos-kyverno-prod-us  ->  Target sveltos-targets/prod-us
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
 
 Management cluster mgmt/mgmt
   record   sveltos-management  one bootstrap profile per variant (5), fetching its release from the gateway
@@ -29,7 +29,7 @@ Not onboarded
 In ConfigHub
   4 Targets in sveltos-targets, one per cluster, on a server-hosted worker
   2 components, each one base, 5 variants, 1 management record
-  9 Spaces and 5 upgrade Links (check your organization's quotas for both first)
+  9 Spaces and 5 Links, one tying each variant to its base (check your organization's quotas for both first)
   first rollout: ingress-nginx in 1 stage, kyverno in 2 stages; one approval per stage, one release per variant
 
 Next: npm run onboard -- apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.

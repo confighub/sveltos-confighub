@@ -1,0 +1,78 @@
+
+##### 0. A live profile deploying plain resources through policyRefs  [21:27:59]
+configmap/demo-resources created
+clusterprofile.config.projectsveltos.io/demo-resources created
+  namespace 4c0df0a5-71af-402f-b561-65d38ec76dfb  configmap ab21c5eb-b32e-4b11-a32e-435eb9d9af18
+  demo-resources               Resources  Provisioned          
+
+##### 1-3. Export, plan, apply (only this profile)  [21:28:20]
+Onboarding plan: 1 profile over 1 cluster, one variant per cluster per profile (1 variants).
+Nothing has changed. This is what ConfigHub would hold.
+
+demo-resources  (selects env=prod)
+  base     ob4-demo-resources-base  reaches no cluster: clusterRefs is empty
+  stage fleet
+    prod-eu      variant ob4-demo-resources-prod-eu  ->  Target ob4-targets/prod-eu
+                 differs from the base in metadata.name, spec.clusterRefs
+
+Management cluster mgmt/mgmt
+  record   ob4-management  one bootstrap profile per variant (1), fetching its release from the gateway
+
+In ConfigHub
+  2 Targets in ob4-targets, one per cluster, on a server-hosted worker
+  1 components, each one base, 1 variants, 1 management record
+  4 Spaces and 1 Links, one tying each variant to its base (check your organization's quotas for both first)
+  first rollout: demo-resources in 1 stage; one approval per stage, one release per variant
+
+Live on your management cluster: demo-resources. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+
+
+Wrote onboard/apply.sh and the files it reads. Read it, then run it:
+  MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/apply.sh
+
+Then hand the live profiles over, without reinstalling anything:
+  MGMT_CONTEXT=<same context> bash onboard/takeover.sh
+  policyRefs:
+  - deploymentType: Remote
+    force: false
+    kind: ConfigMap
+    name: demo-resources
+    namespace: default
+    optional: false
+
+== 0/6 Check before changing anything
+
+== 1/6 One named Target per cluster, in ob4-targets
+
+== 2/6 One component, one base and one rollout workflow per profile
+
+== 3/6 One variant per cluster, addressed to that cluster alone
+
+== 4/6 The management cluster's record: its bootstrap profiles
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-ob4-targets created
+clusterprofile.config.projectsveltos.io/confighub-ob4-demo-resources-prod-eu created
+
+Done. Sveltos fetches each variant's release within a minute. Watch it with:
+  kubectl get clustersummaries -A
+
+#####    both profiles present: what Sveltos reports  [21:29:45]
+  demo-resources-prod-eu       Resources  Failed               processing ConfigMap default/demo-resources: A conflict was detected while deploying resource Namespace:/demo-policyrefs
+  demo-resources               Resources  Provisioned          
+  namespace 4c0df0a5-71af-402f-b561-65d38ec76dfb  configmap ab21c5eb-b32e-4b11-a32e-435eb9d9af18
+
+##### 4. takeover.sh  [21:29:45]
+== demo-resources
+clusterprofile.config.projectsveltos.io/demo-resources patched
+clusterprofile.config.projectsveltos.io "demo-resources" deleted
+
+Done. Each per-cluster profile reports Provisioned within a minute:
+  kubectl get clustersummaries -A
+  demo-resources-prod-eu       Resources  Provisioned          
+  namespace 4c0df0a5-71af-402f-b561-65d38ec76dfb  configmap ab21c5eb-b32e-4b11-a32e-435eb9d9af18
+  same objects before and after: nothing was deleted or recreated
+
+##### POLICYREFS-DONE  [21:31:11]

@@ -37,18 +37,6 @@ npm run onboard -- plan my-fleet.yaml --stage-label env --stages staging,prod
 from there: one more command writes the steps as a script to read and run,
 and live profiles hand over to their variants without reinstalling anything.
 
-Reading a release from the ConfigHub gateway needs an addon controller that
-decompresses gzipped layers. That fix shipped in Sveltos v1.14.0, and
-chapter three is recorded on the released **Sveltos v1.15.0**
-([lock](examples/sveltos/env-rollout/source-lock.yaml)) with its stock
-`projectsveltos/addon-controller:v1.15.0` and no override. The other
-chapters' recordings ran **Sveltos v1.13.0** with
-`projectsveltos/addon-controller:v1.13.0-ch`, a build carrying the fix
-before it shipped, which the
-[gateway probe](docs/planning/remote-url-oci-probe.md) measured; they name
-that build until they re-record on a release, and every receipt records the
-image its run used.
-
 This is the fleet companion to
 [kubara-confighub](https://github.com/confighub/kubara-confighub), which
 governs a platform one cluster at a time. This repository governs one change
@@ -72,7 +60,7 @@ cluster is the carrier for every lane:
 
 ```mermaid
 flowchart LR
-  b["base record"] -->|"change made once"| p["pilot variant"]
+  b["base"] -->|"change made once"| p["pilot variant"]
   b --> s["staging variant"]
   b --> pa["prod-a variant"]
   b --> pb["prod-b variant"]
@@ -92,26 +80,21 @@ Fleet tools can move configuration to many clusters. The harder question is
 what reached them and who agreed to it. Three answers here are unusual
 enough to be the point of the repository.
 
-- **A record and a cluster stand one to one.** Sveltos maps one profile to
-  many clusters by design, which is what lets it scale. This repository
-  narrows that on purpose: every cluster has its own governed record,
-  including the management cluster, and each record names its own cluster
-  in Sveltos's own API: one clusterRefs entry, so fan-out is impossible
-  rather than refused. A record covering two clusters cannot be
-  approved for one and held for the other, cannot be rolled back for one
-  alone, and cannot say which of them runs which revision today. The records
-  are variants of a shared base carrying only their own departures, so a
-  change made once still flows to all of them, and each variant's Space
-  releases to a Target named for its cluster, so which cluster a variant
-  ships to is ConfigHub's own destination model answering rather than a
-  selector line inside stored YAML. Every chapter holds its fleet this way,
-  and each committed receipt says which shape its recording used.
-- **The rollout definition is itself reviewed configuration.** A wave is a
-  label query over the per-cluster records, not a pipeline object beside
-  them, and widening a rollout means approving the next cluster's variant.
-  Each approval goes through the same gate as any other change and lands
-  that record at its own new digest. Chapter three also hands the order of
-  the waves to ConfigHub: each wave is a stage of a reviewed ChangeWorkflow,
+- **One variant per cluster.** Sveltos lets one profile reach many
+  clusters, which is how it scales. This repository narrows that on purpose:
+  every cluster, the management cluster included, has its own variant in
+  ConfigHub, and that variant names its one cluster in a single
+  `clusterRefs` entry, so it cannot reach a second cluster by accident. That
+  is what lets you approve a change for one cluster while holding another,
+  roll back one cluster alone, and say which revision each cluster runs
+  today. The variants share a base and hold only their differences, so a
+  change made once on the base still reaches all of them. Each variant ships
+  to a Target named for its cluster, so where it ships is recorded in
+  ConfigHub, not in a label selector inside the YAML.
+- **The rollout order is reviewed configuration too.** A wave is a query
+  over the variants' labels, such as staging or prod, not a separate
+  pipeline, and widening a rollout means approving the next cluster's
+  variant. In chapter three each wave is a stage of a reviewed ChangeWorkflow,
   and ConfigHub refuses to promote a change into a stage until the stage
   ahead has released it.
 - **Approval binds to an exact revision.** It is not a sync button and not a
@@ -126,6 +109,12 @@ enough to be the point of the repository.
   was published, what the controller fetched, and what Kubernetes reports.
 
 ## See the result first
+
+Three ConfigHub words appear below. A **Space** holds one variant or the
+base, a **Target** is a named destination (one per cluster), and a
+**component** groups a base with its variants. The
+[onboarding guide](docs/user/onboard-your-sveltos-fleet.md#the-words-you-will-meet)
+defines the rest in a few lines.
 
 This is the recorded chapter-three fleet as ConfigHub shows it: one base
 on the left, one variant per cluster on the right, and every deployment
@@ -343,6 +332,18 @@ out its require-approval trigger, whose function ConfigHub no longer has.
 Each runner checks its preconditions and stops early with a named reason
 instead of failing after the fleet build. Fleet proofs run serially, never in
 parallel.
+
+Reading a release from the ConfigHub gateway needs an addon controller that
+decompresses gzipped layers. That fix shipped in Sveltos v1.14.0, and
+chapter three is recorded on the released **Sveltos v1.15.0**
+([lock](examples/sveltos/env-rollout/source-lock.yaml)) with its stock
+`projectsveltos/addon-controller:v1.15.0` and no override. The other
+chapters' recordings ran **Sveltos v1.13.0** with
+`projectsveltos/addon-controller:v1.13.0-ch`, a build carrying the fix
+before it shipped, which the
+[gateway probe](docs/planning/remote-url-oci-probe.md) measured; they name
+that build until they re-record on a release, and every receipt records the
+image its run used.
 
 Requirements: node 22 or newer, python3 with pyyaml, and tar. The live lanes
 additionally use cub, docker, kind, kubectl, helm, curl, and oras.

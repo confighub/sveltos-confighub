@@ -10,6 +10,26 @@ You need this repository cloned (node 22 or newer, python3 with pyyaml), the
 `kubectl` access to your management cluster, which must run Sveltos v1.14.0
 or newer.
 
+## The words you will meet
+
+- **Base**: your ClusterProfile with its selector removed, stored once in
+  ConfigHub. It reaches no cluster; a change to the fleet is made here.
+- **Variant**: a copy of the base for one cluster. It names that cluster in
+  `clusterRefs` and inherits every later change to the base.
+- **Departure**: a field in which a variant differs from its base. Here that
+  is its name and its `clusterRefs` entry, nothing else.
+- **Space**: ConfigHub's folder for configuration. The base and each variant
+  get one; your organization has a quota of them.
+- **Component**: the group of one base and its variants. There is one per
+  profile.
+- **Target**: a named destination, one per cluster. A variant's releases go
+  to its cluster's Target, where Sveltos fetches them.
+- **Link**: what ties a variant to its base so changes flow down; one per
+  variant, also under a quota.
+- **Change order**: one change moving through the stages, pilot to prod, with
+  an approval recorded in each stage before its release. **Workflow**: the
+  stages and what each waits for.
+
 ## 1. Export what Sveltos knows
 
 On your management cluster:
@@ -34,12 +54,12 @@ kyverno  (selects env In [staging, prod])
   base     sveltos-kyverno-base  reaches no cluster: clusterRefs is empty
   stage staging
     staging-eu   variant sveltos-kyverno-staging-eu  ->  Target sveltos-targets/staging-eu
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
   stage prod
     prod-eu      variant sveltos-kyverno-prod-eu  ->  Target sveltos-targets/prod-eu
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
     prod-us      variant sveltos-kyverno-prod-us  ->  Target sveltos-targets/prod-us
-                 departs in metadata.name, spec.clusterRefs
+                 differs from the base in metadata.name, spec.clusterRefs
 ```
 
 Each profile becomes a **base**: your profile with its selector removed, so
@@ -116,17 +136,19 @@ reporting `cannot manage chart ... ClusterSummary ... managing it`.
 so deleting it leaves its add-ons in place, and then deletes it. Each
 per-cluster profile then takes over the release it was waiting for.
 
-Measured on kind with stock Sveltos v1.15.0 and Helm charts: the per-cluster
-profiles took over within a minute, every Helm release stayed at the revision
-it had, and every pod kept running with the same identity; nothing was
-reinstalled. Do not delete a live profile without `LeavePolicies`: by
-default Sveltos withdraws what it deployed, and the add-on would be
-uninstalled before its variant reinstalled it.
+Measured on kind with stock Sveltos v1.15.0, for Helm charts and for plain
+resources deployed through `policyRefs`: the per-cluster profiles took over
+within a minute, every Helm release stayed at the revision it had, every pod
+and every deployed object kept its identity, and nothing was reinstalled or
+recreated. Do not delete a live profile without `LeavePolicies`: by default
+Sveltos withdraws what it deployed, and the add-on would be uninstalled
+before its variant reinstalled it. Kustomize profiles follow the same order
+but have not been measured; check `kubectl get clustersummaries -A` after
+`takeover.sh`.
 
-That measurement covers Helm charts. For a profile that deploys plain
-resources through `policyRefs` or Kustomize, the same order applies, but it
-has not been measured yet: watch `kubectl get clustersummaries -A` after
-`takeover.sh` and confirm each per-cluster profile reports `Provisioned`.
+A profile that deploys through `policyRefs` names ConfigMaps or Secrets on
+your management cluster. ConfigHub governs the profile, including which of
+them it names; the ConfigMaps and Secrets themselves stay where they are.
 
 ## Making a change afterwards
 

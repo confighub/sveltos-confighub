@@ -65,8 +65,19 @@ run above:
   minute of that profile being deleted with `LeavePolicies`.
 - `cub unit get -o json` answers `HeadRevisionNum`; a fresh clone is at 2.
 
+## The takeover with plain resources
+
+A second run the same night, on a management cluster and one workload
+cluster ([log](onboarding-rehearsal-policyrefs-2026-09-26.log)), repeated the
+takeover for a live profile that deploys a Namespace and a ConfigMap through
+`policyRefs`. While both profiles existed, the per-cluster one reported `A
+conflict was detected while deploying resource Namespace:/demo-policyrefs`
+and nothing changed. After `takeover.sh` it reported `Provisioned`, and both
+objects kept their UIDs: nothing was deleted or recreated. The ConfigMap the
+profile names stays on the management cluster; ConfigHub governs the profile.
+
 ## Not measured
 
-The takeover with profiles that deploy plain resources through `policyRefs`
-or Kustomize; Cluster API clusters as input; namespaced `Profile` objects;
-EventTrigger-made profiles. The guide says so where each would matter.
+The takeover with Kustomize profiles; Cluster API clusters as input;
+namespaced `Profile` objects; EventTrigger-made profiles. The guide says so
+where each would matter.
