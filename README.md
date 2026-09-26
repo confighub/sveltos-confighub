@@ -24,18 +24,16 @@ npm run verify
 ```
 
 Reading a release from the ConfigHub gateway needs an addon controller that
-decompresses gzipped layers. Every committed recording that reads the
-gateway ran **Sveltos v1.13.0** with
-`projectsveltos/addon-controller:v1.13.0-ch`, a
-build carrying that fix before it shipped, and the
-[gateway probe](docs/planning/remote-url-oci-probe.md) measured that pair.
-The fix shipped in Sveltos v1.14.0, so chapter three now pins the released
-**Sveltos v1.15.0** ([lock](examples/sveltos/env-rollout/source-lock.yaml))
-and runs its stock `projectsveltos/addon-controller:v1.15.0` with no
-override; its live re-record will be the first recording on a released
-controller. The other chapters still pin v1.13.0 and name the v1.13.0-ch
-build until they re-record, and every receipt records the image its run
-used.
+decompresses gzipped layers. That fix shipped in Sveltos v1.14.0, and
+chapter three is recorded on the released **Sveltos v1.15.0**
+([lock](examples/sveltos/env-rollout/source-lock.yaml)) with its stock
+`projectsveltos/addon-controller:v1.15.0` and no override. The other
+chapters' recordings ran **Sveltos v1.13.0** with
+`projectsveltos/addon-controller:v1.13.0-ch`, a build carrying the fix
+before it shipped, which the
+[gateway probe](docs/planning/remote-url-oci-probe.md) measured; they name
+that build until they re-record on a release, and every receipt records the
+image its run used.
 
 This is the fleet companion to
 [kubara-confighub](https://github.com/confighub/kubara-confighub), which
@@ -47,9 +45,9 @@ across many clusters.
 1. Config comes from ConfigHub, where a reviewed record is stored, checked,
    and held until someone approves it.
 2. A named person approves one exact revision, and ConfigHub publishes it as
-   an OCI image on its OCI gateway. In chapter three's current design the
-   approval is an attestation, `cub variant approve`, and ConfigHub refuses
-   the release until it is recorded.
+   an OCI image on its OCI gateway. In chapter three the approval is an
+   attestation, `cub variant approve`, and ConfigHub refuses the release
+   until it is recorded.
 3. Sveltos on the management cluster fetches that image and sends the
    reviewed profile to the one cluster its clusterRefs entry names.
 4. Sveltos keeps that cluster aligned and repairs drift.
@@ -98,10 +96,10 @@ enough to be the point of the repository.
   label query over the per-cluster records, not a pipeline object beside
   them, and widening a rollout means approving the next cluster's variant.
   Each approval goes through the same gate as any other change and lands
-  that record at its own new digest. Chapter three's runner now also hands
-  the order of the waves to ConfigHub: each wave is a stage of a
-  ChangeWorkflow, and ConfigHub refuses to promote a change into a stage
-  until the stage ahead has released it.
+  that record at its own new digest. Chapter three also hands the order of
+  the waves to ConfigHub: each wave is a stage of a reviewed ChangeWorkflow,
+  and ConfigHub refuses to promote a change into a stage until the stage
+  ahead has released it.
 - **Approval binds to an exact revision.** It is not a sync button and not a
   paused bundle. Approving yesterday's revision authorises nothing about
   today's, and the bytes that shipped are the bytes that were approved.
@@ -153,39 +151,37 @@ four release publishes, because each Space publishes its own release.
 
 Chapter three governs one variant per cluster over a shared base, so
 ConfigHub answers which cluster runs which revision from its own records
-rather than from a label query Sveltos resolves at delivery time. Its
-committed [receipt](runs/sveltos-env-rollout-proof/receipt.yaml) records that
-design live, with waves the runner moved itself: one set upgrade and one set
-approval per wave, one approval per cluster, and one release for every
-cluster it delivered to. The runner has since moved its waves onto ConfigHub
-ChangeWorkflows. Each wave is now a stage: one ChangeOrder captures the
-reviewed edit on the base, `cub variant promote --change-order` moves exactly
-that change into the variants a stage selects, and ConfigHub enforces the
-`Released` gate on the server, refusing to enter a stage until every variant
-of the stage ahead has released the change. The runner proves the refusal
-before wave one by asking ConfigHub to skip straight into staging.
+rather than from a label query Sveltos resolves at delivery time, and it
+promotes its waves through a ConfigHub ChangeWorkflow. Its committed
+[receipt](runs/sveltos-env-rollout-proof/receipt.yaml), recorded live on
+2026-09-26 on the released Sveltos v1.15.0, shows each wave as a stage: one
+ChangeOrder captured the reviewed edit on the base,
+`cub variant promote --change-order` moved exactly that change into the
+variants a stage selects, and ConfigHub enforced the `Released` gate on the
+server. Before wave one the runner asked ConfigHub to skip straight into
+staging, and the receipt carries the server's refusal in its own words.
 
-Approval in that design is an attestation. On 2026-09-25 ConfigHub removed
-the trigger-based approval gate the recordings used (confighubai/confighub#5495),
-so every stage of chapter three's reviewed
-[workflow](examples/sveltos/env-rollout/change-workflow.yaml) now requires one
-Approval attestation before a release of the change is published into it. Each
-wave attempts the release first and records ConfigHub's refusal, then
-approves the change in the stage with
-`cub variant approve --change-order <base-space>/<change-order> --stage <stage>`
-and publishes. The baseline goes through a change order of its own that
-carries no change, so every release that reaches a cluster passes the same
-gate. The runs are single-operator, and ConfigHub does not by default count
+Approval is an attestation. On 2026-09-25 ConfigHub removed the
+trigger-based approval gate the earlier recordings used
+(confighubai/confighub#5495), so every stage of chapter three's reviewed
+[workflow](examples/sveltos/env-rollout/change-workflow.yaml) requires one
+Approval attestation before a release of the change is published into it.
+Each wave attempted the release first, and ConfigHub refused it with HTTP
+422 ("requires approval … has 0 of 1"); the runner recorded that refusal,
+approved the change in the stage with
+`cub variant approve --change-order <base-space>/<change-order> --stage <stage>`,
+and published. The baseline went through a change order of its own that
+carries no change, so every release that reached a cluster passed the same
+gate. The run is single-operator, and ConfigHub does not by default count
 an approval from whoever promoted the change, so the workflow sets
 `AllowAuthors: true` and the receipt says plainly that the demo relaxes
 separation of duties; a production workflow keeps the default and has a
 second approver. The `Healthy` gate waits for a Sveltos status reporter
 ([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and for
 ConfigHub to recognise the provider (confighubai/confighub#5049), so the
-runner's checkpoint evidence stays the observed-health layer. That design
-awaits its live re-record, so the observed cells of the
-[per-cluster matrix](data/sveltos-env-rollout/matrix.md) stay empty until the
-re-record earns them.
+runner's checkpoint evidence is the observed-health layer: every cell of the
+[per-cluster matrix](data/sveltos-env-rollout/matrix.md), four clusters at
+four checkpoints, is an observed pass from that receipt.
 
 Chapter six continues that same recorded fleet and makes the opposite move.
 One production cluster was restored to its exact pre-advance revision, the
@@ -228,9 +224,9 @@ and records its phase timings.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
    one reviewed values change pilot to staging to production, with one
    governed variant per cluster and no variant addressing two clusters.
-   Recorded live on the gateway with waves the runner moved itself; the
-   runner now promotes each wave as a ConfigHub ChangeWorkflow stage and
-   awaits its live re-record.
+   Each wave is a ConfigHub ChangeWorkflow stage whose releases wait for an
+   Approval attestation. Recorded live on the gateway on the released
+   Sveltos v1.15.0.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
    that proves no cluster was missed. No vulnerability scanning is claimed.
@@ -250,20 +246,18 @@ All six chapters are recorded live on the per-cluster design over the
 gateway: each cluster with its own governed variant, its own named Target,
 and its own clusterRefs address, every wave's approval carrying the
 checkpoint evidence that unlocked it, and every observed matrix cell
-coming from a committed receipt. Chapter three's matrix holds no observed
-cells for now, because its runner moved to ChangeWorkflows and attestations
-after that recording. Every receipt that builds a fleet records the addon
-controller image its run used; chapter six builds nothing and names the
-recorded cohort that does.
+coming from a committed receipt. Every receipt that builds a fleet records
+the addon controller image its run used; chapter six builds nothing and
+names the recorded cohort that does.
 
-Those recordings approved through the trigger-based gate ConfigHub removed
-on 2026-09-25, and they stay valid as records of what happened. The live
-lanes of chapters one, two, four, five, and six are still written against
-that gate, so each now stops before building anything and says why; they
-move to attestations next
+Chapter three is recorded on ChangeWorkflows and attestations. The
+recordings of chapters one, two, four, five, and six approved through the
+trigger-based gate ConfigHub removed on 2026-09-25, and they stay valid as
+records of what happened. Their live lanes are still written against that
+gate, so each now stops before building anything and says why; they move to
+attestations next
 ([#34](https://github.com/confighub/sveltos-confighub/issues/34)). Their
 offline self-tests keep walking the old path against their own fakes.
-Chapter three's live lane is the one written against attestations.
 
 ## How to run it
 

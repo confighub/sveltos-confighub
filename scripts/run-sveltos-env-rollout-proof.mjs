@@ -5487,13 +5487,22 @@ function selfTest() {
       !predatesChangeWorkflow(halfPreWorkflow),
       "a receipt with one upgraded wave among promoted stages must not pass as an old recording",
     );
-    // The committed recording is that shape, and it stays recognised as
-    // awaiting its re-record, never verified against this design.
+    // The committed recording is judged by its own shape: an old-shape receipt
+    // stays recognised as awaiting its re-record, and a receipt recorded on
+    // this design must verify against it in full.
     if (existsSync(receiptPath)) {
-      check(
-        verifyReceipt(readYaml(receiptPath)) === false,
-        "the committed chapter-three receipt must be recognised as predating the attestation design and awaiting its live re-record",
-      );
+      const committed = readYaml(receiptPath);
+      if (predatesChangeWorkflow(committed)) {
+        check(
+          verifyReceipt(committed) === false,
+          "the committed chapter-three receipt has the pre-workflow shape, so it must be recognised as awaiting its live re-record",
+        );
+      } else {
+        check(
+          verifyReceipt(committed) === true,
+          "the committed chapter-three receipt is recorded on this design, so it must verify against it in full",
+        );
+      }
     }
 
     const managementSpaceOf = (c) =>

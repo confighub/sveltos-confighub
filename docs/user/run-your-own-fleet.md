@@ -41,10 +41,11 @@ API, so nothing is resolved by label at delivery time.
    created after the edit, captures it, and each wave promotes it into one
    stage, `cub variant promote --change-order <base-space>/<change-order> --target-stage <stage>`.
    ConfigHub enforces the order on the server and refuses a stage until the
-   stage ahead has released the change. That design awaits its live
-   re-record. The recorded chapters four and five upgraded the wave's set
-   instead, `cub unit update --patch --space "*" --where <query> --upgrade`,
-   and left the order to the runner.
+   stage ahead has released the change; chapter three's receipt records
+   that refusal live. The recorded chapters four and five upgraded the
+   wave's set instead,
+   `cub unit update --patch --space "*" --where <query> --upgrade`, and left
+   the order to the runner.
 3. Approve the change as it stands in the stage, in one operation:
    `cub variant approve --change-order <base-space>/<change-order> --stage <stage>`.
    ConfigHub records an Approval attestation on each record's exact
@@ -107,11 +108,11 @@ These were each paid for once so you do not have to.
   Space unpublishable.
 - **The gateway serves gzipped layers**, so the addon controller needs the
   gzip fix. Stock v1.13.0 fails with "failed to decode k8s resource" on the
-  same profile, which is why every gateway recording so far ran the
-  `projectsveltos/addon-controller:v1.13.0-ch` build. The fix shipped in
-  Sveltos v1.14.0, and chapter three now pins the released v1.15.0 and runs
-  its stock controller; its re-record will be the first on a released
-  controller. Every receipt records the image its run used.
+  same profile, which is why the gateway recordings before the fix shipped
+  ran the `projectsveltos/addon-controller:v1.13.0-ch` build. The fix
+  shipped in Sveltos v1.14.0, and chapter three is recorded on the released
+  v1.15.0 with its stock controller and no override. Every receipt records
+  the image its run used.
 - **The gateway auth secret must be typed** `addons.projectsveltos.io/cluster-profile`
   with the token under the `token` key; an Opaque secret is rejected. The
   ORAS client is HTTPS-only.
@@ -268,18 +269,16 @@ stops with a named reason.
 
 Every chapter is recorded live on the design this guide describes: one
 variant per cluster over the gateway, waves unlocked by checkpoint evidence.
-Those recordings approved through the trigger-based gate ConfigHub removed
-on 2026-09-25. Chapter three's runner has since moved its waves onto
-ConfigHub ChangeWorkflows and its approvals onto attestations, and that
-design awaits its live re-record. The other chapters' live lanes are still
-written against the removed gate, so each stops before building anything
-until it moves too
+Chapter three is recorded on ConfigHub ChangeWorkflows, with approvals as
+attestations, on the released Sveltos v1.15.0 (2026-09-26). The other
+chapters' recordings approved through the trigger-based gate ConfigHub
+removed on 2026-09-25, and their live lanes are still written against it, so
+each stops before building anything until it moves too
 ([#34](https://github.com/confighub/sveltos-confighub/issues/34)). Chapter
 three's `Healthy` gate waits on a Sveltos status reporter
 ([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and on
 ConfigHub recognising the provider (confighubai/confighub#5049).
-The gzip fix the recordings needed has shipped in a Sveltos release
-([#2](https://github.com/confighub/sveltos-confighub/issues/2)): chapter
-three now pins the released v1.15.0 and re-records on it together with its
-ChangeWorkflows. The other chapters still pin v1.13.0, and their recordings
+The gzip fix the earlier recordings needed has shipped in a Sveltos release
+([#2](https://github.com/confighub/sveltos-confighub/issues/2)), and chapter
+three runs it. The other chapters still pin v1.13.0, and their recordings
 name the gzip-capable v1.13.0-ch build until they re-record on a release.
