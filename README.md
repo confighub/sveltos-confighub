@@ -117,24 +117,39 @@ This is the recorded chapter-three fleet as ConfigHub shows it: one base
 on the left, one variant per cluster on the right, and every deployment
 card headed by its own named Target — the cluster it ships to is
 ConfigHub's own destination model, not a selector line inside the YAML.
-Each variant sits at its second release after one reviewed change to the
-base, and the base is the dashed node with no Target at all, because the
-base ships nowhere:
+Each variant sits at its second release: the first carried its reviewed
+baseline, the second the one reviewed change to the base. The base is the
+dashed node with no Target at all, because the base ships nowhere, and the
+management record lives in a component of its own, so it is not drawn here:
 
-![One base record fanning out to one variant per cluster](docs/images/sveltos/sveltos-flow-graph.png)
+![One base fanning out to one variant per cluster](docs/images/sveltos/sveltos-flow-graph.png)
 
 The "Not reported yet" chips are the honest part: ConfigHub publishes and
 never connects to the clusters, so live state is not its claim to make.
 Sveltos knows the answer per cluster, and teaching ConfigHub to show
 Sveltos's reading in Sveltos's own words is proposed upstream.
 
-One variant up close, the pilot cluster's, with the whole story in its
-activity: cloned from the base behind the approval gate, departed in
-exactly three fields (its name, the clusterRefs entry that names its
-cluster, its removal behaviour), then inheriting the reviewed base change.
-The approval binds to that record's exact revision:
+The change itself, as ConfigHub's Rollouts view shows it. One change order
+carries the one reviewed edit on the base, `backgroundController.replicas`
+from 1 to 2, and moved it through the workflow's stages: pilot, then
+staging, then both production clusters, each stage entered only after the
+stage ahead had released the change, and each stage's releases published
+only after the change was approved there. "Complete, unverified" is honest
+too: every stage has taken the change, and the workflow declares no health
+check yet, because nothing reports Sveltos's view to ConfigHub:
 
-![The pilot cluster's variant: clone, three departures, inherited change, approval](docs/images/sveltos/sveltos-record-history.png)
+![The change order's promotion path: source, pilot, staging, prod, complete](docs/images/sveltos/sveltos-change-order-rollout.png)
+
+One variant up close, the pilot cluster's, with the whole story in its
+activity: cloned from the base, departed in exactly three fields (its name,
+the clusterRefs entry that names its cluster, its removal behaviour), then
+taking the reviewed base change when the change order was promoted into the
+pilot stage. Its Target is named for its cluster. The approval is an
+attestation on that variant's exact revision, which
+`cub attestation list --space <space>` shows; this page does not show
+attestations yet:
+
+![The pilot cluster's variant: clone, three departures, the promoted change](docs/images/sveltos/sveltos-record-history.png)
 
 Chapter four is fleet patch day with evidence: the patched chart's
 provenance was checked against the reviewed digest before anything was
