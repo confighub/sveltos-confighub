@@ -30,6 +30,7 @@ import {
   sha256File,
   toYaml,
 } from "./lib/proof-common.mjs";
+import { refuseRetiredApprovalLane } from "./lib/per-cluster-fleet.mjs";
 
 const mode = process.argv[2] ?? "--verify";
 const cubContext = process.env.CUB_CONTEXT ?? "";
@@ -38,6 +39,15 @@ if (!["--verify", "--hub-record", "--hub-verify", "--self-test"].includes(mode))
     "Usage: node scripts/verify-sveltos-example.mjs [--verify|--hub-record|--hub-verify|--self-test]",
   );
   process.exit(1);
+}
+// The hub lanes record and check the demo Space's approval policy, which
+// names the platform/require-approval trigger ConfigHub removed. They stop
+// before touching the hub and say why; the offline lanes are unchanged.
+if (["--hub-record", "--hub-verify"].includes(mode)) {
+  refuseRetiredApprovalLane(
+    `Chapter one's hub lane (node scripts/verify-sveltos-example.mjs ${mode})`,
+    "It records and checks a Space approval policy built on the platform/require-approval trigger and its vet-approvedby function",
+  );
 }
 
 const surfaceFiles = {

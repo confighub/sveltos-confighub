@@ -1,0 +1,22 @@
+AttestationPrerequisites:
+  - Name: approval
+    Type: Approval
+    Count: 1
+    AllowAuthors: true
+Stages:
+  - Name: pilot
+    WhereSpace: "Labels.Stage = 'pilot'"
+    ReleasePrerequisites:
+      - approval
+  - Name: staging
+    WhereSpace: "Labels.Stage = 'staging'"
+    Prerequisites:
+      - Released
+    ReleasePrerequisites:
+      - approval
+  - Name: prod
+    WhereSpace: "Labels.Stage = 'prod'"
+    Prerequisites:
+      - Released
+    ReleasePrerequisites:
+      - approval

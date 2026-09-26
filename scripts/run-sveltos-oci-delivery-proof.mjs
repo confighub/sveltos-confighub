@@ -24,6 +24,7 @@ import {
   waveUnlockEvidence,
   writeDocuments,
   preloadSveltosImages,
+  refuseRetiredApprovalLane,
   unknownCubFlag,
 } from "./lib/per-cluster-fleet.mjs";
 import {
@@ -1027,6 +1028,10 @@ function createCluster(name, kubeconfigPath) {
 }
 
 function run() {
+  // ConfigHub removed the approval mechanism this lane is written against
+  // (confighubai/confighub#5495). It stops before building anything and says
+  // why, rather than failing at its first approval after a fleet build.
+  refuseRetiredApprovalLane("Chapters one and two's live lane (npm run sveltos-oci-delivery:run)");
   const policyContext = process.env.CUB_CONTEXT?.trim() ?? "";
   check(
     process.env.HELM_EXPT_ALLOW_LIVE_SVELTOS_OCI_PROOF === "1",

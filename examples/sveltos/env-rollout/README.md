@@ -138,8 +138,21 @@ copies of the same file:
 Each variant is created with its environment as its stage
 (`cub variant create <cluster> <base-space> --stage <environment>`), which
 labels its Space `Stage=pilot`, `Stage=staging`, or `Stage=prod`. The run
-creates one ChangeWorkflow in the base Space whose stages are pilot, then
-staging, then prod, each gated on `Released`.
+creates one ChangeWorkflow in the base Space from the reviewed
+[change-workflow.yaml](change-workflow.yaml)
+(`cub changeworkflow create --space <base-space> <workflow> --filename change-workflow.yaml`).
+Its stages are pilot, then staging, then prod. Staging and prod are entered
+only once the stage ahead has `Released` the change, and every stage's
+`ReleasePrerequisites` name `approval`: one Approval attestation. The run's
+component then declares the workflow required.
+
+Every variant's baseline is released through a change order of its own that
+carries no change to the base. Stage by stage it is promoted, which marks
+each variant's reviewed head without cutting a revision, refused at release,
+approved, and released, so every release that reaches a cluster passes the
+same gate. If any step of that path misbehaves, the run stops and names the
+step rather than publish a baseline outside a change order, and the receipt
+records the path the baseline took.
 
 The [change candidate](change-candidate.yaml) is one values edit that raises
 `backgroundController.replicas` from 1 to 2 in the Kyverno 3.8.1 chart. It is
@@ -152,9 +165,12 @@ workflow, which captures exactly that edit as the change. Each wave then:
    `cub variant promote --change-order <base-space>/<change-order> --target-stage <environment>`,
 3. checks that every variant came out carrying the inherited change and its
    own departures,
-4. approves the set in one operation, so ConfigHub records one approval per
-   cluster, each bound to that cluster's own exact revision, and
-5. publishes each variant where the change arrived, with
+4. attempts each variant's release and records ConfigHub's refusal, an
+   HTTP 422 naming the missing approval, as the wave's gate observation,
+5. approves the change as it stands in the stage, in one operation, with
+   `cub variant approve --change-order <base-space>/<change-order> --stage <environment>`,
+   which records an Approval attestation on each variant's exact revision, and
+6. publishes each variant where the change arrived, with
    `cub release publish <space> --revision ChangeOrder:<change-order>`.
 
 Every approved revision is published as a release the ConfigHub OCI gateway
@@ -189,11 +205,34 @@ approval is requested until the preceding checkpoint shows the clusters it
 depends on reporting healthy, and every wave records that evidence as
 `unlockedBy`.
 
-Approval still clears the apply gate with the proven set approval,
-`cub unit approve --space "*" --where <query> --revision HeadRevisionNum`.
-`cub variant approve` records approvals of a change order in a stage, but it
-is not yet shown to clear the `platform/require-approval/vet-approvedby` gate
-every Space carries.
+## Approval is an attestation
+
+On 2026-09-25 ConfigHub removed its trigger-based approval gate, the
+`vet-approvedby` function, the per-unit approve verb, and the approval fields
+on units (confighubai/confighub#5495). The committed recording used that
+gate. An approval is now an Attestation: a record that someone approved
+specific revisions, bound to their exact content, which changes nothing it
+approves. The workflow requires it at release: a release of a change order
+into a stage is refused with HTTP 422 until each revision it bundles carries
+the approval the stage names. The Spaces stay wired to the platform trigger
+filter for its validating triggers, and the gate preflight checks that the
+filter no longer resolves an approval trigger.
+
+The runs are single-operator, and ConfigHub counts whoever promoted a change
+into a Space as one of its authors there. By default an author's approval
+does not count, so the operator could never approve their own promotion. The
+reviewed workflow therefore sets `AllowAuthors: true`, and every receipt says
+plainly that the demo relaxes separation of duties. Measured on 2026-09-26,
+the strict setting refused the promoter's own approval with
+`requires approval: 1 Approval attestation(s) from eligible attesters who did not write the change; <unit> revision <n> has 0 of 1`.
+A production workflow keeps `AllowAuthors: false` and has a second approver
+sign off.
+
+A component can declare that its promotions and releases require a
+ChangeWorkflow, and the run's component does. Measured on 2026-09-26,
+ConfigHub records that declaration but still accepts a plain publish outside
+a change order, so every release in the run goes through a change order
+because the runner sends it there. The receipt says so.
 
 ## What a departure may not touch
 
@@ -240,19 +279,20 @@ The management cluster has a record too, and it holds one bootstrap profile
 per workload Space, each pointing at that Space on the gateway. That record
 is what lets the management cluster fetch from the gateway at all, so its
 first revision cannot arrive through the gateway. It is applied once with
-kubectl as cluster setup, and ConfigHub governs every revision after that
-under the same approval gate. It is stored, gated, and approved exactly like
-every other record, and it is the one record that publishes no release. The
-receipt records that boundary rather than implying the management cluster
-governed itself from the beginning.
+kubectl as cluster setup. It is stored and checked like every other record,
+and its approval is recorded as an attestation with
+`cub variant approve <management-space>`, but it is the one record that
+publishes no release, so no release gate reads that approval and nothing
+server-side gates it. The receipt records that boundary rather than implying
+the management cluster governed itself from the beginning.
 
 ## What this costs
 
 A fleet-wide change is now N approvals and N publishes rather than one label
 edit. The wave is two commands for the operator, because one promotion covers
-every variant the stage selects and one approve command covers the set, but
-ConfigHub still records one approval and one release per cluster, and the
-receipt counts them that way.
+every variant the stage selects and one approve command covers the stage, but
+ConfigHub still records an approval on each cluster's own revision and one
+release per cluster, and the receipt counts them that way.
 That is the trade taken deliberately: the mapping is worth more than the
 saved keystrokes, because it is what makes per-cluster approval and
 per-cluster rollback possible at all.
@@ -277,20 +317,24 @@ records five governed records over one base, one set upgrade and one set
 approval per wave, and the per-cluster observations of that run. Its
 [summary](../../../data/sveltos-env-rollout/summary.md) stays as recorded.
 
-The runner now promotes through a ChangeWorkflow, as described above, and
-that design awaits its live re-record. The verifier recognises the committed
-receipt by its shape, says that it predates the ChangeWorkflow design, and
-fills nothing from it, so every observed cell in the matrix stays empty until
-the re-record earns it.
+The runner now promotes through a ChangeWorkflow and approves with
+attestations, as described above, and that design awaits its live re-record.
+The verifier recognises the committed receipt by its shape, says that it
+predates the ChangeWorkflow design, and fills nothing from it, so every
+observed cell in the matrix stays empty until the re-record earns it.
 
-Before it builds anything the runner probes the approval gate on a throwaway
-Space and Unit, so a wiring problem refuses in seconds instead of failing
-after the fleet build. Its self-test proves the same governance walk offline
-against fake ConfigHub and cluster surfaces, with no account or cluster. The
-fake answers the ChangeWorkflow verbs the way a live probe on 2026-09-26
-recorded the server answering, including the `Released` gate's refusal in the
+Before it builds anything the runner checks that the local cub records
+approvals as attestations, then probes the gates on a throwaway Space: it
+reads which triggers the platform filter resolves and refuses if one is
+still the removed approval trigger, then creates the reviewed workflow there
+and reads its approval requirement back. A wiring problem refuses in seconds
+instead of failing after the fleet build. Its self-test proves the same
+governance walk offline against fake ConfigHub and cluster surfaces, with no
+account or cluster. The fake answers the ChangeWorkflow and attestation verbs
+the way the live probes of 2026-09-26 recorded the server answering,
+including the `Released` gate's refusal and the release gate's refusal in the
 server's own words, and it refuses any verb or flag the runner is not known
-to use.
+to use, the removed per-unit approve verb among them.
 
 ## Chapter four
 
@@ -312,25 +356,26 @@ npm run sveltos-env-rollout:verify
 # self-contained HTML contract. No account, cluster, or network access.
 npm run sveltos-env-rollout:self-test
 
-# Deterministic self-test of the live runner: the ChangeWorkflow probe
-# replayed against the fake hub, the gate preflight, the base and its five
-# variants in their components, the change order and the server's refusal to
-# skip a stage, the set queries with their refusals, all nine approval
-# brackets, and the receipt tamper battery, against fake ConfigHub and OCI
-# surfaces. A few seconds.
+# Deterministic self-test of the live runner: the ChangeWorkflow and
+# attestation probes replayed against the fake hub, the gate preflight, the
+# base and its five variants in their components, the baseline change order
+# and its fail-closed refusals, the change order and the server's refusal to
+# skip a stage, each release refused until approved, and the receipt tamper
+# battery, against fake ConfigHub and OCI surfaces. About a minute.
 npm run sveltos-env-rollout-proof:self-test
 ```
 
 The live proof builds a self-contained kind fleet, creates one base record and
-five per-cluster variants, promotes one change order through the workflow's
-stages, approves each wave as one set operation, publishes each approved
-revision as an OCI image that Sveltos fetches itself, and closes with a
-convergence audit. Fleet proofs run serially against the organization, never
-in parallel.
+five per-cluster variants, releases each baseline through its own change
+order, promotes one change order through the workflow's stages, approves the
+change in each stage as an attestation once its release has been refused,
+publishes each approved revision as an OCI image that Sveltos fetches itself,
+and closes with a convergence audit. Fleet proofs run serially against the
+organization, never in parallel.
 
-Confirm the approval wiring first. The probe wires one throwaway Space,
-creates one probe Unit, watches for the approval gate, and cleans up after
-itself:
+Confirm the gates first. The probe checks the platform filter's triggers,
+creates the reviewed workflow in one throwaway Space, reads its approval
+requirement back, and cleans up after itself:
 
 ```bash
 CUB_CONTEXT=my-policy npm run sveltos-gate:probe

@@ -71,6 +71,7 @@ import {
   waveUnlockEvidence,
   writePath,
   writeStoredDocuments,
+  refuseRetiredApprovalLane,
 } from "./lib/per-cluster-fleet.mjs";
 import {
   check,
@@ -521,6 +522,10 @@ function canonicalEqual(left, right) {
 // ---------------------------------------------------------------------------
 
 function run() {
+  // ConfigHub removed the approval mechanism this lane is written against
+  // (confighubai/confighub#5495). It stops before building anything and says
+  // why, rather than failing at its first approval after a fleet build.
+  refuseRetiredApprovalLane("Chapter six's live lane (npm run sveltos-held-cluster-proof:run)");
   const policyContext = process.env.CUB_CONTEXT?.trim() ?? "";
   check(
     process.env.HELM_EXPT_ALLOW_LIVE_SVELTOS_HELD_CLUSTER === "1",

@@ -43,9 +43,11 @@ matrix, a receipt contract, and deterministic self-tests.
    wave a stage of a ConfigHub ChangeWorkflow: one ChangeOrder captures the
    reviewed edit, `cub variant promote --change-order` moves it into one
    stage at a time, and ConfigHub enforces the `Released` gate on the server,
-   refusing a stage until the stage ahead has released the change. That
-   design awaits its live re-record, so the matrix's observed cells stay
-   empty until then.
+   refusing a stage until the stage ahead has released the change. Every
+   stage's releases also require one Approval attestation, recorded with
+   `cub variant approve --change-order … --stage …`, and ConfigHub refuses a
+   release until it is recorded. That design awaits its live re-record, so
+   the matrix's observed cells stay empty until then.
 4. **[CVE patching](../../../examples/sveltos/cve-patch/README.md)** is fleet
    patch day with evidence: one reviewed version bump with digest-bound
    provenance, promoted through the same groups, closed by a coverage audit
@@ -96,18 +98,30 @@ must visibly show that it is held with no approval on file. After someone
 approves that exact revision, the block lifts and the approval is on record,
 which proves the bytes that shipped are the bytes that were approved.
 
-That boundary works. The approval gate attaches to a record about a second
-after it is created. An earlier report here said the gate never appeared;
-that was a misreading in this repository's own observation code, which asked
-the server for a projection it does not return, and it has been withdrawn.
+The recorded chapters watched that boundary through a trigger-based approval
+gate that attached to a record about a second after it was created. An
+earlier report here said the gate never appeared; that was a misreading in
+this repository's own observation code, which asked the server for a
+projection it does not return, and it has been withdrawn. ConfigHub removed
+that gate on 2026-09-25 (confighubai/confighub#5495). An approval is now an
+attestation on exact revisions, and a ChangeWorkflow requires it before a
+release of a change is published. Chapter three's runner watches the
+boundary that way: it attempts each release before approval and records
+ConfigHub's refusal, then approves and publishes. The other chapters' live
+lanes are still written against the removed gate, so each stops before
+building anything until it moves
+([#34](https://github.com/confighub/sveltos-confighub/issues/34)).
 
 Every chapter's runner fetches each approved release from the gateway,
 holds its fleet per-cluster, gives each cluster's Space a Target named for
 it, names each cluster through clusterRefs, and refuses a wave's approval
 until the preceding checkpoint shows the clusters it depends on reporting
 healthy — and every chapter is recorded live on exactly that design.
-Chapter three's runner has since handed the order of its waves to
-ConfigHub, and that design awaits one run: its live re-record. Its `Healthy`
+Chapter three's runner has since handed the order of its waves and the
+approval of each stage's releases to ConfigHub, and that design awaits one
+run: its live re-record. Its single-operator runs relax separation of duties,
+because ConfigHub does not by default count an approval from whoever
+promoted the change, and its receipt says so. Its `Healthy`
 gate waits longer, on a Sveltos status reporter
 ([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and on
 ConfigHub recognising the provider (confighubai/confighub#5049), so the
@@ -119,9 +133,11 @@ the released v1.15.0, so its re-record runs a released controller as
 published; the other chapters still pin v1.13.0 and name the v1.13.0-ch
 build until they re-record.
 
-Every drafted runner starts with a gate preflight: it creates a throwaway
-record, waits for the approval gate to attach, and refuses in seconds if it
-never does, instead of failing after the seven-minute fleet build.
+Chapter three's runner starts with a gate preflight: it wires a throwaway
+Space to the platform filter, refuses if the filter still resolves the
+removed approval trigger, creates the reviewed workflow there and reads its
+approval requirement back, and refuses in seconds if anything is missing,
+instead of failing after the seven-minute fleet build.
 
 
 ## Run the offline proofs yourself
@@ -152,9 +168,11 @@ GitOps controller as the OCI carrier; the
 [live remoteURL probe](../../planning/remote-url-oci-probe.md) verified the
 direct fetch path this design now uses.
 
-One probe answers for every lane whether approval gates attach in your own
-organization: `CUB_CONTEXT=my-policy npm run sveltos-gate:probe` wires a
-throwaway record, watches for the gate, cleans up, and reports what it saw.
+One probe answers whether your own organization carries what chapter three
+gates on: `CUB_CONTEXT=my-policy npm run sveltos-gate:probe` wires a
+throwaway Space to the platform filter, checks its triggers, creates the
+reviewed workflow and reads its approval requirement back, cleans up, and
+reports what it saw.
 The patched
 chart's digest and values fit can be checked any day with
 `npm run sveltos-cve-patch-proof:verify-chart`, with no account or cluster.
