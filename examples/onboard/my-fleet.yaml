@@ -1,0 +1,90 @@
+# A Sveltos fleet as its owner already describes it: ClusterProfiles that pick
+# clusters by label, and the SveltosClusters they pick from. On a live
+# management cluster the same input comes from
+#
+#   kubectl get clusterprofiles,sveltosclusters -A -o yaml
+#
+# `npm run onboard -- plan` reads this and shows the fleet ConfigHub would
+# govern: one base per profile, and one variant per cluster the profile
+# selects today, each addressed to its one cluster by clusterRefs.
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: mgmt
+  namespace: mgmt
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: dev-1
+  namespace: projectsveltos
+  labels:
+    env: dev
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: staging-eu
+  namespace: projectsveltos
+  labels:
+    env: staging
+    region: eu
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: prod-eu
+  namespace: projectsveltos
+  labels:
+    env: prod
+    region: eu
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: prod-us
+  namespace: projectsveltos
+  labels:
+    env: prod
+    region: us
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno
+spec:
+  clusterSelector:
+    matchExpressions:
+      - key: env
+        operator: In
+        values: [staging, prod]
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://kyverno.github.io/kyverno/
+      repositoryName: kyverno
+      chartName: kyverno/kyverno
+      chartVersion: 3.8.1
+      releaseName: kyverno
+      releaseNamespace: kyverno
+      helmChartAction: Install
+      values: |
+        admissionController:
+          replicas: 3
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: ingress-nginx
+spec:
+  clusterSelector:
+    matchLabels:
+      env: prod
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://kubernetes.github.io/ingress-nginx
+      repositoryName: ingress-nginx
+      chartName: ingress-nginx/ingress-nginx
+      chartVersion: 4.15.1
+      releaseName: ingress-nginx
+      releaseNamespace: ingress-nginx
+      helmChartAction: Install

@@ -1,0 +1,15 @@
+{
+  "Slug": "server-worker",
+  "OrgRole": "none",
+  "ProvidedInfo": {
+    "IsServerWorker": true,
+    "BridgeWorkerInfo": {
+      "SupportedConfigTypes": [
+        {
+          "ProviderType": "OCI",
+          "ToolchainType": "Any"
+        }
+      ]
+    }
+  }
+}
