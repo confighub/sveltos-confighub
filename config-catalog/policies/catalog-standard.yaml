@@ -143,6 +143,76 @@ spec:
             has(r.spec.disposition) &&
             has(r.spec.evidence) && size(r.spec.evidence) > 0 &&
             (!r.spec.automatic || r.spec.disposition == "observed"))
+    - ref: platform/workload-sensitive-env-secret-refs
+      displayName: "Block apply - credential values must use Secrets"
+      event: Mutation
+      toolchain: Kubernetes/YAML
+      functionName: vet-cel
+      effect: block
+      description: >-
+        This catalog apply gate blocks supported Kubernetes workloads that put a
+        non-empty password, token, API key, or secret key directly in a container
+        environment variable. Remove the literal value and refer to a Kubernetes
+        Secret instead. The gate covers Pods, Deployments, StatefulSets,
+        DaemonSets, ReplicaSets, Jobs, and CronJobs, including init and ephemeral
+        containers.
+      arguments:
+        - name: expression
+          value: >-
+            !has(r.kind) ||
+            !(r.kind in ["Pod", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob"]) ||
+            (r.kind == "Pod" &&
+            has(r.spec) &&
+            (!has(r.spec.containers) || r.spec.containers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == ""))) &&
+            (!has(r.spec.initContainers) || r.spec.initContainers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == ""))) &&
+            (!has(r.spec.ephemeralContainers) || r.spec.ephemeralContainers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == "")))) ||
+            (r.kind in ["Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job"] &&
+            has(r.spec) && has(r.spec.template) && has(r.spec.template.spec) &&
+            (!has(r.spec.template.spec.containers) || r.spec.template.spec.containers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == ""))) &&
+            (!has(r.spec.template.spec.initContainers) || r.spec.template.spec.initContainers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == ""))) &&
+            (!has(r.spec.template.spec.ephemeralContainers) || r.spec.template.spec.ephemeralContainers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == "")))) ||
+            (r.kind == "CronJob" &&
+            has(r.spec) && has(r.spec.jobTemplate) && has(r.spec.jobTemplate.spec) &&
+            has(r.spec.jobTemplate.spec.template) && has(r.spec.jobTemplate.spec.template.spec) &&
+            (!has(r.spec.jobTemplate.spec.template.spec.containers) || r.spec.jobTemplate.spec.template.spec.containers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == ""))) &&
+            (!has(r.spec.jobTemplate.spec.template.spec.initContainers) || r.spec.jobTemplate.spec.template.spec.initContainers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == ""))) &&
+            (!has(r.spec.jobTemplate.spec.template.spec.ephemeralContainers) || r.spec.jobTemplate.spec.template.spec.ephemeralContainers.all(c,
+            !has(c.env) || c.env.all(e,
+            !has(e.name) ||
+            !e.name.matches("(?i)^(PASSWORD|TOKEN|API_KEY|SECRET_KEY|.+_(PASSWORD|TOKEN|API_KEY|SECRET_KEY))$") ||
+            !has(e.value) || e.value == ""))))
     - ref: platform/probes-declared
       displayName: "Warn - workload health probes are missing"
       event: Mutation
@@ -204,7 +274,7 @@ spec:
   baseline:
     filter: platform/helm-catalog-checks
     displayName: "Catalog checks before apply"
-    filterWhere: "Space.Slug = 'platform' AND Slug ~ '^(aicr-training-images-pinned|aicr-training-secret-refs|digest-pinned-images|lifecycle-route-evidence|probes-declared|vet-placeholders|vet-schemas)$'"
+    filterWhere: "Space.Slug = 'platform' AND Slug ~ '^(aicr-training-images-pinned|aicr-training-secret-refs|digest-pinned-images|lifecycle-route-evidence|probes-declared|vet-placeholders|vet-schemas|workload-sensitive-env-secret-refs)$'"
     spaceSelector:
       labels:
         ApplyPolicyProfile: catalog-standard
@@ -240,7 +310,7 @@ spec:
   approvalRequired:
     filter: platform/helm-catalog-prod-gates
     displayName: "Catalog checks and approval before apply"
-    filterWhere: "Space.Slug = 'platform' AND Slug ~ '^(aicr-training-images-pinned|aicr-training-secret-refs|digest-pinned-images|lifecycle-route-evidence|probes-declared|require-approval|vet-placeholders|vet-schemas)$'"
+    filterWhere: "Space.Slug = 'platform' AND Slug ~ '^(aicr-training-images-pinned|aicr-training-secret-refs|digest-pinned-images|lifecycle-route-evidence|probes-declared|require-approval|vet-placeholders|vet-schemas|workload-sensitive-env-secret-refs)$'"
     spaceSelector:
       anyOf:
         - labels:
