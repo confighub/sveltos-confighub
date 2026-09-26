@@ -161,6 +161,7 @@ const knownCubFlags = new Map([
   ["filter get", ["space", "o"]],
   ["trigger get", ["space", "o"]],
   ["component create", ["label", "quiet"]],
+  ["component update", ["patch", "change-workflow-required", "allowed-change-workflow", "quiet"]],
   ["component get", ["o"]],
   ["component delete", ["quiet"]],
   ["space create", ["label", "trigger-filter", "where-trigger", "component", "quiet"]],
@@ -169,7 +170,11 @@ const knownCubFlags = new Map([
   ["space delete", ["recursive-force", "quiet"]],
   ["variant create", ["space-pattern", "stage", "quiet"]],
   ["variant promote", ["change-order", "target-stage", "change-desc", "quiet"]],
-  ["changeworkflow create", ["space", "stage", "prerequisites", "quiet"]],
+  // Approval is an attestation now: of a change order's change in one stage,
+  // or of what a release of one Space would bundle.
+  ["variant approve", ["change-order", "stage", "quiet"]],
+  ["changeworkflow create", ["space", "stage", "prerequisites", "filename", "quiet"]],
+  ["changeworkflow get", ["space", "o"]],
   ["changeorder create", ["space", "change-workflow", "description", "quiet"]],
   ["changeorder get", ["space", "o"]],
   ["target create", ["space", "provider", "toolchain", "label", "allow-exists", "quiet"]],
@@ -178,6 +183,10 @@ const knownCubFlags = new Map([
   ["unit update", ["space", "patch", "upgrade", "where", "label", "change-desc", "quiet", "o"]],
   ["unit get", ["space", "o"]],
   ["unit list", ["space", "where", "quiet", "o"]],
+  // Removed from ConfigHub with the rest of the old approval API
+  // (confighubai/confighub#5495). It stays in this table only because the
+  // offline fakes of the chapters that have not moved to attestations still
+  // walk their old approval path; their live lanes refuse to start.
   ["unit approve", ["space", "where", "revision", "wait", "quiet"]],
   ["unit set-target", ["space", "quiet"]],
   ["release publish", ["revision", "o"]],
@@ -215,6 +224,28 @@ export function runScopedComponents(componentLabel, runId) {
     base: spaceName(`${componentLabel}-${runId}`),
     management: spaceName(`${componentLabel}-management-${runId}`),
   };
+}
+
+// ConfigHub removed its old approval mechanism on 2026-09-25
+// (confighubai/confighub#5495, API_MINOR 6): the per-unit approve verb, the
+// vet-approvedby and is-approved functions, the ApprovedBy fields, the Approve
+// endpoints, and with them the platform/require-approval trigger this
+// repository's helm-catalog organization ran. Approval is an attestation now,
+// recorded with `cub variant approve` and required by a ChangeWorkflow. A live
+// lane still written against the old mechanism cannot record an approval, so
+// it would build a fleet and then fail at its first approval. It stops here,
+// before anything is built, and says why. Its offline self-test keeps walking
+// the old path against its own fake, which is a record of what it did, not a
+// claim about what ConfigHub does today.
+export const retiredApprovalLaneMarker = "stops before building anything: the old ConfigHub approval API is removed";
+
+export function refuseRetiredApprovalLane(
+  lane,
+  how = "It approves with the per-unit approve verb and the platform/require-approval trigger",
+) {
+  throw new Error(
+    `${lane} ${retiredApprovalLaneMarker}. ${how}, which ConfigHub removed on 2026-09-25 (confighubai/confighub#5495, API_MINOR 6). Approvals are attestations now, recorded with cub variant approve and required by a ChangeWorkflow. Chapter three has moved to them; this lane moves next, see confighub/sveltos-confighub#34.`,
+  );
 }
 
 // Docker Hub throttles anonymous pulls, and a fleet lane multiplies every
@@ -599,6 +630,266 @@ export function governedRecords(deps) {
       "--change-desc", changeDesc,
       "--quiet",
     ]);
+  }
+
+  // ---------------------------------------------------------------------
+  // The attestation path. ConfigHub records an approval as an Attestation
+  // on exact Revisions, and a ChangeWorkflow requires it: a stage's
+  // ReleasePrerequisites are evaluated when a Release of a change order is
+  // published into one of its Spaces, and a publish they do not allow is
+  // refused with HTTP 422 and nothing left behind. Chapters that have moved
+  // to it use these; the ones that have not keep the functions above.
+  // ---------------------------------------------------------------------
+
+  // A workflow with attestation requirements is written in a file, because
+  // the flags cannot carry per-stage release prerequisites. It is read back,
+  // so a server that does not know attestation requirements is found out
+  // before anything depends on them.
+  function createChangeWorkflowFromFile(context, { space, slug, path }) {
+    cub(context, [
+      "changeworkflow", "create", "--space", space, slug,
+      "--filename", path,
+      "--quiet",
+    ]);
+    const answer = cubJson(context, [
+      "changeworkflow", "get", "--space", space, slug, "-o", "json",
+    ]);
+    const workflow = answer?.ChangeWorkflow ?? answer;
+    check(
+      Array.isArray(workflow?.Stages) && Array.isArray(workflow?.AttestationPrerequisites),
+      `${space}/${slug} answered without Stages and AttestationPrerequisites (keys: ${Object.keys(workflow ?? {}).join(", ") || "none"}), so ConfigHub did not keep the approval requirement`,
+    );
+    return {
+      space,
+      slug,
+      ref: `${space}/${slug}`,
+      stages: workflow.Stages,
+      attestationPrerequisites: workflow.AttestationPrerequisites,
+    };
+  }
+
+  // Declares that the component's promotions and releases go through this
+  // workflow. Measured on 2026-09-26, ConfigHub records the declaration but
+  // does not yet refuse a plain publish outside a change order, so a caller
+  // records it as intent, not as a gate.
+  function requireChangeWorkflow(context, { component, workflowRef }) {
+    cub(context, [
+      "component", "update", "--patch", component,
+      "--change-workflow-required",
+      "--allowed-change-workflow", workflowRef,
+      "--quiet",
+    ]);
+  }
+
+  // A new revision runs the Space's validating triggers. A publish that
+  // arrives while they are queued is refused for that reason rather than for
+  // a missing approval, so the gate is observed only once they have run.
+  function waitForTriggers(context, space, unit) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      const current = cubJson(
+        context,
+        ["unit", "get", unit, "--space", space, "-o", "json"],
+      ).Unit;
+      if (current.ApplyGates?.["awaiting/triggers"] !== true) return current;
+      sleep(1000);
+    }
+    throw new Error(`${space}/${unit} still had queued triggers after 90s`);
+  }
+
+  // Publishing a change order's release before anyone approved it must be
+  // refused by its release gate. A trigger still queued is waited out; any
+  // other answer is returned for the caller to judge.
+  function attemptGatedRelease(context, space, revision) {
+    for (let attempt = 0; attempt < publishGateAttempts; attempt += 1) {
+      const result = cubTry(context, [
+        "release", "publish", space, "--revision", revision, "-o", "json",
+      ], { timeout: 300_000 });
+      if (result.ok) return { published: true, output: result.output };
+      const message = String(result.error ?? "");
+      if (!pendingApplyGate(message)) return { published: false, message };
+      sleep(publishGatePollMs);
+    }
+    return {
+      published: false,
+      message: `${space} still had outstanding apply gates after ${Math.round((publishGateAttempts * publishGatePollMs) / 1000)}s`,
+    };
+  }
+
+  function releaseGateRefused(message) {
+    return /unable to publish a release of change order/.test(message)
+      && /requires approval: /.test(message);
+  }
+
+  // One operation approves the change as it stands in every Space of a stage.
+  function approveChangeInStage(context, { changeOrderRef, stage }) {
+    return cubTry(context, [
+      "variant", "approve",
+      "--change-order", changeOrderRef,
+      "--stage", stage,
+      "--quiet",
+    ]);
+  }
+
+  // Approves what a release of one Space would bundle: each unit with a
+  // Target, at its head. Used for a record no release gate reads.
+  function approveSpaceRelease(context, space) {
+    return cubTry(context, ["variant", "approve", space, "--quiet"]);
+  }
+
+  // One stage of a change order, from promotion to release: the stored
+  // content checked against the reviewed documents, the label query checked
+  // against the stage's variants, a release attempted before any approval
+  // and refused by the release gate, one approval of the change as it
+  // stands in the stage, the head unchanged by approving, and the release
+  // then published where the change order arrived. The refusal is recorded
+  // as the gate observation; an approval never stands without one before it.
+  function attestedReleaseSet({
+    policyContext,
+    stageName,
+    query,
+    members,
+    changeOrder,
+    stage,
+  }) {
+    const revision = `ChangeOrder:${changeOrder.slug}`;
+    const stored = {};
+    for (const member of members) {
+      const unit = waitForTriggers(policyContext, member.space, policyUnit);
+      check(
+        canonicalDocs(parseDocs(storedData(unit)))
+          === canonicalDocs(member.expectedDocs),
+        `ConfigHub stored a different ${stageName} record for ${member.cluster}`,
+      );
+      if (member.minimumRevision !== undefined) {
+        check(
+          Number(unit.HeadRevisionNum) >= member.minimumRevision,
+          `the ${stageName} did not create a new revision for ${member.cluster}`,
+        );
+      }
+      stored[member.cluster] = unit;
+    }
+    const selection = selectSet({
+      policyContext,
+      stageName,
+      query,
+      expectedUnits: members.map((member) => `${member.space}/${policyUnit}`),
+    });
+    const refusals = {};
+    for (const member of members) {
+      const attempt = attemptGatedRelease(policyContext, member.space, revision);
+      check(
+        !attempt.published,
+        `ConfigHub published ${member.space} at ${revision} before anyone approved it; the ${stage} stage's release gate did not hold`,
+      );
+      check(
+        releaseGateRefused(attempt.message),
+        `the ${stageName} release of ${member.cluster} was refused for a reason other than its missing approval: ${attempt.message}`,
+      );
+      refusals[member.cluster] = attempt.message;
+    }
+    const approved = approveChangeInStage(policyContext, {
+      changeOrderRef: changeOrder.ref,
+      stage,
+    });
+    check(
+      approved.ok,
+      `ConfigHub did not record the approval of ${changeOrder.ref} in the ${stage} stage: ${approved.error}`,
+    );
+    const records = {};
+    for (const member of members) {
+      const current = cubJson(policyContext, [
+        "unit", "get", "--space", member.space, policyUnit, "-o", "json",
+      ]).Unit;
+      check(
+        Number(current.HeadRevisionNum) === Number(stored[member.cluster].HeadRevisionNum)
+          && current.ContentHash === stored[member.cluster].ContentHash,
+        `approving changed the ${stageName} record for ${member.cluster}; an attestation records a claim and must not cut a revision`,
+      );
+      const release = publishRelease(policyContext, member.space, revision);
+      records[member.cluster] = {
+        cluster: member.cluster,
+        space: member.space,
+        revisionId: member.revisionId,
+        contentHash: stored[member.cluster].ContentHash,
+        releaseGate: {
+          result: "refused",
+          httpStatus: 422,
+          requirement: "approval",
+          observation: "release-refused-before-approval",
+          message: refusals[member.cluster],
+        },
+        approval: {
+          kind: "attestation",
+          type: "Approval",
+          command: `cub variant approve --change-order <base-space>/<change-order> --stage ${stage}`,
+          revision: Number(current.HeadRevisionNum),
+          headUnchanged: true,
+          contentHashUnchanged: true,
+          approverIdentityRecordedInReceipt: false,
+        },
+        afterApproval: { result: "published", revision },
+        release,
+      };
+    }
+    return {
+      stage: stageName,
+      selection,
+      approval: {
+        kind: "attestation",
+        command: `cub variant approve --change-order <base-space>/<change-order> --stage ${stage}`,
+        appliedAsOneOperation: true,
+        members: members.length,
+        recordedApprovals: members.length,
+      },
+      records,
+    };
+  }
+
+  // A record that no release gate reads, such as the management record that
+  // is applied with kubectl, is still stored as reviewed and approved as an
+  // attestation, and the record says plainly that nothing server-side gates
+  // it.
+  function attestUnpublishedRecord({ policyContext, member, reason }) {
+    const unit = waitForTriggers(policyContext, member.space, policyUnit);
+    check(
+      canonicalDocs(parseDocs(storedData(unit)))
+        === canonicalDocs(member.expectedDocs),
+      `ConfigHub stored a different record for ${member.cluster}`,
+    );
+    const approved = approveSpaceRelease(policyContext, member.space);
+    check(
+      approved.ok,
+      `ConfigHub did not record the approval of ${member.space}: ${approved.error}`,
+    );
+    const current = cubJson(policyContext, [
+      "unit", "get", "--space", member.space, policyUnit, "-o", "json",
+    ]).Unit;
+    check(
+      Number(current.HeadRevisionNum) === Number(unit.HeadRevisionNum)
+        && current.ContentHash === unit.ContentHash,
+      `approving changed the record for ${member.cluster}`,
+    );
+    return {
+      cluster: member.cluster,
+      space: member.space,
+      revisionId: member.revisionId,
+      contentHash: unit.ContentHash,
+      releaseGate: {
+        result: "not-applicable",
+        reason,
+      },
+      approval: {
+        kind: "attestation",
+        type: "Approval",
+        command: "cub variant approve <management-space>",
+        revision: Number(current.HeadRevisionNum),
+        gatedServerSide: false,
+        headUnchanged: true,
+        contentHashUnchanged: true,
+        approverIdentityRecordedInReceipt: false,
+      },
+      release: null,
+    };
   }
 
   // ConfigHub's destination model is the Target, so each cluster gets a
@@ -1290,9 +1581,18 @@ spec:
     assertPolicySpace,
     assertUpstreamLineage,
     blockedDryRun,
+    approveChangeInStage,
+    approveSpaceRelease,
+    attemptGatedRelease,
+    attestUnpublishedRecord,
+    attestedReleaseSet,
     createChangeOrder,
     createChangeWorkflow,
+    createChangeWorkflowFromFile,
     createComponent,
+    releaseGateRefused,
+    requireChangeWorkflow,
+    waitForTriggers,
     createPolicySpace,
     establishBase,
     establishClusterTarget,

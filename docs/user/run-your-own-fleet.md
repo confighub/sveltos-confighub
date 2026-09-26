@@ -24,8 +24,9 @@ and one base that reaches no cluster.
 - **The management record** holds one bootstrap `ClusterProfile` per workload
   Space, each pointing at that Space on the ConfigHub OCI gateway. Its first
   revision is applied out of band with kubectl, because it is what enables
-  gateway fetching. ConfigHub governs every revision after that under the
-  same approval gate. The seam is honest and the receipts state it.
+  gateway fetching. Its approval is recorded as an attestation like any
+  other, but since no release of it is published, no release gate reads that
+  approval. The seam is honest and the receipts state it.
 
 Labels carry the grouping, and the address is structural. Each record is
 labeled with its cluster and its environment, so a wave is a query over
@@ -41,18 +42,30 @@ API, so nothing is resolved by label at delivery time.
    stage, `cub variant promote --change-order <base-space>/<change-order> --target-stage <stage>`.
    ConfigHub enforces the order on the server and refuses a stage until the
    stage ahead has released the change. That design awaits its live
-   re-record. The recorded chapters four and five upgrade the wave's set
+   re-record. The recorded chapters four and five upgraded the wave's set
    instead, `cub unit update --patch --space "*" --where <query> --upgrade`,
-   and leave the order to the runner.
-3. Approve the set in one operation:
-   `cub unit approve --space "*" --where <query> --revision HeadRevisionNum`.
-   ConfigHub records one approval per record, each bound to the revision
-   that record held.
-4. Publish each record's release. The gateway tag moves, and each addressed
-   cluster follows. Sveltos keeps it converged and repairs drift. Under a
-   change order, publish where the change arrived,
-   `cub release publish <space> --revision ChangeOrder:<change-order>`,
-   because that release is what the next stage's gate reads.
+   and left the order to the runner.
+3. Approve the change as it stands in the stage, in one operation:
+   `cub variant approve --change-order <base-space>/<change-order> --stage <stage>`.
+   ConfigHub records an Approval attestation on each record's exact
+   revision. It changes nothing it approves, and a later revision with
+   different content is not covered by it. The workflow's
+   `ReleasePrerequisites` are what make the approval required: until it is
+   recorded, a release of the change into the stage is refused with
+   HTTP 422.
+4. Publish each record's release where the change arrived,
+   `cub release publish <space> --revision ChangeOrder:<change-order>`. The
+   gateway tag moves, and each addressed cluster follows. Sveltos keeps it
+   converged and repairs drift. That release is also what the next stage's
+   `Released` gate reads.
+
+Mind separation of duties. ConfigHub counts whoever promoted a change into a
+Space as one of its authors there, and by default an author's approval does
+not count, so the approver has to be someone other than the promoter. That
+is what a production workflow should keep. This repository's runs are
+single-operator, so its reviewed workflow sets `AllowAuthors: true` on the
+approval requirement, and every receipt says plainly that the demo relaxes
+separation of duties.
 
 Two disciplines make this safe at N clusters, and the runners here enforce
 both. Assert that the matched set equals the wave you intended, and refuse
@@ -65,8 +78,8 @@ flowing down.
 What grows linearly is records and approvals, and that is the product, not
 the overhead: every one of them is an answer to "what is running on that
 cluster and who agreed to it". What stays constant is the work per change:
-one base edit, one query, one promotion or upgrade command, and one approval
-command per wave, whatever the wave's size.
+one base edit, one query, one promotion command, and one approval command per
+wave, whatever the wave's size.
 
 **Adding a cluster** is four steps: register it with Sveltos and label it,
 clone its variant record from the base with its three departures, add its
@@ -119,8 +132,12 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
 (the record machinery every chapter shares) and any
 `runs/*/receipt.yaml`. The moves, in the order a fleet uses them:
 
-1. **Create the base**: one Space wired to your approval trigger filter,
-   holding one `clusterprofile` record with the shared content. The base
+1. **Create the base**: one Space wired to your trigger filter for its
+   validating checks (schema, placeholders, and the rest of the catalog's),
+   holding one `clusterprofile` record with the shared content. The filter
+   carries no approval trigger: ConfigHub removed the `vet-approvedby`
+   function on 2026-09-25, and approval is required by the workflow instead
+   (step 3). The base
    gets no target and is never published. To promote through a
    ChangeWorkflow, first create a Component entity,
    `cub component create <component>`, and attach the base to it with
@@ -134,21 +151,37 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    component of its own, so that Space never sits in a change order's scope.
 2. **Clone a cluster's variant**: `cub variant create <cluster> <base-space>`
    clones the base Space and its record in one operation, links the clone to
-   its upstream, and copies the approval wiring. The variant name is the
+   its upstream, and copies the trigger wiring. The variant name is the
    cluster, which reads exactly like the model. Pin the new Space's slug with
    `--space-pattern` (the gateway serves lowercase names only), then write
    the clone's three departures (name, address line, removal behaviour).
    Add `--stage <environment>` to label the variant's Space with the
    workflow stage that selects it; the clone inherits the base's component.
-3. **Declare the stages**: one workflow per run, held in the base Space,
-   `cub changeworkflow create --space <base-space> <workflow> --stage pilot --stage staging --stage prod --prerequisites Released`.
-   A stage selects the Spaces of the change order's component labelled
-   `Stage=<stage>`, and a stage's gates are checked over every Space of the
-   stage ahead. Chapter three declares `Released` and not `Healthy`: the
-   `Healthy` gate reads a live-status annotation nothing writes for a
-   Sveltos-delivered Space yet
+3. **Declare the stages and the approval they require**: one workflow per
+   run, held in the base Space, written in a file because the flags cannot
+   carry a stage's release gate,
+   `cub changeworkflow create --space <base-space> <workflow> --filename change-workflow.yaml`.
+   Chapter three's reviewed
+   [file](../../examples/sveltos/env-rollout/change-workflow.yaml) declares
+   one requirement, `approval`: one `Approval` attestation. Every stage
+   names it in `ReleasePrerequisites`, which ConfigHub evaluates over the
+   revisions a release bundles when a release of a change order is
+   published into the stage. Staging and prod also name `Released` in
+   `Prerequisites`, their entry gate, evaluated over every Space of the stage
+   ahead. A stage selects the Spaces of the change order's component
+   labelled `Stage=<stage>`. The requirement's `AllowAuthors` decides
+   whether whoever promoted the change may approve it: keep it `false` in
+   production, with a second approver; chapter three sets it `true` because
+   its runs are single-operator, and says so. Chapter three declares
+   `Released` and not `Healthy`: the `Healthy` gate reads a live-status
+   annotation nothing writes for a Sveltos-delivered Space yet
    ([#33](https://github.com/confighub/sveltos-confighub/issues/33),
-   confighubai/confighub#5049).
+   confighubai/confighub#5049). You can then declare the workflow required
+   on the component,
+   `cub component update --patch <component> --change-workflow-required --allowed-change-workflow <base-space>/<workflow>`;
+   measured on 2026-09-26, ConfigHub records that but does not yet refuse a
+   plain publish outside a change order, so send every release through one
+   yourself.
 4. **Name the cluster's destination**: a Target needs a BridgeWorker that
    has run and announced support for its ConfigType, and workers are
    space-scoped, so mint each cluster's named Target in your
@@ -168,7 +201,9 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    `cub changeorder create --space <base-space> <change-order> --change-workflow <base-space>/<workflow> --description "<what changed>"`.
    Created after the edit, it captures exactly that edit as the change. Read
    it back and check that its scope is the base and its variants and
-   nothing else.
+   nothing else. A fleet's first release goes the same way: chapter three
+   creates a change order with no edit before it, whose promotion marks each
+   variant where it stands, so the baseline passes the approval gate too.
 6. **Select a wave as a set**: `cub unit list --space "*" --where "<query
    over your record labels>"`, and assert the match equals exactly the wave
    you intended before acting on it. Under a workflow, also check that the
@@ -179,34 +214,40 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    ConfigHub refuses it while any variant of the stage ahead has taken the
    change without releasing it. Chapter three asks for a skipped stage once,
    before its first wave, and records the refusal as evidence. The recorded
-   chapters four and five upgrade the set instead,
+   chapters four and five upgraded the set instead,
    `cub unit update --patch --space "*" --where <query> --upgrade`.
-8. **Approve the set in one operation**:
-   `cub unit approve --space "*" --where <query> --revision HeadRevisionNum`.
-   ConfigHub records one approval per record, each bound to that record's
-   revision. `cub variant approve` records approvals of a change order in a
-   stage, but chapter three keeps the set approval, because
-   `cub variant approve` is not yet shown to clear the approval gate.
-9. **Publish each record's release**: `cub release publish <space>`, or,
-   under a change order,
-   `cub release publish <space> --revision ChangeOrder:<change-order>`,
-   which bundles each unit where the change arrived and is what the next
-   stage's `Released` gate reads. The gateway serves it at
-   `oci://oci.hub.confighub.com/space/<space>:latest`, and publishing is what
-   moves the tag the fleet follows.
+8. **Approve the change in the stage, in one operation**:
+   `cub variant approve --change-order <base-space>/<change-order> --stage <stage>`
+   records an Approval attestation on the revision the change order's end
+   tag marks in every Space of the stage. It cuts no revision, and it covers
+   only that exact content. Chapter three first attempts the release and
+   records ConfigHub's refusal (HTTP 422, `requires approval: 1 Approval
+   attestation(s) from eligible attesters; <unit> revision <n> has 0 of 1`)
+   as the stage's gate observation, then approves. A record no release gate
+   reads, such as the management record, is approved with
+   `cub variant approve <space>`, which covers the head of each unit with a
+   Target. The per-unit `cub unit approve` no longer exists.
+9. **Publish each record's release** where the change arrived:
+   `cub release publish <space> --revision ChangeOrder:<change-order>`
+   bundles each unit where the change arrived, passes the stage's release
+   gate once the approval is recorded, and is what the next stage's
+   `Released` gate reads. A plain `cub release publish <space>` bundles each
+   unit at its head and is not gated by the workflow. The gateway serves the
+   release at `oci://oci.hub.confighub.com/space/<space>:latest`, and
+   publishing is what moves the tag the fleet follows.
 10. **Let Sveltos fetch**: the management cluster carries a Secret of type
     `addons.projectsveltos.io/cluster-profile` holding a `cub auth get-token`
     token, and one bootstrap ClusterProfile per workload Space pointing at
     that Space's gateway address.
 11. **Restore and hold when you need to**:
     `cub unit update --space <space> <unit> --restore <revision>` writes an
-    exact earlier revision as a new head, the approval gate arms on it like
-    on any other revision, and publish is refused until the restore itself
-    is approved. Holding a cluster back is the absence of one approval: its
-    variant rides the same set upgrade as the rest of the fleet and is
-    simply not approved, so Sveltos keeps serving the last approved
+    exact earlier revision as a new head. Holding a cluster back is the
+    absence of one approval, so Sveltos keeps serving the last approved
     release. [The held cluster](../../examples/sveltos/held-cluster/README.md)
-    records both moves.
+    recorded both moves under the trigger-based gate ConfigHub has since
+    removed, where the gate armed on the restored head and publish was
+    refused until the restore was approved; its lane moves to attestations
+    next.
 
 ## What keeps this true
 
@@ -219,17 +260,22 @@ growing that list is refused unless the files change in the same change.
 That is the whole mechanism.
 
 Before a live run, update cub; the runners were measured against v0.2.15
-and newer, chapter three's ChangeWorkflow verbs were probed live against
-v0.6.2, and each runner still checks its own preconditions and stops with a
-named reason.
+and newer, chapter three's ChangeWorkflow and attestation verbs were probed
+live against v0.6.2, and each runner still checks its own preconditions and
+stops with a named reason.
 
 ## What still waits
 
 Every chapter is recorded live on the design this guide describes: one
 variant per cluster over the gateway, waves unlocked by checkpoint evidence.
-Chapter three's runner has since moved its waves onto ConfigHub
-ChangeWorkflows, and that design awaits its live re-record. Its `Healthy`
-gate waits on a Sveltos status reporter
+Those recordings approved through the trigger-based gate ConfigHub removed
+on 2026-09-25. Chapter three's runner has since moved its waves onto
+ConfigHub ChangeWorkflows and its approvals onto attestations, and that
+design awaits its live re-record. The other chapters' live lanes are still
+written against the removed gate, so each stops before building anything
+until it moves too
+([#34](https://github.com/confighub/sveltos-confighub/issues/34)). Chapter
+three's `Healthy` gate waits on a Sveltos status reporter
 ([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and on
 ConfigHub recognising the provider (confighubai/confighub#5049).
 The gzip fix the recordings needed has shipped in a Sveltos release

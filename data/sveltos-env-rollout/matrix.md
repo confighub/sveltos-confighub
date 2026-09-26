@@ -6,16 +6,17 @@ from 1 to 2 in the kyverno/kyverno chart, version 3.8.1.
 It is made once, on the base record. ConfigHub holds one variant per
 cluster over that base, so the matrix shows exactly which cluster runs
 which revision at every checkpoint, and which departure each cluster keeps
-through the change. Each wave is one stage of a ConfigHub ChangeWorkflow,
-and ConfigHub promotes the change into a stage only once every variant of
-the stage ahead has released it.
+through the change. Each wave is one stage of a ConfigHub ChangeWorkflow.
+ConfigHub promotes the change into a stage only once every variant of the
+stage ahead has released it, and publishes a stage's releases only once the
+change as it stands there is approved.
 
 New to this table? The per-cluster variant model and its terms, including
 what a departure is and how a revision id names exact bytes, are
 explained in [Run your own fleet](../../docs/user/run-your-own-fleet.md).
 
 No live run of this design has been recorded yet, so every observed
-cell below stays empty until the live proof earns it. The committed receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued, not stages ConfigHub promoted and gated.
+cell below stays empty until the live proof earns it. The committed receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued, not stages ConfigHub promoted and gated, and its approvals used a mechanism ConfigHub has since removed.
 The expected columns come from the reviewed example files.
 
 ## Baseline, before the change

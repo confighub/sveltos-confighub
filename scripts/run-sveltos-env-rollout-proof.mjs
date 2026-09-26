@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   applyDepartures,
@@ -36,6 +36,7 @@ import {
   preloadSveltosImages,
   knownCubCommand,
   manifestImages,
+  retiredApprovalLaneMarker,
   runScopedComponents,
   sveltosAgentPreloaded,
   sveltosPreloadList,
@@ -66,21 +67,25 @@ if (!allowedModes.has(mode)) {
 }
 
 const expectedPolicyOrg = "helm-catalog";
-const approvalFilterRef = "platform/helm-catalog-prod-gates";
-const approvalGate = "platform/require-approval/vet-approvedby";
-// The approval gate attaches about a second after a Unit is created; the
-// report that said otherwise was our own misreading, now withdrawn. The
-// runner now moves its waves through a ConfigHub ChangeWorkflow, and no live
-// run has been recorded on that shape yet.
-const pendingReason = "the ChangeWorkflow design has not been recorded live yet";
+// Every Space the run creates is still wired to the platform trigger filter,
+// because its validating triggers still run: schema, placeholder, and the
+// other catalog checks. Approval is no longer one of them. ConfigHub removed
+// the old approval mechanism on 2026-09-25 (confighubai/confighub#5495),
+// and with it the platform/require-approval trigger this filter used to
+// resolve. Which triggers the filter resolves is read live, never assumed.
+const gateFilterRef = "platform/helm-catalog-prod-gates";
+const retiredApprovalTrigger = "platform/require-approval";
+const pendingReason = "the attestation design has not been recorded live yet";
 const policyPath = join(
   repoRoot,
   "config-catalog",
   "policies",
   "catalog-standard.yaml",
 );
-const expectedTriggers = readYaml(policyPath).spec.approvalRequired.checks
-  .map((item) => item.trigger)
+// The triggers the committed profile defines. A resolved trigger must be one
+// of them, and the retired approval trigger must not be among those resolved.
+const catalogTriggerRefs = readYaml(policyPath).spec.triggerDefinitions
+  .map((item) => item.ref)
   .sort();
 // The gateway answers on the bare host. The reference the probe recorded as
 // working carries no port, so every reference this runner builds carries none.
@@ -89,6 +94,7 @@ const probeRecord = "docs/planning/remote-url-oci-probe.md";
 const exampleRoot = join(repoRoot, "examples", "sveltos", "env-rollout");
 const changePath = join(exampleRoot, "change-candidate.yaml");
 const variantsPath = join(exampleRoot, "variants.yaml");
+const workflowPath = join(exampleRoot, "change-workflow.yaml");
 const sourceLockPath = join(exampleRoot, "source-lock.yaml");
 const receiptPath = join(
   repoRoot,
@@ -135,16 +141,36 @@ const gatewaySecretName = "confighub-gateway";
 const gatewaySecretType = "addons.projectsveltos.io/cluster-profile";
 const gatewaySecretKey = "token";
 const addonControllerRepository = "docker.io/projectsveltos/addon-controller";
-// Each wave is a stage of one ConfigHub ChangeWorkflow per run. A stage
+// Each wave is a stage of one ConfigHub ChangeWorkflow per run, created from
+// the reviewed file examples/sveltos/env-rollout/change-workflow.yaml. A stage
 // selects the variants of the run's component whose Space carries that Stage
-// label, and the server enforces each stage's entry gates, evaluated over
-// every Space of the stage ahead, for every client. The runner no longer
-// decides the order; it asks, and ConfigHub refuses what the order forbids.
+// label, and the server enforces two kinds of gate, for every client:
 //
-// Released is the one gate declared: the stage ahead must have published a
-// release carrying the change before the next stage may take it. Healthy is
-// deliberately not declared, for the reason recorded in every receipt.
-const workflowPrerequisites = ["Released"];
+// - Prerequisites, evaluated over every Space of the stage ahead when a
+//   promotion into the stage is attempted. Staging and prod declare Released:
+//   the stage ahead must have published a release carrying the change.
+// - ReleasePrerequisites, evaluated over the Revisions a release bundles when
+//   a release of a change order is published into one of the stage's Spaces.
+//   Every stage declares the approval requirement: one Approval attestation.
+//
+// Healthy is deliberately not declared, for the reason recorded in every
+// receipt.
+const entryPrerequisites = ["Released"];
+const approvalRequirement = "approval";
+// The runs are single-operator, and ConfigHub counts the user who promoted a
+// change into a Space as one of its authors there, so under the default
+// separation of duties that user's own approval does not count. The workflow
+// therefore sets AllowAuthors: true, and every receipt says so, quoting what
+// the strict setting did when it was measured.
+const separationOfDutiesStatement = "This single-operator demo relaxes separation of duties: its approval requirement sets AllowAuthors: true, so the operator who promoted a change may also approve it. A production workflow sets AllowAuthors: false and has a second approver sign off, because ConfigHub counts whoever promoted a change into a Space as one of its authors there and does not count an author's approval.";
+const strictModeRefusal = "unable to publish a release of change order '<change-order>' in stage '<stage>': requires approval: 1 Approval attestation(s) from eligible attesters who did not write the change; <unit> revision <n> has 0 of 1";
+const strictModeMeasuredOn = "2026-09-26";
+// Measured on 2026-09-26: a component can declare that its promotions and
+// releases require a ChangeWorkflow, and ConfigHub records the declaration,
+// but a plain publish of one of its Spaces, outside any change order,
+// still succeeded. The runner declares it to state the intent and records
+// that it is not enforced there yet.
+const workflowRequiredNote = "Declared on the run's component to state that its promotions and releases go through this workflow. Measured on 2026-09-26, ConfigHub does not yet refuse a plain publish of one of its Spaces outside a change order, so every release in this run goes through a change order because the runner sends it there, not because the server would refuse the other path.";
 const healthyNotDeclaredReason = "Healthy reads the confighub.com/live-status annotation and passes only on the literal words Synced, Succeeded and Healthy. Sveltos has no reporter that writes it yet (confighub/sveltos-confighub#33), and ConfigHub does not yet recognise the provider (confighubai/confighub#5049), so declaring it would hold every stage forever. Until both exist, the checkpoint evidence each wave records as unlockedBy is the observed-health layer.";
 const managementComponentReason = "The management Space is not a variant of the base, and a change order's scope is every Space attached to its base's component, so the management Space has a run-scoped component of its own: it keeps a home in the component view and never sits in a change order's scope.";
 const baseComponentReason = "Recorded Spaces from earlier runs are kept on purpose, and a change order's scope is every Space attached to its base's component, so the component is per run: a component shared across runs would put an earlier run's variants in this change order's scope, where a promotion into a stage would reach them.";
@@ -153,10 +179,19 @@ const workflowSlug = (runId) => `rollout-${runId}`;
 // text passes through a redaction that hides any run of forty or more
 // identifier characters.
 const changeOrderSlug = (runId) => `bg-replicas-${runId}`;
+// The baseline is released through a change order of its own, one that
+// carries no change to the base, so every release that reaches a cluster in
+// this run passes the approval gate. Promoting it marks each variant's own
+// reviewed head, and the release pinned to it bundles exactly that.
+const baselineOrderSlug = (runId) => `baseline-${runId}`;
+const baselinePath = "baseline change order";
 const promoteCommand = (stage) =>
   `cub variant promote --change-order <base-space>/<change-order> --target-stage ${stage}`;
 const releaseCommand = "cub release publish <space> --revision ChangeOrder:<change-order>";
-const setApprovalCommand = 'cub unit approve --space "*" --where <query> --revision HeadRevisionNum';
+const stageApprovalCommand = (stage) =>
+  `cub variant approve --change-order <base-space>/<change-order> --stage ${stage}`;
+const managementApprovalCommand = "cub variant approve <management-space>";
+const managementUngatedReason = "The management record is applied out of band with kubectl, because it is what opens the gateway path, and no release of it is published, so no release gate reads its approval. It is recorded as an attestation all the same, and nothing server-side gates it.";
 // What every wave of a receipt recorded before this design carries instead of
 // a promotion: the set upgrade the runner issued itself.
 const recordedUpgradeCommand = 'cub unit update --patch --space "*" --where <query> --upgrade';
@@ -165,16 +200,14 @@ const recordedUpgradeCommand = 'cub unit update --patch --space "*" --where <que
 // so the record machinery comes from one place and is told this chapter's own
 // labels and hub access.
 const {
-  allowedDryRun,
-  approvalCount,
-  approvalObservation,
-  approveSet,
   assertMergeKeptDepartures,
   assertPolicySpace,
   assertUpstreamLineage,
-  blockedDryRun,
+  attemptGatedRelease,
+  attestUnpublishedRecord,
+  attestedReleaseSet,
   createChangeOrder,
-  createChangeWorkflow,
+  createChangeWorkflowFromFile,
   createComponent,
   createPolicySpace,
   establishBase,
@@ -183,9 +216,10 @@ const {
   gatewayReference,
   promoteStage,
   publishRelease,
-  reviewSet,
+  releaseGateRefused,
+  requireChangeWorkflow,
   selectSet,
-  waitForPolicy,
+  waitForTriggers,
   applyBootstrapProfiles,
   bootstrapProfileManifest,
   bootstrapProfileName,
@@ -209,8 +243,10 @@ const {
   managementRecordLabel: "management",
   registrationNamespace,
   remoteFetchInterval,
-  approvalFilterRef,
-  approvalGate,
+  // The lib's name for the filter every Space is wired to. It resolves only
+  // validating triggers now; no approval gate is passed, because chapter
+  // three no longer has one.
+  approvalFilterRef: gateFilterRef,
   baseRecordLabel,
   componentLabel,
   configHubOciHost,
@@ -326,8 +362,7 @@ function run() {
   const sveltos = loadSveltosPin();
   const addonControllerImage = resolveAddonControllerImage(sveltos);
   assertAddonControllerFitsPin(sveltos, addonControllerImage);
-
-  const topology = readApprovalTopology(policyContext);
+  assertAttestationClient();
 
   const recordedAt = new Date().toISOString();
   const runId = safeRunId(process.env.HELM_EXPT_PROOF_RUN_ID || recordedAt);
@@ -376,17 +411,17 @@ function run() {
   const componentsCreated = new Set();
   let receipt;
 
-  // The approval gate is probed before any cluster work, so a Space whose
-  // gate never attaches costs seconds, not the seven-minute fleet build the
-  // two-wave runner paid per attempt.
-  assertApprovalGateObservable(policyContext, runId, topology);
+  // The gates are probed before any cluster work, so a filter that no longer
+  // resolves what the run expects, or a server that does not keep an
+  // attestation requirement, costs seconds, not the seven-minute fleet build.
+  const topology = probeGates(policyContext, runId, plan);
   // Creating the management cluster's Target up front is the target-host
   // preflight: it is idempotent, the record establishment needs it anyway,
   // and a host worker that cannot mint OCI targets refuses here in seconds
   // rather than after the fleet build.
   establishClusterTarget(policyContext, "hx-sveltos-env-mgmt");
   cleanup.results.probeSpace = "pass";
-  phase("gate preflight passed; the approval gate is observable");
+  phase(`gate preflight passed: ${gateFilterRef} resolves ${topology.triggerRefs.length} validating triggers and no approval trigger, and ConfigHub keeps a workflow's approval requirement`);
 
   try {
     for (const space of policySpaces) {
@@ -521,35 +556,25 @@ function run() {
       baseSpace,
       plan,
       runId,
+      component: components.base,
     });
-    phase(`the ChangeWorkflow ${workflow.ref} holds the stages ${workflow.stages.join(", ")}, each gated on ${workflowPrerequisites.join(", ")}`);
+    phase(`the ChangeWorkflow ${workflow.ref} holds the stages ${workflow.stages.join(", ")}, every one gated at release on one Approval attestation`);
 
-    const baselineMembers = [
-      ...plan.clusters.map((row) => ({
-        cluster: row.cluster,
-        space: spaceFor[row.cluster],
-        expectedDocs: [row.baselineDoc],
-        revisionId: row.revisions.baseline,
-      })),
-      {
-        cluster: plan.management.cluster,
-        space: spaceFor[plan.management.cluster],
-        expectedDocs: managementVariant.documents,
-        revisionId: managementVariant.revisionId,
-        publishesRelease: false,
-      },
-    ];
-    const baselineSet = reviewSet({
+    const baselineRelease = releaseBaseline({
       policyContext,
-      stageName: "baseline",
-      query: baselineQuery(plan, runId),
-      members: baselineMembers,
+      baseSpace,
+      plan,
+      runId,
+      spaceFor,
+      workflow,
+      membership,
+      managementVariant,
     });
     for (const row of plan.clusters) {
-      variantRecords[row.cluster].baseline = baselineSet.records[row.cluster];
+      variantRecords[row.cluster].baseline = baselineRelease.records[row.cluster];
     }
-    managementVariant.baseline = baselineSet.records[plan.management.cluster];
-    phase("one set operation approved every record this run created, one approval each");
+    managementVariant.baseline = baselineRelease.management;
+    phase(`every variant's baseline passed its release gate through the ${baselineRelease.changeOrder.slug} change order, stage by stage, and the management record's approval is recorded`);
 
     const bootstrap = applyBootstrapProfiles({
       managementKubeconfig,
@@ -641,7 +666,7 @@ function run() {
         fleetClusters,
         managementKubeconfig,
       }));
-      phase(`wave ${wave.wave} promoted the change order into the ${wave.environment} stage, ${wave.clusters.length} variant(s), released and observed`);
+      phase(`wave ${wave.wave} promoted the change order into the ${wave.environment} stage, ${wave.clusters.length} variant(s): release refused until approved, approved, released, and observed`);
     }
 
     const convergenceAudit = auditConvergence({
@@ -666,7 +691,7 @@ function run() {
       registrations,
       baseRecord,
       baseChange,
-      baselineSet,
+      baselineRelease,
       variantRecords,
       managementVariant,
       bootstrap,
@@ -816,13 +841,18 @@ function reportKeptArtifacts(cleanup) {
   }
 }
 
-// The two-minute check that this organization still wires approval gates:
-// wire one throwaway Space, create one probe Unit, and watch for the
-// approval gate. One passing probe unblocks every drafted fleet lane.
+// The two-minute check that this organization still has what chapter three
+// gates on: the platform trigger filter, resolving validating triggers and no
+// approval trigger, and a server that keeps a ChangeWorkflow's attestation
+// requirement. It wires one throwaway Space, creates the reviewed workflow in
+// it, reads both back, and removes the Space. A passing probe unblocks the
+// chapter three lane; the other chapters' lanes refuse to start until they
+// move to attestations.
 function probeGate() {
   const policyContext = process.env.CUB_CONTEXT?.trim() ?? "";
   check(policyContext, "set CUB_CONTEXT to an authenticated helm-catalog context");
   check(tryCommand("cub", ["version"]).ok, "cub is required for this probe");
+  assertAttestationClient();
   const policyContextInfo = cubJson(policyContext, [
     "context", "get", policyContext, "-o", "json",
   ]);
@@ -830,11 +860,23 @@ function probeGate() {
     policyContextInfo.metadata?.organizationName === expectedPolicyOrg,
     `refusing to create probe evidence outside ${expectedPolicyOrg}`,
   );
-  const topology = readApprovalTopology(policyContext);
   const runId = safeRunId(new Date().toISOString());
-  assertApprovalGateObservable(policyContext, runId, topology);
+  const topology = probeGates(policyContext, runId, loadRolloutPlan());
   console.log(
-    "the approval gate attaches as expected in this organization; run the fleet lanes serially",
+    `${gateFilterRef} resolves ${topology.triggerRefs.join(", ")} and no approval trigger, and ConfigHub keeps the reviewed workflow's approval requirement; run the fleet lanes serially`,
+  );
+}
+
+// The local cub must be one that records approvals as attestations. A client
+// from before them has no --change-order on variant approve, and the lane
+// would fail at its first approval after building a fleet.
+function assertAttestationClient() {
+  const help = tryCommand("cub", ["variant", "approve", "--help"]);
+  check(
+    help.ok
+      && /--change-order/.test(help.output)
+      && /--stage/.test(help.output),
+    "this cub cannot record an approval of a change order in a stage (cub variant approve --change-order --stage); update cub before a live run",
   );
 }
 
@@ -1027,6 +1069,7 @@ function loadRolloutPlan(root = repoRoot) {
     waves.flatMap((wave) => wave.clusters).length === clusters.length,
     "the waves must cover every cluster exactly once",
   );
+  const workflow = loadChangeWorkflow(join(planRoot, "change-workflow.yaml"), waves);
 
   const changedBaseDoc = withChangedValue(
     baseDoc,
@@ -1040,6 +1083,7 @@ function loadRolloutPlan(root = repoRoot) {
     selection,
     changeField,
     waves,
+    workflow,
     clusters,
     management: {
       cluster: management.cluster,
@@ -1061,6 +1105,62 @@ function loadRolloutPlan(root = repoRoot) {
         changed: `b2-${sha256(stableJson(changedBaseDoc)).slice(0, 12)}`,
       },
     },
+  };
+}
+
+// The reviewed workflow is configuration like the rest of the plan, so its
+// shape is checked against the waves before anything is built: one stage per
+// wave, in wave order, each selecting its environment's Stage label; the
+// Released entry gate on every stage after the first; the approval
+// requirement on every stage's release; and that requirement exactly one
+// Approval attestation with AllowAuthors set, which the single-operator demo
+// needs and every receipt states. Healthy is named nowhere.
+function loadChangeWorkflow(path, waves) {
+  const text = readFileSync(path, "utf8");
+  const spec = readYaml(path);
+  const requirements = spec?.AttestationPrerequisites ?? [];
+  const stages = spec?.Stages ?? [];
+  check(
+    requirements.length === 1
+      && requirements[0].Name === approvalRequirement
+      && requirements[0].Type === "Approval"
+      && Number(requirements[0].Count) === 1
+      && requirements[0].AllowAuthors === true,
+    `the reviewed workflow must declare one requirement, ${approvalRequirement}: one Approval attestation with AllowAuthors: true, which a single-operator run needs and its receipt states`,
+  );
+  check(
+    stages.map((stage) => stage.Name).join(",")
+      === waves.map((wave) => wave.environment).join(","),
+    `the reviewed workflow's stages must be the waves in order: ${waves.map((wave) => wave.environment).join(", ")}`,
+  );
+  stages.forEach((stage, index) => {
+    check(
+      stage.WhereSpace === `Labels.Stage = '${stage.Name}'`,
+      `the ${stage.Name} stage must select the Spaces labelled Stage=${stage.Name}`,
+    );
+    check(
+      stableJson(stage.ReleasePrerequisites ?? []) === stableJson([approvalRequirement]),
+      `the ${stage.Name} stage must gate its releases on ${approvalRequirement}, and on nothing else`,
+    );
+    check(
+      stableJson(stage.Prerequisites ?? [])
+        === stableJson(index === 0 ? [] : entryPrerequisites),
+      index === 0
+        ? `the first stage's entry prerequisites are never evaluated, so ${stage.Name} declares none`
+        : `the ${stage.Name} stage must be entered only once the stage ahead has ${entryPrerequisites.join(", ")} the change`,
+    );
+  });
+  check(
+    !/\bHealthy\b/.test(text),
+    "the reviewed workflow must not declare Healthy until a Sveltos status reporter exists (#33) and ConfigHub recognises the provider (confighubai/confighub#5049)",
+  );
+  return {
+    path,
+    repoPath: relativeRepo(path),
+    rawSha256: sha256(text),
+    spec,
+    stages: stages.map((stage) => stage.Name),
+    requirement: requirements[0],
   };
 }
 
@@ -1215,7 +1315,20 @@ function assertPublishableSpaceName(space) {
 }
 
 
-function assertApprovalGateObservable(context, runId, topology) {
+// The gate preflight. It reads the platform filter, wires one throwaway Space
+// to it, and reads which triggers the filter resolved for that Space, naming
+// each by reading it back: that is the set every Space the run creates must
+// carry, read live rather than assumed. It refuses a set that is empty, that
+// still carries the retired approval trigger, or that holds a trigger the
+// committed profile does not define. It then creates the reviewed workflow in
+// the same Space and reads it back, so a server that does not keep the
+// attestation requirement is found out in seconds. The Space goes either way.
+function probeGates(context, runId, plan) {
+  const filter = getByRef(context, "filter", gateFilterRef).Filter;
+  check(
+    Boolean(filter?.FilterID),
+    `${gateFilterRef} is missing; every Space this chapter creates is wired to it for its validating triggers`,
+  );
   const probeSpace = spaceName(`hx-sveltos-env-probe-${runId}`);
   check(
     !spacePresent(context, probeSpace),
@@ -1223,34 +1336,73 @@ function assertApprovalGateObservable(context, runId, topology) {
   );
   createPolicySpace(context, probeSpace);
   try {
-    assertPolicySpace(context, probeSpace, topology.triggerIds, null);
-    cub(context, [
-      "unit", "create", "--space", probeSpace, policyUnit,
-      join(exampleRoot, "clusterprofile-base.yaml"),
-      "--change-desc", "Probe the approval gate before building the fleet",
-      "--quiet",
-    ]);
-    const deadline = now() + 120_000;
-    let seen = approvalObservation(context, probeSpace, policyUnit);
-    const gatePresent = () =>
-      seen.gateKeys.some(
-        (key) => key === approvalGate || key.includes("require-approval"),
-      );
-    while (!gatePresent() && now() < deadline) {
-      sleep(5_000);
-      seen = approvalObservation(context, probeSpace, policyUnit);
-    }
+    const wired = cubJson(context, ["space", "get", probeSpace, "-o", "json"]).Space;
+    const triggerIds = [...(wired?.TriggerIDs ?? [])].map(String).sort();
     check(
-      gatePresent(),
-      `the approval gate never appeared on the probe Unit ${probeSpace}/${policyUnit}; check the Space wiring before building the fleet`,
+      triggerIds.length > 0,
+      `${gateFilterRef} resolved no trigger for ${probeSpace}, so the Spaces would carry no validating gate`,
     );
+    const triggerRefs = triggerIds
+      .map((id) => {
+        const trigger = cubJson(context, [
+          "trigger", "get", "--space", "platform", id, "-o", "json",
+        ]).Trigger;
+        return `platform/${trigger?.Slug}`;
+      })
+      .sort();
+    check(
+      !triggerRefs.includes(retiredApprovalTrigger),
+      `${gateFilterRef} still resolves ${retiredApprovalTrigger}, whose function ConfigHub removed with the old approval mechanism (confighubai/confighub#5495); its gates could never clear, so delete that trigger and refresh the Spaces' triggers before a run`,
+    );
+    const undefinedRefs = triggerRefs.filter((ref) => !catalogTriggerRefs.includes(ref));
+    check(
+      undefinedRefs.length === 0,
+      `${gateFilterRef} resolves ${undefinedRefs.join(", ")}, which the committed profile ${relativeRepo(policyPath)} does not define`,
+    );
+    const workflow = createChangeWorkflowFromFile(context, {
+      space: probeSpace,
+      slug: "probe-attestation-gates",
+      path: plan.workflow.path,
+    });
+    assertWorkflowKept(workflow, plan);
+    return {
+      ref: gateFilterRef,
+      id: filter.FilterID,
+      hash: String(filter.Hash ?? "").trim(),
+      triggerRefs,
+      triggerIds,
+      resolvedFrom: "the TriggerIDs a Space wired to the filter carries after a refresh, each named by reading it back",
+      approvalTrigger: `none: ${retiredApprovalTrigger} was removed with the old approval mechanism (confighubai/confighub#5495), and approval is an attestation the workflow requires`,
+    };
   } finally {
-    // The probe Space holds only the probe Unit, so a direct recursive delete
-    // is safe under the ordering constraint in confighubai/confighub#4980.
+    // The probe Space holds only the probe workflow, so a direct recursive
+    // delete is safe under the ordering constraint in
+    // confighubai/confighub#4980.
     cubTry(context, [
       "space", "delete", probeSpace, "--recursive-force", "--quiet",
     ], { timeout: 240_000 });
   }
+}
+
+// What the server kept of the reviewed workflow must be the reviewed
+// workflow: the stages in order, the release gate on each, and the approval
+// requirement with AllowAuthors as reviewed.
+function assertWorkflowKept(workflow, plan) {
+  const requirement = (workflow.attestationPrerequisites ?? [])
+    .find((row) => row?.Name === approvalRequirement);
+  check(
+    requirement
+      && requirement.Type === "Approval"
+      && Number(requirement.Count ?? 1) === 1
+      && requirement.AllowAuthors === plan.workflow.requirement.AllowAuthors,
+    `ConfigHub kept ${workflow.ref} without the reviewed ${approvalRequirement} requirement, so its stages would release unapproved content`,
+  );
+  check(
+    workflow.stages.map((stage) => stage?.Name).join(",") === plan.workflow.stages.join(",")
+      && workflow.stages.every((stage) =>
+        (stage?.ReleasePrerequisites ?? []).includes(approvalRequirement)),
+    `ConfigHub kept ${workflow.ref} with stages that do not gate every release on ${approvalRequirement}`,
+  );
 }
 
 
@@ -1392,25 +1544,204 @@ function stageMembers({ policyContext, membership, stage }) {
     .sort();
 }
 
-// One workflow per run, in the base Space, whose stages are the reviewed
-// waves in their reviewed order.
-function openChangeWorkflow({ policyContext, baseSpace, plan, runId }) {
-  const stages = plan.waves.map((wave) => wave.environment);
-  const created = createChangeWorkflow(policyContext, {
+// One workflow per run, in the base Space, created from the reviewed file and
+// read back. The run's component then declares it required, which states the
+// intent and which, as measured, ConfigHub does not yet enforce on a plain
+// publish.
+function openChangeWorkflow({ policyContext, baseSpace, plan, runId, component }) {
+  const created = createChangeWorkflowFromFile(policyContext, {
     space: baseSpace,
     slug: workflowSlug(runId),
-    stages,
-    prerequisites: workflowPrerequisites,
+    path: plan.workflow.path,
   });
+  assertWorkflowKept(created, plan);
+  requireChangeWorkflow(policyContext, {
+    component,
+    workflowRef: created.ref,
+  });
+  const requirement = plan.workflow.requirement;
   return {
     space: created.space,
     slug: created.slug,
     ref: created.ref,
-    stages,
+    file: {
+      path: plan.workflow.repoPath,
+      rawSha256: plan.workflow.rawSha256,
+    },
+    stages: plan.workflow.stages,
     stageSelector: "Labels.Stage = '<stage>' within the change order's component",
-    prerequisites: [...workflowPrerequisites],
+    prerequisites: [...entryPrerequisites],
+    stageGates: plan.workflow.spec.Stages.map((stage) => ({
+      stage: stage.Name,
+      prerequisites: stage.Prerequisites ?? [],
+      releasePrerequisites: stage.ReleasePrerequisites ?? [],
+    })),
+    attestationPrerequisites: [{
+      Name: requirement.Name,
+      Type: requirement.Type,
+      Count: Number(requirement.Count),
+      AllowAuthors: requirement.AllowAuthors,
+    }],
+    separationOfDuties: {
+      allowAuthors: requirement.AllowAuthors,
+      relaxed: requirement.AllowAuthors === true,
+      statement: separationOfDutiesStatement,
+      strictModeRefusal,
+      strictModeMeasuredOn,
+    },
     healthy: { declared: false, reason: healthyNotDeclaredReason },
-    command: `cub changeworkflow create --space <base-space> <workflow> ${stages.map((stage) => `--stage ${stage}`).join(" ")} --prerequisites ${workflowPrerequisites.join(",")}`,
+    workflowRequired: {
+      component,
+      declared: true,
+      command: "cub component update --patch <component> --change-workflow-required --allowed-change-workflow <base-space>/<workflow>",
+      enforcedOnPlainPublish: false,
+      measuredOn: "2026-09-26",
+      note: workflowRequiredNote,
+    },
+    command: "cub changeworkflow create --space <base-space> <workflow> --filename examples/sveltos/env-rollout/change-workflow.yaml",
+  };
+}
+
+// The baseline goes through a change order of its own, one that carries no
+// change to the base, so every release that reaches a cluster in this run
+// passes the approval gate. Stage by stage it is promoted, which marks each
+// variant's own reviewed head, refused at release until approved, approved,
+// and released; each later stage is entered only once the stage ahead has
+// released it. The management record is approved as an attestation too,
+// though no release gate reads it. If any step does not behave that way live,
+// the run stops and names the step: it never falls back to a release outside
+// a change order.
+function releaseBaseline({
+  policyContext,
+  baseSpace,
+  plan,
+  runId,
+  spaceFor,
+  workflow,
+  membership,
+  managementVariant,
+}) {
+  const failClosed = (step, detail) =>
+    `the ${baselinePath} path failed at ${step}: ${detail}. Every release that reaches a cluster in this run must pass the approval gate, so the run stops rather than publish a baseline outside a change order.`;
+  // Every record the run created, the management record included, is the
+  // baseline set, and the reviewed query must select exactly it.
+  const everyRecord = selectSet({
+    policyContext,
+    stageName: "baseline",
+    query: baselineQuery(plan, runId),
+    expectedUnits: [
+      ...plan.clusters.map((row) => `${spaceFor[row.cluster]}/${policyUnit}`),
+      `${spaceFor[plan.management.cluster]}/${policyUnit}`,
+    ],
+  });
+  let created;
+  try {
+    created = createChangeOrder(policyContext, {
+      space: baseSpace,
+      slug: baselineOrderSlug(runId),
+      workflowRef: workflow.ref,
+      description: "Release each variant's reviewed baseline through the workflow; the base itself does not change",
+    });
+  } catch (error) {
+    throw new Error(failClosed("creating the baseline change order", error.message));
+  }
+  const changeOrder = {
+    space: created.space,
+    slug: created.slug,
+    ref: created.ref,
+    workflow: workflow.ref,
+    description: created.description,
+    carriesBaseChange: false,
+    inScopeSpaces: assertChangeOrderScope(created, membership),
+    command: "cub changeorder create --space <base-space> <baseline-change-order> --change-workflow <base-space>/<workflow> --description <text>",
+  };
+  const records = {};
+  const stages = [];
+  for (const wave of plan.waves) {
+    const clusters = wave.clusters.map((name) =>
+      plan.clusters.find((row) => row.cluster === name));
+    const stageSpaces = stageMembers({ policyContext, membership, stage: wave.environment });
+    check(
+      sameSet(stageSpaces, clusters.map((row) => spaceFor[row.cluster])),
+      failClosed(`the ${wave.environment} stage`, `it selects ${stageSpaces.join(", ") || "no Space"} rather than the wave's variants`),
+    );
+    const heads = Object.fromEntries(clusters.map((row) => [
+      row.cluster,
+      Number(cubJson(policyContext, [
+        "unit", "get", "--space", spaceFor[row.cluster], policyUnit, "-o", "json",
+      ]).Unit.HeadRevisionNum),
+    ]));
+    const promoted = promoteStage(policyContext, {
+      changeOrderRef: changeOrder.ref,
+      stage: wave.environment,
+      changeDesc: `Mark ${wave.environment}'s reviewed baseline for release through ${changeOrder.slug}`,
+    });
+    check(
+      promoted.ok,
+      failClosed(`promoting it into ${wave.environment}`, promoted.error),
+    );
+    // A change order with no change marks each variant where it already
+    // stands, so the baseline cuts no revision. One that moved a variant is
+    // caught here, before anything is released.
+    for (const row of clusters) {
+      const head = Number(cubJson(policyContext, [
+        "unit", "get", "--space", spaceFor[row.cluster], policyUnit, "-o", "json",
+      ]).Unit.HeadRevisionNum);
+      check(
+        head === heads[row.cluster],
+        failClosed(`promoting it into ${wave.environment}`, `${row.cluster} moved from revision ${heads[row.cluster]} to ${head}, but a change order with no change must mark the variant where it stands`),
+      );
+    }
+    let set;
+    try {
+      set = attestedReleaseSet({
+        policyContext,
+        stageName: `baseline ${wave.environment}`,
+        query: waveQuery(plan, runId, wave.environment),
+        members: clusters.map((row) => ({
+          cluster: row.cluster,
+          space: spaceFor[row.cluster],
+          expectedDocs: [row.baselineDoc],
+          revisionId: row.revisions.baseline,
+        })),
+        changeOrder,
+        stage: wave.environment,
+      });
+    } catch (error) {
+      throw new Error(failClosed(`releasing ${wave.environment}`, error.message));
+    }
+    for (const row of clusters) {
+      records[row.cluster] = set.records[row.cluster];
+    }
+    stages.push({
+      stage: wave.environment,
+      selection: set.selection,
+      members: stageSpaces,
+      promotion: {
+        command: promoteCommand(wave.environment),
+        changeOrder: changeOrder.ref,
+        cutRevisions: false,
+      },
+      approval: set.approval,
+    });
+  }
+  const management = attestUnpublishedRecord({
+    policyContext,
+    member: {
+      cluster: plan.management.cluster,
+      space: spaceFor[plan.management.cluster],
+      expectedDocs: managementVariant.documents,
+      revisionId: managementVariant.revisionId,
+    },
+    reason: managementUngatedReason,
+  });
+  return {
+    path: baselinePath,
+    changeOrder,
+    selection: everyRecord,
+    stages,
+    records,
+    management,
   };
 }
 
@@ -1583,7 +1914,10 @@ function promoteWave({
     });
   }
   // Each variant's release bundles its unit where the change arrived, which
-  // is what the next stage's Released gate reads.
+  // is what the next stage's Released gate reads. The release is attempted
+  // before anyone approves it and must be refused by the stage's release
+  // gate; that refusal is the wave's gate observation. Then one approval of
+  // the change as it stands in the stage, and the release.
   const releaseRevision = `ChangeOrder:${changeOrder.slug}`;
   const members = clusters.map((row) => ({
     cluster: row.cluster,
@@ -1592,13 +1926,14 @@ function promoteWave({
     revisionId: row.revisions.changed,
     minimumRevision:
       Number(variantRecords[row.cluster].baseline.approval.revision) + 1,
-    releaseRevision,
   }));
-  const reviewed = reviewSet({
+  const reviewed = attestedReleaseSet({
     policyContext,
     stageName: `wave ${wave.wave}`,
     query,
     members,
+    changeOrder,
+    stage: wave.environment,
   });
   const promoted = [];
   for (const row of clusters) {
@@ -1633,7 +1968,8 @@ function promoteWave({
       space: record.space,
       revision: record.approval.revision,
       revisionId: record.revisionId,
-      recordedApprovals: record.approval.recordedApprovals,
+      releaseRefusal: record.releaseGate.message,
+      approval: record.approval.kind,
       releaseManifestDigest: record.release.manifestDigest,
       releaseRevision: record.release.revision,
       inheritedFields: row.inheritedFields,
@@ -1654,7 +1990,7 @@ function promoteWave({
       changeOrder: changeOrder.ref,
       targetStage: wave.environment,
       serverGate: previous
-        ? `${workflowPrerequisites.join(", ")} over the ${previous.environment} stage`
+        ? `${entryPrerequisites.join(", ")} over the ${previous.environment} stage`
         : "none; the first stage's gates are never evaluated",
       appliedAsOneOperation: true,
       members: clusters.length,
@@ -1662,6 +1998,7 @@ function promoteWave({
     release: {
       command: releaseCommand,
       revision: releaseRevision,
+      gate: `${approvalRequirement}, the stage's release prerequisite`,
     },
     approval: reviewed.approval,
     clusters: promoted,
@@ -1892,7 +2229,7 @@ function buildReceipt({
   registrations,
   baseRecord,
   baseChange,
-  baselineSet,
+  baselineRelease,
   variantRecords,
   managementVariant,
   bootstrap,
@@ -1959,7 +2296,7 @@ function buildReceipt({
     spec: {
       recordedAt,
       flow: {
-        path: "source -> one reviewed base record in ConfigHub -> one variant per cluster -> one change order promoted stage by stage through a ChangeWorkflow -> approval per variant -> ConfigHub release of the change order -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes",
+        path: "source -> one reviewed base record in ConfigHub -> one variant per cluster -> one change order promoted stage by stage through a ChangeWorkflow -> a release refused by the stage's approval gate -> one Approval attestation of the change in the stage -> ConfigHub release of the change order -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes",
         promotion: "one reviewed values change made once on the base, captured by one change order, and promoted by ConfigHub into the pilot stage, then staging, then the production stage holding both production clusters, each stage entered only once every variant of the stage ahead had released the change",
         mapping: "ConfigHub holds one record per cluster, so this receipt answers which cluster runs which revision without reading a Sveltos selector or a cluster",
       },
@@ -1980,6 +2317,10 @@ function buildReceipt({
           after: plan.change.spec.after,
           editedRecord: "base",
         },
+        workflow: {
+          path: plan.workflow.repoPath,
+          rawSha256: plan.workflow.rawSha256,
+        },
         sourceLock: relativeRepo(sourceLockPath),
         gatewayRecord: probeRecord,
       },
@@ -1994,17 +2335,30 @@ function buildReceipt({
         profile: "catalog-standard",
         resourceClass: "system-configuration",
         filter: topology,
-        approvalGate,
+        approval: {
+          kind: "attestation",
+          requiredBy: `the ChangeWorkflow's ${approvalRequirement} release prerequisite on every stage`,
+          recordedWith: "cub variant approve",
+          retired: "ConfigHub removed its trigger-based approval gate and the per-unit approve verb on 2026-09-25 (confighubai/confighub#5495, API_MINOR 6). No trigger in this run gates approval.",
+        },
         targetHost: { space: targetHost.space, worker: targetHost.worker },
       },
       prerequisite: sveltosInstall,
       base: { ...baseRecord, change: baseChange },
       variants,
-      baselineApproval: {
-        scope: baselineSet.selection.scope,
-        query: baselineSet.selection.query,
-        matched: baselineSet.selection.matched,
-        ...baselineSet.approval,
+      baselineRelease: {
+        path: baselineRelease.path,
+        changeOrder: baselineRelease.changeOrder,
+        scope: baselineRelease.selection.scope,
+        query: baselineRelease.selection.query,
+        matched: baselineRelease.selection.matched,
+        stages: baselineRelease.stages,
+        management: {
+          cluster: plan.management.cluster,
+          approval: managementApprovalCommand,
+          gatedServerSide: false,
+          reason: managementUngatedReason,
+        },
       },
       advance: {
         evidenceGated: true,
@@ -2018,11 +2372,14 @@ function buildReceipt({
         gateRefusal,
         release: {
           command: releaseCommand,
-          baseline: "The baseline carries no change order, so each baseline release bundles its unit at its head.",
+          gate: `every stage's ReleasePrerequisites name ${approvalRequirement}, so a release of a change order into a stage is refused with HTTP 422 until the change as it stands there is approved`,
+          baseline: `The baseline went through the ${baselineRelease.changeOrder.slug} change order, which carries no change to the base, so every release that reached a cluster in this run passed the approval gate.`,
         },
         approval: {
-          command: setApprovalCommand,
-          reason: "cub variant approve records approvals of a change order in a stage, but it is not yet shown to clear the platform/require-approval/vet-approvedby apply gate every Space carries, so the proven set approval clears it.",
+          kind: "attestation",
+          command: stageApprovalCommand("<stage>"),
+          management: managementApprovalCommand,
+          observation: "Before each approval the release was attempted and refused by the stage's release gate, and the refusal is recorded as that wave's gate observation.",
         },
         observedHealth: "The server's Released gate says the stage ahead published the change. The unlockedBy evidence on each wave says its clusters are running it, which ConfigHub cannot yet read for itself.",
       },
@@ -2077,12 +2434,14 @@ function buildReceipt({
         "The proof used four local kind workload clusters. It does not prove a large production fleet or a failure-and-pause rollout.",
         "The proof covers one reviewed values change to this Kyverno base, not a chart version bump.",
         "The ChangeWorkflow declares Released and not Healthy, because nothing reports Sveltos's view of a cluster to ConfigHub yet. The observed-health evidence is the runner's own checkpoints.",
-        "Approvals clear the apply gate with the set approval rather than cub variant approve, which is not yet shown to clear that gate.",
+        separationOfDutiesStatement,
+        workflowRequiredNote,
+        managementUngatedReason,
       ],
     },
     status: {
       result: "pass",
-      claim: "ConfigHub held one variant per cluster over a shared base, each carrying its own departures and its environment as its stage, and one reviewed change made on the base was captured by one change order under a ChangeWorkflow. ConfigHub refused to promote that change into staging before pilot had released it, then promoted it stage by stage, pilot, staging, and production, each stage entered only once the stage ahead had released it. Each wave approved its variants in one set operation, every approval bound one cluster's record to its own exact revision, and each variant published the release the change order arrived at. The ConfigHub OCI gateway served each release, Sveltos fetched it itself, and every cluster converged on its own reviewed state with its departures intact, with the clusters outside the wave verified stable at every checkpoint.",
+      claim: "ConfigHub held one variant per cluster over a shared base, each carrying its own departures and its environment as its stage, and released every variant's baseline through a change order of its own, so every release that reached a cluster passed the approval gate. One reviewed change made on the base was captured by one change order under a ChangeWorkflow. ConfigHub refused to promote that change into staging before pilot had released it, then promoted it stage by stage, pilot, staging, and production, each stage entered only once the stage ahead had released it. In every stage ConfigHub refused the release until the change as it stood there was approved, the approval was recorded as an attestation on that exact revision in one operation for the stage, and each variant then published the release the change order arrived at. The single-operator run relaxed separation of duties and says so. The ConfigHub OCI gateway served each release, Sveltos fetched it itself, and every cluster converged on its own reviewed state with its departures intact, with the clusters outside the wave verified stable at every checkpoint.",
     },
   };
 }
@@ -2122,7 +2481,7 @@ function verifyReceipt(receipt) {
   // so the re-record replaces it rather than this verifier rewriting history.
   if (predatesChangeWorkflow(receipt)) {
     console.log(
-      "the recorded receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued rather than stages ConfigHub promoted and gated; it awaits a live re-record",
+      "the recorded receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued rather than stages ConfigHub promoted and gated, and its approvals used the per-unit mechanism ConfigHub has since removed rather than attestations; it awaits a live re-record",
     );
     return false;
   }
@@ -2154,13 +2513,34 @@ function verifyReceipt(receipt) {
       "the receipt revisions no longer match the reviewed example files",
     );
   }
+  check(
+    receipt.spec?.source?.workflow?.path === plan.workflow.repoPath
+      && receipt.spec.source.workflow.rawSha256 === plan.workflow.rawSha256,
+    "Sveltos env rollout workflow record changed: the receipt must name the reviewed change-workflow.yaml the run created its workflow from",
+  );
+  // The filter's trigger set is whatever it resolved live, so the verifier
+  // checks its shape rather than a list: non-empty, every trigger one the
+  // committed profile defines, the retired approval trigger absent, and one
+  // ID per name.
   const recordedTriggers = receipt.spec?.policy?.filter?.triggerRefs ?? [];
   check(
     receipt.spec?.policy?.organization === expectedPolicyOrg
       && receipt.spec.policy.profile === "catalog-standard"
-      && receipt.spec.policy.approvalGate === approvalGate
-      && sameSet(recordedTriggers, expectedTriggers),
+      && receipt.spec.policy.filter?.ref === gateFilterRef
+      && recordedTriggers.length > 0
+      && recordedTriggers.every((ref) => catalogTriggerRefs.includes(ref))
+      && (receipt.spec.policy.filter.triggerIds ?? []).length === recordedTriggers.length,
     "Sveltos env rollout policy record changed",
+  );
+  check(
+    !recordedTriggers.includes(retiredApprovalTrigger)
+      && receipt.spec.policy.approvalGate === undefined
+      && receipt.spec.policy.approval?.kind === "attestation",
+    `approval is an attestation the workflow requires; a receipt carrying ${retiredApprovalTrigger} or its vet-approvedby gate records the mechanism ConfigHub removed`,
+  );
+  check(
+    !/"command":"cub unit approve/.test(JSON.stringify(receipt)),
+    "a receipt must not record the removed per-unit approve command as a command it ran",
   );
   const sveltos = loadSveltosPin();
   check(
@@ -2348,8 +2728,49 @@ function verifyChangeManagement(receipt, plan) {
     workflow.space === baseSpace
       && workflow.ref === `${baseSpace}/${workflow.slug}`
       && stableJson(workflow.stages ?? []) === stableJson(stages)
-      && stableJson(workflow.prerequisites ?? []) === stableJson(workflowPrerequisites),
-    `the ChangeWorkflow must live in the base Space, hold the stages ${stages.join(", ")} in that order, and gate each on ${workflowPrerequisites.join(", ")}`,
+      && stableJson(workflow.prerequisites ?? []) === stableJson(entryPrerequisites)
+      && workflow.file?.path === plan.workflow.repoPath
+      && workflow.file.rawSha256 === plan.workflow.rawSha256,
+    `the ChangeWorkflow must live in the base Space, be created from the reviewed ${plan.workflow.repoPath}, hold the stages ${stages.join(", ")} in that order, and enter each later one on ${entryPrerequisites.join(", ")}`,
+  );
+  // Every stage gates its releases on the approval requirement, and every
+  // stage after the first is entered only once the stage ahead released.
+  check(
+    stableJson(workflow.stageGates ?? []) === stableJson(plan.workflow.spec.Stages.map((stage) => ({
+      stage: stage.Name,
+      prerequisites: stage.Prerequisites ?? [],
+      releasePrerequisites: stage.ReleasePrerequisites ?? [],
+    }))),
+    `every stage must gate its releases on ${approvalRequirement} and every later stage its entry on ${entryPrerequisites.join(", ")}, as the reviewed workflow declares`,
+  );
+  // The approval requirement is recorded as reviewed. A single-operator run
+  // needs AllowAuthors: true, and the receipt must say that it relaxes
+  // separation of duties and quote what the strict setting refused.
+  const requirement = (workflow.attestationPrerequisites ?? [])[0] ?? {};
+  const duties = workflow.separationOfDuties ?? {};
+  check(
+    (workflow.attestationPrerequisites ?? []).length === 1
+      && requirement.Name === approvalRequirement
+      && requirement.Type === "Approval"
+      && requirement.Count === 1
+      && requirement.AllowAuthors === plan.workflow.requirement.AllowAuthors
+      && duties.allowAuthors === requirement.AllowAuthors,
+    `the approval requirement must be recorded as the reviewed workflow declares it: one Approval attestation, AllowAuthors ${plan.workflow.requirement.AllowAuthors}`,
+  );
+  check(
+    duties.relaxed === (requirement.AllowAuthors === true)
+      && duties.statement === separationOfDutiesStatement
+      && duties.strictModeRefusal === strictModeRefusal
+      && /who did not write the change/.test(String(duties.strictModeRefusal ?? ""))
+      && duties.strictModeMeasuredOn === strictModeMeasuredOn,
+    "the receipt must say plainly that the single-operator run relaxes separation of duties, and quote what the strict setting refused when it was measured",
+  );
+  check(
+    workflow.workflowRequired?.declared === true
+      && workflow.workflowRequired.component === component.slug
+      && workflow.workflowRequired.enforcedOnPlainPublish === false
+      && workflow.workflowRequired.note === workflowRequiredNote,
+    "the run's component must declare the workflow required, and the receipt must say that ConfigHub does not yet enforce it on a plain publish",
   );
   check(
     !(workflow.prerequisites ?? []).includes("Healthy")
@@ -2387,8 +2808,46 @@ function verifyChangeManagement(receipt, plan) {
   );
   check(
     managed.release?.command === releaseCommand
-      && managed.approval?.command === setApprovalCommand,
-    "the change management must record the release and approval commands the waves used",
+      && managed.approval?.kind === "attestation"
+      && managed.approval.command === stageApprovalCommand("<stage>")
+      && managed.approval.management === managementApprovalCommand,
+    "the change management must record the release and attestation commands the waves used",
+  );
+
+  // The baseline must record the path it took, and the only path this design
+  // accepts is a change order of its own that carries no change, promoted
+  // stage by stage, so every release that reached a cluster passed the gate.
+  const baseline = receipt.spec?.baselineRelease ?? {};
+  check(
+    baseline.path === baselinePath,
+    `the receipt must record which path the baseline took, and the only accepted one is the ${baselinePath}`,
+  );
+  check(
+    baseline.changeOrder?.space === baseSpace
+      && baseline.changeOrder.ref === `${baseSpace}/${baseline.changeOrder.slug}`
+      && baseline.changeOrder.slug !== changeOrder.slug
+      && baseline.changeOrder.workflow === workflow.ref
+      && baseline.changeOrder.carriesBaseChange === false
+      && sameSet(baseline.changeOrder.inScopeSpaces ?? [], component.spaces ?? []),
+    "the baseline change order must live in the base Space under the run's workflow, carry no change, and be headed for exactly the base's component",
+  );
+  check(
+    (baseline.stages ?? []).map((row) => row.stage).join(",") === stages.join(",")
+      && baseline.stages.every((row) =>
+        row.promotion?.command === promoteCommand(row.stage)
+        && row.promotion.changeOrder === baseline.changeOrder.ref
+        && row.promotion.cutRevisions === false
+        && row.approval?.kind === "attestation"
+        && row.approval.command === stageApprovalCommand(row.stage)),
+    "the baseline must be promoted, approved as an attestation, and released stage by stage, in the workflow's order",
+  );
+  check(
+    baseline.scope === setScope
+      && (baseline.matched ?? []).length === workloadSpaces.length + 1
+      && baseline.management?.approval === managementApprovalCommand
+      && baseline.management.gatedServerSide === false
+      && baseline.management.reason === managementUngatedReason,
+    "the baseline must select every record the run created and record the management approval as an attestation nothing server-side gates",
   );
 }
 
@@ -2445,24 +2904,45 @@ function verifyVariants(receipt, plan) {
       `the ${variant.cluster} variant reference changed`,
     );
     for (const record of variant.records ?? []) {
+      // Every approval is an attestation that changed nothing it approved.
       check(
-        record.beforeApproval?.result === "blocked"
-          && record.beforeApproval.gate === approvalGate
-          && record.afterApproval?.result === "allowed"
-          && record.approval?.recordedApprovals >= 1
+        record.approval?.kind === "attestation"
+          && record.approval.type === "Approval"
           && record.approval.approverIdentityRecordedInReceipt === false
-          && record.approval.contentHashUnchanged === true,
-        `the ${variant.cluster} ${record.stage} approval record changed`,
+          && record.approval.contentHashUnchanged === true
+          && record.approval.headUnchanged === true,
+        `the ${variant.cluster} ${record.stage} approval must be recorded as an Approval attestation that left the record's head and content unchanged`,
       );
       // Only the management record may carry no release, and it must say so
       // rather than simply be missing one, so a workload record that failed to
-      // publish can never pass as an out-of-band record.
+      // publish can never pass as an out-of-band record. It is approved as an
+      // attestation that nothing server-side gates.
       if (variant.role === "management") {
         check(
-          record.release === null,
-          `the ${variant.cluster} ${record.stage} record must not publish a release`,
+          record.release === null
+            && record.approval.command === managementApprovalCommand
+            && record.approval.gatedServerSide === false
+            && record.releaseGate?.result === "not-applicable"
+            && record.releaseGate.reason === managementUngatedReason,
+          `the ${variant.cluster} ${record.stage} record must publish no release and record its approval as an attestation nothing server-side gates`,
         );
       } else {
+        // A workload approval never stands without the release gate's
+        // refusal before it: the release was attempted first and ConfigHub
+        // refused it for want of this approval.
+        check(
+          record.releaseGate?.result === "refused"
+            && record.releaseGate.httpStatus === 422
+            && record.releaseGate.requirement === approvalRequirement
+            && releaseGateRefused(String(record.releaseGate.message ?? ""))
+            && record.afterApproval?.result === "published",
+          `the ${variant.cluster} ${record.stage} approval must follow the release gate's refusal in ConfigHub's words, and the release must follow the approval`,
+        );
+        check(
+          record.approval.command.startsWith("cub variant approve --change-order <base-space>/<change-order> --stage ")
+            && record.approval.gatedServerSide === undefined,
+          `the ${variant.cluster} ${record.stage} approval must be of the change order in its stage`,
+        );
         check(
           record.release,
           `the ${variant.cluster} ${record.stage} record published no release`,
@@ -2480,6 +2960,7 @@ function verifyVariants(receipt, plan) {
   }
   const managed = requireChangeManagement(receipt);
   const changedRevision = `ChangeOrder:${managed.changeOrder.slug}`;
+  const baselineRevision = `ChangeOrder:${receipt.spec?.baselineRelease?.changeOrder?.slug}`;
   for (const row of plan.clusters) {
     const variant = variants.find((item) => item.cluster === row.cluster);
     check(
@@ -2497,14 +2978,17 @@ function verifyVariants(receipt, plan) {
         && variant.component === managed.component.slug,
       `the ${row.cluster} variant must carry ${row.environment} as its stage inside the base's component`,
     );
-    // The baseline carries no change order and publishes at the head; the
-    // change publishes where the change order arrived, which is what the next
-    // stage's Released gate reads.
+    // Both releases are pinned to a change order: the baseline to the one
+    // that carries no change, the change to the one that carries it. That is
+    // what each stage's release gate evaluates and what the next stage's
+    // Released gate reads.
     const [baselineRecord, changedRecord] = variant.records ?? [];
     check(
-      baselineRecord?.release?.revision === undefined
-        && changedRecord?.release?.revision === changedRevision,
-      `the ${row.cluster} changed release must bundle ${changedRevision}, and its baseline release the head`,
+      baselineRecord?.release?.revision === baselineRevision
+        && changedRecord?.release?.revision === changedRevision
+        && baselineRecord.approval?.command === stageApprovalCommand(row.environment)
+        && changedRecord.approval?.command === stageApprovalCommand(row.environment),
+      `the ${row.cluster} baseline release must bundle ${baselineRevision} and its changed release ${changedRevision}, each approved in the ${row.environment} stage`,
     );
     check(
       variant.clusterRef?.kind === "SveltosCluster"
@@ -2543,7 +3027,9 @@ function verifyVariants(receipt, plan) {
         && variant.records[0].release.manifestDigest
         !== variant.records[1].release.manifestDigest
         && Number(variant.records[1].approval.revision)
-        > Number(variant.records[0].approval.revision),
+        > Number(variant.records[0].approval.revision)
+        && variant.records[1].releaseGate.message
+        !== variant.records[0].releaseGate.message,
       `the ${row.cluster} revision record changed`,
     );
     for (const record of variant.records) {
@@ -2612,14 +3098,11 @@ function verifyWaves(receipt, plan) {
       === plan.waves.map((row) => `${row.wave}:${row.environment}`).join(","),
     "Sveltos env rollout wave set changed",
   );
-  const baseline = receipt.spec?.baselineApproval ?? {};
+  // The baseline's own record is checked with the change management; here
+  // only that no receipt of this design carries the retired set approval.
   check(
-    baseline.scope === setScope
-      && String(baseline.query ?? "").length > 0
-      && baseline.appliedAsOneOperation === true
-      && (baseline.matched ?? []).length === plan.clusters.length + 1
-      && baseline.recordedApprovals === plan.clusters.length + 1,
-    "the baseline must be approved as one set operation over every record this run created",
+    receipt.spec?.baselineApproval === undefined,
+    "the baseline is released through its own change order and approved as attestations; a set approval of every record is the mechanism ConfigHub removed",
   );
   // A receipt that declares evidence-gated advance must record, on every wave,
   // the checkpoint evidence that unlocked its approval, and that evidence must
@@ -2710,16 +3193,24 @@ function verifyWaves(receipt, plan) {
       wave.promotion.appliedAsOneOperation === true
         && wave.promotion.members === members.length
         && wave.approval?.appliedAsOneOperation === true
+        && wave.approval.kind === "attestation"
+        && wave.approval.command === stageApprovalCommand(wave.environment)
         && wave.approval.recordedApprovals === members.length,
-      `wave ${wave.wave} must promote its set in one operation and record one approval per member`,
+      `wave ${wave.wave} must promote its set in one operation and approve the change in its stage as one attestation operation`,
     );
     for (const member of members) {
       const planCluster = plan.clusters.find(
         (row) => row.cluster === member.cluster,
       );
+      // The wave's gate observation: the release refused for want of the
+      // approval, before the approval was recorded.
+      check(
+        releaseGateRefused(String(member.releaseRefusal ?? "")),
+        `wave ${wave.wave} must record, for ${member.cluster}, the release gate refusing the release before the approval`,
+      );
       check(
         member.revisionId === planCluster.revisions.changed
-          && member.recordedApprovals >= 1
+          && member.approval === "attestation"
           && normalizeDigest(member.releaseManifestDigest)
           === member.releaseManifestDigest
           && member.releaseRevision === wave.release.revision
@@ -2871,10 +3362,12 @@ function renderSummary(receipt) {
       return `| ${variant.wave} | ${variant.cluster} | ${variant.space} | ${kept} | \`${changed.release.manifestDigest}\` | ${changed.delivery.status} |`;
     });
   const waves = receipt.spec.waves.map((wave) =>
-    `| ${wave.wave} | ${wave.environment} | ${wave.promotion.serverGate} | ${wave.clusters.length} | ${wave.approval.recordedApprovals} |`);
+    `| ${wave.wave} | ${wave.environment} | ${wave.promotion.serverGate} | ${wave.clusters.length} refused, then ${wave.approval.recordedApprovals} released |`);
   const finalCheckpoint = receipt.spec.checkpoints.at(-1);
   const delivery = receipt.spec.gatewayDelivery;
   const managed = receipt.spec.changeManagement;
+  const baseline = receipt.spec.baselineRelease;
+  const firstRefusal = receipt.spec.waves[0].clusters[0].releaseRefusal;
   // A receipt recorded before evidence-gated advance carries no unlock
   // records, and its summary stays exactly as recorded.
   const advance = receipt.spec.advance?.evidenceGated === true
@@ -2897,40 +3390,62 @@ which cluster runs which revision comes from ConfigHub rather than from a
 selector on a cluster. Each variant carries its own departures from the base,
 and its clusterRefs entry names its own cluster and nothing else.
 
+The ChangeWorkflow \`${managed.workflow.slug}\` was created from the reviewed
+[change-workflow.yaml](../../examples/sveltos/env-rollout/change-workflow.yaml).
+Its stages are ${managed.workflow.stages.join(", then ")}. Every stage after the
+first is entered only once every variant of the stage ahead has released the
+change (its \`${managed.workflow.prerequisites.join("`, `")}\` gate), and every
+stage's releases need one Approval attestation. The base
+and its four variants sit in the run's own component
+\`${managed.component.slug}\`, and the management record in a component of its
+own.
+
+Every variant's baseline went through the \`${baseline.changeOrder.slug}\` change
+order, which carries no change to the base, stage by stage, so every release
+that reached a cluster in this run passed the approval gate.
+
 One reviewed change raises \`${change.valuesPath}\` from ${change.before} to
-${change.after} on the base record. The change order \`${managed.changeOrder.slug}\`
-captured that edit under the ChangeWorkflow \`${managed.workflow.slug}\`, whose
-stages are ${managed.workflow.stages.join(", then ")}, each gated on
-${managed.workflow.prerequisites.join(", ")}. Every wave was one of those stages:
-\`cub variant promote --change-order\` moved exactly the change into the
-variants the stage selects, the base and its four variants sitting in the
-run's own component \`${managed.component.slug}\` and the management record in
-a component of its own. Before wave one, ConfigHub itself refused to promote
-the change into ${managed.gateRefusal.targetStage} while ${managed.gateRefusal.stageAhead} had
-not released it:
+${change.after} on the base record, and the change order
+\`${managed.changeOrder.slug}\` captured it. Before wave one, ConfigHub itself
+refused to promote the change into ${managed.gateRefusal.targetStage} while
+${managed.gateRefusal.stageAhead} had not released it:
 
 > ${managed.gateRefusal.message}
 
-Each wave approved its variants in one set operation, so the operator acted
-once per wave and ConfigHub still recorded one approval per cluster against
-that cluster's own exact revision. Each variant published the release its
-change order arrived at, and Sveltos fetched each release itself from
+Every wave was one of the stages. \`cub variant promote --change-order\` moved
+exactly the change into the variants the stage selects, and the release was
+attempted before anyone approved it. ConfigHub refused it, in wave one in
+these words:
+
+> ${firstRefusal}
+
+One \`cub variant approve --change-order … --stage …\` then recorded the
+approval of the change as it stood in the stage, an attestation on each
+variant's exact revision, and each variant published the release its change
+order arrived at. Sveltos fetched each release itself from
 \`oci://${delivery.host}/space/<space>:${delivery.tag}\` on a
 ${delivery.interval} interval. The Healthy gate is not declared: nothing
 reports Sveltos's view of a cluster to ConfigHub yet, so the checkpoints below
 are the observed-health evidence.
 
+${managed.workflow.separationOfDuties.statement} Measured on
+${managed.workflow.separationOfDuties.strictModeMeasuredOn}, the strict setting
+refused the promoter's own approval:
+
+> ${managed.workflow.separationOfDuties.strictModeRefusal}
+
 The management record holds one bootstrap profile per workload Space. It was
 applied out of band with kubectl, because it is the record that opens the
-gateway path. Promotion never touched it. Publishing a new release moved the
-tag, and Sveltos followed it.
+gateway path, and its approval is an attestation that nothing server-side
+gates. Promotion never touched it. Publishing a new release moved the tag, and
+Sveltos followed it.
 
 | Wave | Cluster | Space | Departure kept through the change | Changed release digest | Sveltos |
 | --- | --- | --- | --- | --- | --- |
 ${rows.join("\n")}
 
-| Wave | Stage | Gate ConfigHub checked | Variants promoted | Approvals recorded |
-| --- | --- | --- | --- | --- |
+| Wave | Stage | Entry gate ConfigHub checked | Releases before and after the approval |
+| --- | --- | --- | --- |
 ${waves.join("\n")}
 ${advance}
 | Check | Result |
@@ -2953,6 +3468,7 @@ ${receipt.spec.limits.map((limit) => `- ${limit}`).join("\n")}
 - [Reviewed base profile](../../examples/sveltos/env-rollout/clusterprofile-base.yaml)
 - [Reviewed variants](../../examples/sveltos/env-rollout/variants.yaml)
 - [Reviewed change candidate](../../examples/sveltos/env-rollout/change-candidate.yaml)
+- [Reviewed change workflow](../../examples/sveltos/env-rollout/change-workflow.yaml)
 `;
 }
 
@@ -2971,20 +3487,6 @@ ${receipt.spec.limits.map((limit) => `- ${limit}`).join("\n")}
 // shape the base itself is stored from, with multi-line strings as block
 // scalars so a values blob reads the way it does in the example files.
 
-
-function readApprovalTopology(context) {
-  const filter = getByRef(context, "filter", approvalFilterRef).Filter;
-  const triggers = expectedTriggers.map(
-    (ref) => getByRef(context, "trigger", ref).Trigger,
-  );
-  return {
-    ref: approvalFilterRef,
-    id: filter.FilterID,
-    hash: String(filter.Hash ?? "").trim(),
-    triggerRefs: expectedTriggers,
-    triggerIds: triggers.map((trigger) => trigger.TriggerID).sort(),
-  };
-}
 
 
 
@@ -3911,6 +4413,42 @@ function selfTest() {
       /at least one field beyond addressing/,
       "addressing-only variant refusal",
     );
+    // The reviewed workflow is part of the plan, and each way it could drift
+    // from the waves or from the approval design is refused before anything
+    // is built.
+    check(
+      plan.workflow.stages.join(",") === "pilot,staging,prod"
+        && plan.workflow.requirement.AllowAuthors === true
+        && plan.workflow.repoPath === "examples/sveltos/env-rollout/change-workflow.yaml",
+      "the plan must carry the reviewed workflow",
+    );
+    for (const [label, edit, pattern] of [
+      ["AllowAuthors off", (text) => text.replace("AllowAuthors: true", "AllowAuthors: false"), /AllowAuthors: true, which a single-operator run needs/],
+      ["two approvals", (text) => text.replace("Count: 1", "Count: 2"), /one Approval attestation with AllowAuthors: true/],
+      ["a stage released without approval", (text) => text.replace(
+        "    Prerequisites:\n      - Released\n    ReleasePrerequisites:\n      - approval\n  - Name: prod",
+        "    Prerequisites:\n      - Released\n  - Name: prod",
+      ), /the staging stage must gate its releases on approval/],
+      ["staging entered without Released", (text) => text.replace(
+        "  - Name: staging\n    WhereSpace: \"Labels.Stage = 'staging'\"\n    Prerequisites:\n      - Released\n",
+        "  - Name: staging\n    WhereSpace: \"Labels.Stage = 'staging'\"\n",
+      ), /the staging stage must be entered only once the stage ahead has Released/],
+      ["Healthy declared", (text) => text.replace(
+        "  - Name: prod\n    WhereSpace: \"Labels.Stage = 'prod'\"\n    Prerequisites:\n      - Released\n",
+        "  - Name: prod\n    WhereSpace: \"Labels.Stage = 'prod'\"\n    Prerequisites:\n      - Released\n      - Healthy\n",
+      ), /the prod stage must be entered only once|must not declare Healthy/],
+      ["stages out of wave order", (text) => text
+        .replace("Name: pilot", "Name: placeholder")
+        .replace("Name: staging", "Name: pilot")
+        .replace("Name: placeholder", "Name: staging"), /stages must be the waves in order/],
+      ["a stage selecting another label", (text) => text.replace("WhereSpace: \"Labels.Stage = 'pilot'\"", "WhereSpace: \"Labels.Environment = 'pilot'\""), /the pilot stage must select the Spaces labelled Stage=pilot/],
+    ]) {
+      expectFailure(
+        () => loadRolloutPlan(tamperedExampleRoot(workRoot, `workflow-${label.replaceAll(" ", "-")}`, edit, "change-workflow.yaml")),
+        pattern,
+        `reviewed workflow refusal: ${label}`,
+      );
+    }
 
     // The pin this chapter reads, and the controller image rule the gateway
     // forces on top of it. The checks read the lock rather than naming a
@@ -4152,37 +4690,73 @@ function selfTest() {
       "the bootstrap profile lost its remote fetch contract",
     );
 
-    const topology = readApprovalTopology(policyContext);
-
-    // The gate preflight is the gate preflight: it must pass when the
-    // gate materializes and refuse fast, naming the issue, when it never does.
-    assertApprovalGateObservable(policyContext, "20260807000000", topology);
-    check(
-      !spacePresent(policyContext, "hx-sveltos-env-probe-20260807000000"),
-      "the gate preflight did not delete its probe Space",
-    );
-    hub.state.neverPopulateGates = true;
+    // The gate preflight is what npm run sveltos-gate:probe runs live. It
+    // reads the filter's resolved triggers through a wired probe Space,
+    // creates the reviewed workflow there and reads it back, and removes the
+    // Space. It must pass on what the organization carries now and refuse,
+    // naming the problem, each way the organization or the client could
+    // still carry the old mechanism.
+    assertAttestationClient();
+    hub.state.clientPredatesAttestations = true;
     expectFailure(
-      () => assertApprovalGateObservable(policyContext, "20260807000001", topology),
-      /the approval gate never appeared on the probe Unit .*; check the Space wiring before building the fleet/,
-      "gate preflight refusal",
+      () => assertAttestationClient(),
+      /cannot record an approval of a change order in a stage/,
+      "a cub that predates attestations",
     );
+    hub.state.clientPredatesAttestations = false;
+    const topology = probeGates(policyContext, "20260807000000", plan);
     check(
-      !spacePresent(policyContext, "hx-sveltos-env-probe-20260807000001"),
-      "the refused gate preflight did not delete its probe Space",
+      topology.triggerRefs.length > 0
+        && !topology.triggerRefs.includes(retiredApprovalTrigger)
+        && topology.triggerRefs.every((ref) => catalogTriggerRefs.includes(ref))
+        && topology.triggerIds.length === topology.triggerRefs.length
+        && !spacePresent(policyContext, "hx-sveltos-env-probe-20260807000000"),
+      "the gate preflight must read the filter's validating triggers, none of them the retired approval trigger, and remove its probe Space",
     );
-    hub.state.neverPopulateGates = false;
+    for (const [label, setUp, pattern] of [
+      ["the retired approval trigger still resolved", () => {
+        hub.state.resolvedTriggerRefs = [...hub.state.resolvedTriggerRefs, retiredApprovalTrigger];
+      }, /still resolves platform\/require-approval, whose function ConfigHub removed/],
+      ["a filter that resolves nothing", () => {
+        hub.state.resolvedTriggerRefs = [];
+      }, /resolved no trigger for .*, so the Spaces would carry no validating gate/],
+      ["a trigger the profile does not define", () => {
+        hub.state.resolvedTriggerRefs = [...hub.state.resolvedTriggerRefs, "platform/somebody-elses-check"];
+      }, /resolves platform\/somebody-elses-check, which the committed profile .* does not define/],
+      ["a server that drops the approval requirement", () => {
+        hub.state.dropAttestationPrerequisites = true;
+      }, /answered without Stages and AttestationPrerequisites|without the reviewed approval requirement/],
+    ]) {
+      const saved = [...hub.state.resolvedTriggerRefs];
+      setUp();
+      expectFailure(
+        () => probeGates(policyContext, "20260807000001", plan),
+        pattern,
+        `gate preflight refusal: ${label}`,
+      );
+      check(
+        !spacePresent(policyContext, "hx-sveltos-env-probe-20260807000001"),
+        `the refused gate preflight (${label}) did not delete its probe Space`,
+      );
+      hub.state.resolvedTriggerRefs = saved;
+      hub.state.dropAttestationPrerequisites = false;
+    }
 
     // The fake answers the ChangeWorkflow verbs the way the live probe of
-    // 2026-09-26 recorded the server answering, before the walk relies on it.
+    // 2026-09-26 recorded the server answering, and the attestation verbs
+    // the way the probe of the same day recorded them, before the walk
+    // relies on either.
     replayChangeWorkflowProbe(hub, workRoot);
+    replayAttestationProbe(hub, workRoot);
 
     // The whole path: one run-scoped component, one base record in it, four
     // variants cloned from it each carrying its environment as its stage, the
-    // management record in a component of its own, one set approval for the
-    // baseline, delivery through the gateway, one change on the base captured
-    // by one change order, the server refusing a skipped stage, and three
-    // stages promoted by ConfigHub.
+    // management record in a component of its own, one workflow from the
+    // reviewed file, the baseline released through a change order of its
+    // own stage by stage with each release refused until approved, delivery
+    // through the gateway, one change on the base captured by one change
+    // order, the server refusing a skipped stage, and three stages promoted
+    // by ConfigHub, each release refused until approved.
     const policySpacesCreated = new Set();
     const baseSpace = spaceName(`hx-sveltos-env-base-${runId}`);
     const spaceFor = Object.fromEntries([
@@ -4347,13 +4921,21 @@ function selfTest() {
       baseSpace,
       plan,
       runId,
+      component: components.base,
     });
     check(
       workflow.ref === `${baseSpace}/${workflowSlug(runId)}`
         && workflow.stages.join(",") === "pilot,staging,prod"
         && workflow.prerequisites.join(",") === "Released"
-        && workflow.healthy.declared === false,
-      "the run must hold one workflow in the base Space with the reviewed stages, gated on Released alone",
+        && workflow.stageGates.every((row) =>
+          stableJson(row.releasePrerequisites) === stableJson([approvalRequirement]))
+        && workflow.stageGates.map((row) => row.prerequisites.join("+")).join(",") === ",Released,Released"
+        && workflow.attestationPrerequisites[0].AllowAuthors === true
+        && workflow.separationOfDuties.relaxed === true
+        && workflow.healthy.declared === false
+        && workflow.workflowRequired.enforcedOnPlainPublish === false
+        && hub.componentRequires(components.base) === workflow.ref,
+      "the run must hold one workflow from the reviewed file in the base Space, every stage gated at release on one approval, the later ones entered on Released, and the component declaring it required",
     );
     // The component view groups Spaces by Component and files them under
     // Owner. A run whose Spaces lack those labels is invisible in the one view
@@ -4412,36 +4994,69 @@ function selfTest() {
       "outside-the-wave query refusal",
     );
 
-    const baselineSet = reviewSet({
+    // The baseline path fails closed. Each way it can misbehave stops the
+    // run with the step named, before anything is released outside the
+    // gate; the fake is rolled back after each so the real baseline starts
+    // clean.
+    const baselineArgs = {
       policyContext,
-      stageName: "baseline",
-      query: baselineQuery(plan, runId),
-      members: [
-        ...plan.clusters.map((row) => ({
-          cluster: row.cluster,
-          space: spaceFor[row.cluster],
-          expectedDocs: [row.baselineDoc],
-          revisionId: row.revisions.baseline,
-        })),
-        {
-          cluster: plan.management.cluster,
-          space: spaceFor[plan.management.cluster],
-          expectedDocs: managementVariant.documents,
-          revisionId: managementVariant.revisionId,
-          publishesRelease: false,
-        },
-      ],
-    });
+      baseSpace,
+      plan,
+      runId,
+      spaceFor,
+      workflow,
+      membership,
+      managementVariant,
+    };
+    for (const [label, flag, pattern] of [
+      ["a baseline change order ConfigHub refuses", "refuseChangeOrderCreate", /the baseline change order path failed at creating the baseline change order: .*so the run stops rather than publish a baseline outside a change order/],
+      ["a baseline promotion ConfigHub refuses", "refusePromotion", /the baseline change order path failed at promoting it into pilot: /],
+      ["a no-change promotion that cuts a revision", "noChangePromotionCutsRevision", /failed at promoting it into pilot: hx-sveltos-env-pilot moved from revision \d+ to \d+, but a change order with no change must mark the variant where it stands/],
+      ["a release gate that does not hold", "releaseGateDisabled", /failed at releasing pilot: ConfigHub published .* before anyone approved it; the pilot stage's release gate did not hold/],
+      ["a release refused for another reason", "refuseIdenticalBundles", /failed at releasing pilot: the baseline pilot release of hx-sveltos-env-pilot was refused for a reason other than its missing approval: .*no changes were made since :latest bundle/],
+      ["an approval ConfigHub does not record", "refuseApprovals", /failed at releasing pilot: ConfigHub did not record the approval of .* in the pilot stage/],
+    ]) {
+      const saved = hub.snapshot();
+      if (flag === "refuseIdenticalBundles") {
+        // What the probe measured: a plain publish earlier left identical
+        // content published, so the pinned one has nothing new to bundle.
+        hub.handle(["release", "publish", spaceFor["hx-sveltos-env-pilot"], "-o", "json"]);
+      } else {
+        hub.state[flag] = true;
+      }
+      expectFailure(() => releaseBaseline(baselineArgs), pattern, `baseline fails closed on ${label}`);
+      hub.restore(saved);
+    }
+    const baselineRelease = releaseBaseline(baselineArgs);
     check(
-      baselineSet.selection.matched.length === 5
-        && baselineSet.approval.recordedApprovals === 5
-        && baselineSet.approval.appliedAsOneOperation === true,
-      "the baseline must be approved as one set operation over five records",
+      baselineRelease.path === baselinePath
+        && baselineRelease.changeOrder.slug === baselineOrderSlug(runId)
+        && baselineRelease.changeOrder.carriesBaseChange === false
+        && baselineRelease.stages.map((row) => row.stage).join(",") === "pilot,staging,prod"
+        && baselineRelease.selection.matched.length === 5
+        && plan.clusters.every((row) => {
+          const record = baselineRelease.records[row.cluster];
+          return releaseGateRefused(record.releaseGate.message)
+            && /has 0 of 1/.test(record.releaseGate.message)
+            && /from eligible attesters;/.test(record.releaseGate.message)
+            && record.release.revision === `ChangeOrder:${baselineOrderSlug(runId)}`
+            && record.approval.command === stageApprovalCommand(row.environment);
+        })
+        && baselineRelease.management.release === null
+        && baselineRelease.management.approval.gatedServerSide === false,
+      "every baseline release must be refused by its stage's gate, approved as an attestation, and published through the baseline change order, and the management record approved without a release",
+    );
+    check(
+      plan.clusters.every((row) =>
+        hub.releasedChangeOrders(spaceFor[row.cluster])
+          .includes(baselineRelease.changeOrder.ref))
+        && hub.attestationsOn(spaceFor[plan.management.cluster]) === 1,
+      "every variant must have released the baseline change order, and the management record must carry one approval",
     );
     for (const row of plan.clusters) {
-      variantRecords[row.cluster].baseline = baselineSet.records[row.cluster];
+      variantRecords[row.cluster].baseline = baselineRelease.records[row.cluster];
     }
-    managementVariant.baseline = baselineSet.records[plan.management.cluster];
+    managementVariant.baseline = baselineRelease.management;
 
     const bootstrap = applyBootstrapProfiles({
       managementKubeconfig,
@@ -4488,7 +5103,7 @@ function selfTest() {
     hub.handle([
       "space", "create", strayVariant,
       "--label", `Component=${componentLabel}`,
-      "--trigger-filter", approvalFilterRef, "--where-trigger", "-",
+      "--trigger-filter", gateFilterRef, "--where-trigger", "-",
       "--component", components.base, "--quiet",
     ]);
     const strayOrder = createChangeOrder(policyContext, {
@@ -4656,11 +5271,20 @@ function selfTest() {
     check(
       waveRecords.map((wave) => wave.clusters.length).join(",") === "1,1,2"
         && waveRecords[2].approval.recordedApprovals === 2
-        && waveRecords[2].clusters.every((row) => row.recordedApprovals === 1)
+        && waveRecords[2].approval.command === stageApprovalCommand("prod")
+        && waveRecords[2].clusters.every((row) =>
+          row.approval === "attestation" && releaseGateRefused(row.releaseRefusal))
         && new Set(waveRecords[2].clusters.map((row) => row.revisionId)).size === 2
         && new Set(waveRecords[2].clusters.map((row) => row.releaseManifestDigest))
           .size === 2,
-      "wave three must approve both production variants separately from one operation",
+      "wave three must refuse both production releases, approve the change in the prod stage in one operation, and release both variants separately",
+    );
+    // Each attestation covers the exact revision it approved. The change's
+    // approval is a second one on each variant, because the change is new
+    // content that the baseline's approval does not cover.
+    check(
+      plan.clusters.every((row) => hub.attestationsOn(spaceFor[row.cluster]) === 2),
+      "each variant must carry exactly two approvals: its baseline and the change",
     );
     check(
       waveRecords.every((wave) =>
@@ -4755,7 +5379,7 @@ function selfTest() {
       registrations,
       baseRecord,
       baseChange,
-      baselineSet,
+      baselineRelease,
       variantRecords,
       managementVariant,
       bootstrap,
@@ -4770,7 +5394,7 @@ function selfTest() {
         gateRefusal,
       },
     });
-    check(verifyReceipt(receipt) === true, "the self-test receipt was not recognized as a ChangeWorkflow record");
+    check(verifyReceipt(receipt) === true, "the self-test receipt was not recognized as an attestation-design record");
     const summary = renderSummary(receipt);
     check(
       summary.includes(
@@ -4850,6 +5474,14 @@ function selfTest() {
       !predatesChangeWorkflow(halfPreWorkflow),
       "a receipt with one upgraded wave among promoted stages must not pass as an old recording",
     );
+    // The committed recording is that shape, and it stays recognised as
+    // awaiting its re-record, never verified against this design.
+    if (existsSync(receiptPath)) {
+      check(
+        verifyReceipt(readYaml(receiptPath)) === false,
+        "the committed chapter-three receipt must be recognised as predating the attestation design and awaiting its live re-record",
+      );
+    }
 
     const managementSpaceOf = (c) =>
       c.spec.variants.find((row) => row.role === "management").space;
@@ -4965,8 +5597,57 @@ function selfTest() {
       ["management unregistered", (c) => { c.spec.fleet.managementRegistration.ready = false; }, /management cluster must be registered/],
       ["registration renamed", (c) => { c.spec.fleet.registrations[3].cluster = c.spec.fleet.registrations[2].cluster; }, /registered under its own SveltosCluster name/],
       ["registration not ready", (c) => { c.spec.fleet.registrations[3].ready = false; }, /registered under its own SveltosCluster name/],
-      ["approval bracket", (c) => { c.spec.variants[0].records[1].beforeApproval.result = "allowed"; }, /approval record changed/],
-      ["approval count", (c) => { c.spec.variants[2].records[0].approval.recordedApprovals = 0; }, /approval record changed/],
+      // The attestation path.
+      ["gate observation dropped", (c) => { delete c.spec.variants[0].records[1].releaseGate; }, /approval must follow the release gate's refusal/],
+      ["approval without a preceding refusal", (c) => {
+        c.spec.variants[1].records[0].releaseGate.result = "not-attempted";
+      }, /approval must follow the release gate's refusal/],
+      ["refusal for another reason", (c) => {
+        c.spec.variants[2].records[1].releaseGate.message = "Failed: HTTP 400 for req self-test: no changes were made since :latest bundle";
+      }, /approval must follow the release gate's refusal/],
+      ["wave gate observation dropped", (c) => { delete c.spec.waves[1].clusters[0].releaseRefusal; }, /must record, for hx-sveltos-env-staging, the release gate refusing the release before the approval/],
+      ["approval not an attestation", (c) => { c.spec.variants[2].records[0].approval.kind = "ApprovedBy"; }, /must be recorded as an Approval attestation/],
+      ["approval changed the head", (c) => { c.spec.variants[3].records[1].approval.headUnchanged = false; }, /left the record's head and content unchanged/],
+      ["old unit approve command reintroduced", (c) => {
+        c.spec.waves[1].approval.command = 'cub unit approve --space "*" --where <query> --revision HeadRevisionNum';
+      }, /must not record the removed per-unit approve command/],
+      ["old unit approve on a variant record", (c) => {
+        c.spec.variants[0].records[0].approval.command = "cub unit approve --space <space> clusterprofile";
+      }, /must not record the removed per-unit approve command/],
+      ["approval gate reintroduced", (c) => { c.spec.policy.approvalGate = "platform/require-approval/vet-approvedby"; }, /records the mechanism ConfigHub removed/],
+      ["approval trigger reintroduced", (c) => {
+        c.spec.policy.filter.triggerRefs = [...c.spec.policy.filter.triggerRefs, retiredApprovalTrigger];
+        c.spec.policy.filter.triggerIds = [...c.spec.policy.filter.triggerIds, "self-test-trigger-require-approval"];
+      }, /records the mechanism ConfigHub removed/],
+      ["management approval missing", (c) => {
+        delete c.spec.variants.find((row) => row.role === "management").records[0].approval;
+      }, /approval must be recorded as an Approval attestation/],
+      ["management approval claimed gated", (c) => {
+        c.spec.variants.find((row) => row.role === "management").records[0].approval.gatedServerSide = true;
+      }, /nothing server-side gates/],
+      ["management approval dropped from the baseline", (c) => { delete c.spec.baselineRelease.management; }, /record the management approval as an attestation nothing server-side gates/],
+      ["baseline path unrecorded", (c) => { delete c.spec.baselineRelease.path; }, /must record which path the baseline took/],
+      ["baseline released at the head", (c) => { c.spec.baselineRelease.path = "plain publish at the head"; }, /must record which path the baseline took/],
+      ["baseline release unpinned", (c) => { delete c.spec.variants[0].records[0].release.revision; }, /baseline release must bundle ChangeOrder:baseline-/],
+      ["baseline change order carries a change", (c) => { c.spec.baselineRelease.changeOrder.carriesBaseChange = true; }, /carry no change/],
+      ["baseline stage skipped", (c) => { c.spec.baselineRelease.stages.pop(); }, /released stage by stage, in the workflow's order/],
+      ["baseline set approval reintroduced", (c) => {
+        c.spec.baselineApproval = { command: 'cub unit approve --space "*" --where <query> --revision HeadRevisionNum' };
+      }, /must not record the removed per-unit approve command|set approval of every record is the mechanism ConfigHub removed/],
+      ["AllowAuthors silently flipped", (c) => {
+        c.spec.changeManagement.workflow.attestationPrerequisites[0].AllowAuthors = false;
+      }, /approval requirement must be recorded as the reviewed workflow declares it/],
+      ["AllowAuthors flipped with its statement", (c) => {
+        c.spec.changeManagement.workflow.attestationPrerequisites[0].AllowAuthors = false;
+        c.spec.changeManagement.workflow.separationOfDuties.allowAuthors = false;
+        c.spec.changeManagement.workflow.separationOfDuties.relaxed = false;
+      }, /approval requirement must be recorded as the reviewed workflow declares it/],
+      ["separation of duties unstated", (c) => { delete c.spec.changeManagement.workflow.separationOfDuties.statement; }, /relaxes separation of duties/],
+      ["strict-mode refusal unquoted", (c) => { c.spec.changeManagement.workflow.separationOfDuties.strictModeRefusal = "it was refused"; }, /quote what the strict setting refused/],
+      ["release gate dropped from a stage", (c) => { c.spec.changeManagement.workflow.stageGates[2].releasePrerequisites = []; }, /every stage must gate its releases on approval/],
+      ["workflow from another file", (c) => { c.spec.changeManagement.workflow.file.rawSha256 = "0".repeat(64); }, /be created from the reviewed/],
+      ["workflow source unrecorded", (c) => { delete c.spec.source.workflow; }, /workflow record changed/],
+      ["workflow-required claimed enforced", (c) => { c.spec.changeManagement.workflow.workflowRequired.enforcedOnPlainPublish = true; }, /does not yet enforce it on a plain publish/],
       ["release reference", (c) => {
         c.spec.variants[1].records[1].release.reference =
           "oci://oci.hub.confighub.com/space/somewhere-else:latest";
@@ -4981,12 +5662,12 @@ function selfTest() {
         c.spec.variants[2].records[1].delivery.releaseManifestDigest =
           c.spec.variants[2].records[0].release.manifestDigest;
       }, /revision record changed/],
-      ["baseline set collapsed", (c) => { c.spec.baselineApproval.recordedApprovals = 1; }, /approved as one set operation/],
-      ["baseline approvals iterated", (c) => { c.spec.baselineApproval.appliedAsOneOperation = false; }, /approved as one set operation/],
+      ["baseline set shrunk", (c) => { c.spec.baselineRelease.matched.pop(); }, /must select every record the run created/],
+      ["baseline stage approval iterated", (c) => { c.spec.baselineRelease.stages[1].approval.kind = "ApprovedBy"; }, /approved as an attestation, and released stage by stage/],
       ["wave query dropped", (c) => { c.spec.waves[2].selection.query = ""; }, /must record the query that selected its set/],
       ["wave matched set", (c) => { c.spec.waves[2].selection.matched.pop(); }, /must record the query that selected its set/],
       ["wave member dropped", (c) => { c.spec.waves[2].clusters.pop(); }, /rather than the prod clusters/],
-      ["wave approvals miscounted", (c) => { c.spec.waves[2].approval.recordedApprovals = 1; }, /one approval per member/],
+      ["wave approvals miscounted", (c) => { c.spec.waves[2].approval.recordedApprovals = 1; }, /approve the change in its stage as one attestation operation/],
       ["wave approval iterated", (c) => { c.spec.waves[2].approval.appliedAsOneOperation = false; }, /one operation/],
       ["wave promotion iterated", (c) => { c.spec.waves[2].promotion.appliedAsOneOperation = false; }, /one operation/],
       ["change management dropped", (c) => { delete c.spec.changeManagement; }, /must record its change management/],
@@ -5018,7 +5699,7 @@ function selfTest() {
       ["another run's variant in scope", (c) => {
         c.spec.changeManagement.changeOrder.inScopeSpaces.push("hx-sveltos-env-staging-20260101000000");
       }, /headed for exactly the base's component/],
-      ["Healthy declared", (c) => { c.spec.changeManagement.workflow.prerequisites.push("Healthy"); }, /must live in the base Space, hold the stages/],
+      ["Healthy declared", (c) => { c.spec.changeManagement.workflow.prerequisites.push("Healthy"); }, /must live in the base Space, be created from the reviewed .*, hold the stages/],
       ["Healthy reason dropped", (c) => { c.spec.changeManagement.workflow.healthy.reason = "not needed"; }, /Healthy gate must stay undeclared/],
       ["workflow stages reordered", (c) => {
         c.spec.changeManagement.workflow.stages = ["staging", "pilot", "prod"];
@@ -5035,10 +5716,10 @@ function selfTest() {
       }, /must be the pilot stage promoted/],
       ["stage selected the wrong variants", (c) => { c.spec.waves[2].stage.members.pop(); }, /stage selected exactly its variants/],
       ["wave released at the head", (c) => { delete c.spec.waves[1].release.revision; }, /must publish each variant where the change order arrived/],
-      ["changed release at the head", (c) => { delete c.spec.variants[0].records[1].release.revision; }, /changed release must bundle ChangeOrder:/],
+      ["changed release at the head", (c) => { delete c.spec.variants[0].records[1].release.revision; }, /its changed release ChangeOrder:bg-replicas-/],
       ["baseline release under the change order", (c) => {
         c.spec.variants[1].records[0].release.revision = c.spec.variants[1].records[1].release.revision;
-      }, /changed release must bundle ChangeOrder:/],
+      }, /baseline release must bundle ChangeOrder:baseline-/],
       ["variant outside its stage", (c) => { c.spec.variants[3].stage = "staging"; }, /must carry prod as its stage inside the base's component/],
       ["variant outside the component", (c) => { c.spec.variants[0].component = `${componentLabel}-management-20260101000000`; }, /must carry pilot as its stage inside the base's component/],
       ["management given a stage", (c) => {
@@ -5069,8 +5750,41 @@ function selfTest() {
       expectFailure(() => verifyReceipt(clone), pattern, `receipt ${label}`);
     }
 
+    // Every other governed live lane is written against the approval API
+    // ConfigHub removed, so each must stop before building anything, with its
+    // named reason. Each is started for real, with no ConfigHub context and
+    // no cub, kind, or kubectl on its PATH, so a lane that lost its refusal
+    // fails at its own first check rather than reaching anything live.
+    const pythonDir = dirname(spawnSync(
+      "python3", ["-c", "import sys; print(sys.executable)"], { encoding: "utf8" },
+    ).stdout.trim());
+    for (const [script, laneMode] of [
+      ["scripts/run-sveltos-oci-delivery-proof.mjs", "--run"],
+      ["scripts/run-sveltos-cve-patch-proof.mjs", "--run"],
+      ["scripts/run-sveltos-bulk-ops-proof.mjs", "--run"],
+      ["scripts/run-sveltos-held-cluster-proof.mjs", "--run"],
+      ["scripts/verify-sveltos-example.mjs", "--hub-record"],
+      ["scripts/verify-sveltos-example.mjs", "--hub-verify"],
+    ]) {
+      const lane = spawnSync(process.execPath, [join(repoRoot, script), laneMode], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 120_000,
+        env: {
+          PATH: [dirname(process.execPath), pythonDir].join(":"),
+          HOME: process.env.HOME ?? "",
+        },
+      });
+      check(
+        lane.status !== 0
+          && String(lane.stderr).includes(retiredApprovalLaneMarker)
+          && String(lane.stderr).includes("confighubai/confighub#5495"),
+        `${script} ${laneMode} must stop before building anything and name the removed approval API; it answered ${lane.status}: ${String(lane.stderr).trim().split("\n").slice(-3).join(" ")}`,
+      );
+    }
+
     console.log(
-      "sveltos env rollout runner self-test passed: the 2026-09-26 ChangeWorkflow probe replayed against the fake hub, with the Released gate refusing in the server's own words and unknown flags and verbs refused; one base and five per-cluster variants each naming its own SveltosCluster, the base and its four variants in a run-scoped component with each variant's environment as its stage and the management Space in a component of its own, with the management-in-base, wrong-stage, and staged-base refusals; one workflow gated on Released and not Healthy; one change order headed for exactly the run's five Spaces, with another run's Space in its scope refused; the server refusing a promotion into staging before pilot released, and the runner refusing to record a skip the server allowed; the departure collision and clusterRefs-addressing refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, three stages promoted by ConfigHub with one set approval each and wave three approving two variants separately, each variant releasing where the change order arrived, a stage that is not the wave refused, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin read from the lock with its released controller run as released and an override refused on that pin, the preload list taken from the pinned manifest's own image lines with no agent digest invented, the image override mechanism kept for a pin that needs it, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: the 2026-09-26 ChangeWorkflow and attestation probes replayed against the fake hub, with the Released gate and the release gate refusing in the server's own words, the strict separation-of-duties refusal and a second approver clearing it, the declared-but-unenforced workflow requirement, the no-change change order and its identical-bundle refusal, the removed per-unit approve verb, and unknown flags and verbs refused; the gate preflight reading the filter's validating triggers through a probe Space and the reviewed workflow read back, with its approval-trigger, empty-filter, undefined-trigger, dropped-requirement, and old-client refusals; the reviewed workflow's refusals for AllowAuthors, count, missing release gate, missing Released, Healthy, stage order, and stage label; one base and five per-cluster variants each naming its own SveltosCluster, the base and its four variants in a run-scoped component with each variant's environment as its stage and the management Space in a component of its own, with the management-in-base, wrong-stage, and staged-base refusals; one workflow from the reviewed file, declared required on the component; the baseline released through a change order of its own stage by stage, every release refused until approved, failing closed on a refused change order, a refused promotion, a no-change promotion that cuts a revision, a release gate that does not hold, a release refused for another reason, and an approval not recorded; the management record approved as an attestation nothing server-side gates; one change order headed for exactly the run's five Spaces, with another run's Space in its scope refused; the server refusing a promotion into staging before pilot released, and the runner refusing to record a skip the server allowed; the departure collision and clusterRefs-addressing refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, three stages promoted by ConfigHub, each release refused by its gate, approved once for the stage as an attestation, and released, with wave three releasing two variants separately, a stage that is not the wave refused, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin read from the lock with its released controller run as released and an override refused on that pin, the preload list taken from the pinned manifest's own image lines with no agent digest invented, the image override mechanism kept for a pin that needs it, the lowercase Space and Secret type refusals the gateway imposes, eight workload releases delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, the receipt tamper battery, and every other governed live lane stopping before it builds anything because the approval API it was written against is gone",
     );
   } finally {
     commandRunner = realRunner;
@@ -5100,7 +5814,7 @@ function replayChangeWorkflowProbe(hub, workRoot) {
   };
   const probe = "probe-cw";
   const base = `${probe}-base`;
-  const wiring = ["--trigger-filter", approvalFilterRef, "--where-trigger", "-"];
+  const wiring = ["--trigger-filter", gateFilterRef, "--where-trigger", "-"];
   must([
     "space", "create", base,
     "--label", `Component=${probe}`,
@@ -5218,7 +5932,8 @@ function replayChangeWorkflowProbe(hub, workRoot) {
   for (const [args, pattern, label] of [
     [["changeorder", "create", "--space", base, "wide", "--change-workflow", `${base}/line`, "--in-scope-space", `${probe}-dev`], /unknown flag: --in-scope-space/, "an unused changeorder flag"],
     [["variant", "promote", "--change-order", `${base}/bump`, "--target-stage", "prod", "--force"], /unknown flag: --force/, "a gate override"],
-    [["variant", "approve", "--change-order", `${base}/bump`, "--stage", "dev"], /unknown command "variant approve"/, "a verb outside the table"],
+    [["changeorder", "abort", `${base}/bump`], /unknown command "changeorder abort"/, "a verb outside the table"],
+    [["variant", "approve", "--change-order", `${base}/bump`, "--stage", "dev", "--no-wait"], /unknown flag: --no-wait/, "the approve flag removed with the old mechanism"],
     [["changeworkflow", "create", "--space", base, "other", "--stage", "dev", "--allow-exists"], /unknown flag: --allow-exists/, "a stray --allow-exists"],
   ]) {
     const result = answer(args);
@@ -5231,9 +5946,184 @@ function replayChangeWorkflowProbe(hub, workRoot) {
   must(["component", "delete", probe, "--quiet"], "remove the component");
 }
 
+// The attestation probe of 2026-09-26, replayed against the fake: a workflow
+// with an approval requirement is created from a file; a release of a change
+// order into a stage is refused with HTTP 422 until the change as it stands
+// there is approved, in the server's words; once approved it publishes; with
+// AllowAuthors false the promoter's own approval does not count, and a second
+// approver's does; a component can declare the workflow required, and a plain
+// publish outside a change order still succeeds; a change order that carries
+// no change can be promoted and approved, and its pinned release is refused
+// only when identical content is already published; and the per-unit approve
+// verb is gone.
+function replayAttestationProbe(hub, workRoot) {
+  const answer = (args) => hub.handle(args);
+  const must = (args, label) => {
+    const result = answer(args);
+    check(result.ok, `attestation probe replay, ${label}: ${result.error}`);
+    return result;
+  };
+  const probe = "probe-at";
+  const base = `${probe}-base`;
+  const operator = hub.state.actingUser;
+  const wiring = ["--trigger-filter", gateFilterRef, "--where-trigger", "-"];
+  const gone = answer([
+    "unit", "approve", "--space", "*", "--where", "Labels.Proof = 'probe'",
+    "--revision", "HeadRevisionNum", "--wait", "--quiet",
+  ]);
+  check(
+    !gone.ok && gone.error === "Failed: unknown flag: --revision",
+    `attestation probe replay: the per-unit approve verb must be gone, got ${gone.error || "success"}`,
+  );
+  must(["component", "create", probe, "--quiet"], "component");
+  must([
+    "space", "create", base, "--label", `Component=${probe}`,
+    ...wiring, "--component", probe, "--quiet",
+  ], "base Space");
+  must([
+    "unit", "create", "--space", base, policyUnit,
+    join(exampleRoot, "clusterprofile-base.yaml"), "--quiet",
+  ], "base unit");
+  for (const stage of ["dev", "prod"]) {
+    must([
+      "target", "create", `${probe}-${stage}`, "{}", targetHost.worker,
+      "--space", targetHost.space, "--provider", "OCI", "--toolchain", "Any", "--quiet",
+    ], `${stage} Target`);
+    must([
+      "variant", "create", stage, base,
+      "--space-pattern", `template:${probe}-${stage}`, "--stage", stage, "--quiet",
+    ], `${stage} variant`);
+    must([
+      "unit", "set-target", policyUnit, `${targetHost.space}/${probe}-${stage}`,
+      "--space", `${probe}-${stage}`, "--quiet",
+    ], `${stage} unit target`);
+  }
+  const workflowFile = (allowAuthors) => {
+    const path = join(workRoot, `probe-at-workflow-${allowAuthors}.yaml`);
+    writeFileSync(path, [
+      "AttestationPrerequisites:",
+      `  - {Name: approval, Type: Approval, Count: 1, AllowAuthors: ${allowAuthors}}`,
+      "Stages:",
+      "  - {Name: dev, WhereSpace: \"Labels.Stage = 'dev'\", ReleasePrerequisites: [approval]}",
+      "  - {Name: prod, WhereSpace: \"Labels.Stage = 'prod'\", Prerequisites: [Released], ReleasePrerequisites: [approval]}",
+      "",
+    ].join("\n"));
+    return path;
+  };
+  must([
+    "changeworkflow", "create", "--space", base, "line",
+    "--filename", workflowFile(true), "--quiet",
+  ], "workflow with an approval requirement, from a file");
+  must([
+    "component", "update", "--patch", probe, "--change-workflow-required",
+    "--allowed-change-workflow", `${base}/line`, "--quiet",
+  ], "declare the workflow required");
+  check(
+    hub.componentRequires(probe) === `${base}/line`,
+    "attestation probe replay: the component must record the workflow it requires",
+  );
+
+  // A change order with no change: promoted, refused at release until
+  // approved, approved, released.
+  must([
+    "changeorder", "create", "--space", base, "baseline",
+    "--change-workflow", `${base}/line`, "--description", "Baseline", "--quiet",
+  ], "a change order with no change");
+  must([
+    "variant", "promote", "--change-order", `${base}/baseline`,
+    "--target-stage", "dev", "--change-desc", "Baseline", "--quiet",
+  ], "promote the baseline into dev");
+  const unapproved = answer([
+    "release", "publish", `${probe}-dev`, "--revision", "ChangeOrder:baseline", "-o", "json",
+  ]);
+  check(
+    !unapproved.ok
+      && unapproved.error.endsWith("unable to publish a release of change order 'baseline' in stage 'dev': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 1 has 0 of 1"),
+    `attestation probe replay: an unapproved release must be refused with 422 in the server's words, got ${unapproved.error || "success"}`,
+  );
+  must([
+    "variant", "approve", "--change-order", `${base}/baseline`, "--stage", "dev", "--quiet",
+  ], "approve the baseline in dev");
+  must([
+    "release", "publish", `${probe}-dev`, "--revision", "ChangeOrder:baseline", "-o", "json",
+  ], "release dev once approved");
+
+  // Declared, not enforced: a plain publish outside any change order on a
+  // component that requires a workflow succeeds.
+  must(["release", "publish", `${probe}-prod`, "-o", "json"], "a plain publish on a workflow-required component");
+  // And the pinned release of that same content is then refused, for
+  // having nothing new to bundle.
+  must([
+    "variant", "promote", "--change-order", `${base}/baseline`,
+    "--target-stage", "prod", "--change-desc", "Baseline", "--quiet",
+  ], "promote the baseline into prod once dev released it");
+  must([
+    "variant", "approve", "--change-order", `${base}/baseline`, "--stage", "prod", "--quiet",
+  ], "approve the baseline in prod");
+  const identical = answer([
+    "release", "publish", `${probe}-prod`, "--revision", "ChangeOrder:baseline", "-o", "json",
+  ]);
+  check(
+    !identical.ok && /no changes were made since :latest bundle/.test(identical.error),
+    `attestation probe replay: a pinned release of already-published content must be refused, got ${identical.error || "success"}`,
+  );
+
+  // Separation of duties: with AllowAuthors false, the operator who promoted
+  // the change is one of its authors in dev, and that approval reads 0 of 1
+  // in the words the receipt quotes. A second approver's counts.
+  must([
+    "changeworkflow", "create", "--space", base, "strict",
+    "--filename", workflowFile(false), "--quiet",
+  ], "a strict workflow");
+  const changedPath = join(workRoot, "probe-at-changed.yaml");
+  const baseDoc = parseDocs(readFileSync(join(exampleRoot, "clusterprofile-base.yaml"), "utf8"))[0];
+  writeStoredDocuments(changedPath, [{
+    ...baseDoc,
+    metadata: { ...baseDoc.metadata, labels: { ...(baseDoc.metadata.labels ?? {}), probe: "strict" } },
+  }]);
+  must(["unit", "update", "--space", base, policyUnit, changedPath, "--quiet"], "edit the base");
+  must([
+    "changeorder", "create", "--space", base, "strict-change",
+    "--change-workflow", `${base}/strict`, "--description", "Strict", "--quiet",
+  ], "a change order under the strict workflow");
+  must([
+    "variant", "promote", "--change-order", `${base}/strict-change`,
+    "--target-stage", "dev", "--change-desc", "Strict", "--quiet",
+  ], "promote the change into dev");
+  must([
+    "variant", "approve", "--change-order", `${base}/strict-change`, "--stage", "dev", "--quiet",
+  ], "the promoter approves their own promotion");
+  const selfApproved = answer([
+    "release", "publish", `${probe}-dev`, "--revision", "ChangeOrder:strict-change", "-o", "json",
+  ]);
+  const template = new RegExp(`${strictModeRefusal
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace("<change-order>", "strict-change")
+    .replace("<stage>", "dev")
+    .replace("<unit>", policyUnit)
+    .replace("<n>", "\\d+")}$`);
+  check(
+    !selfApproved.ok && template.test(selfApproved.error),
+    `attestation probe replay: under AllowAuthors false the promoter's own approval must read 0 of 1 in the words the receipt quotes, got ${selfApproved.error || "success"}`,
+  );
+  hub.state.actingUser = "self-test-second-approver";
+  must([
+    "variant", "approve", "--change-order", `${base}/strict-change`, "--stage", "dev", "--quiet",
+  ], "a second approver approves");
+  hub.state.actingUser = operator;
+  must([
+    "release", "publish", `${probe}-dev`, "--revision", "ChangeOrder:strict-change", "-o", "json",
+  ], "release dev once a second approver approved");
+
+  for (const slug of [`${probe}-dev`, `${probe}-prod`, base]) {
+    must(["space", "delete", slug, "--recursive-force", "--quiet"], `remove ${slug}`);
+  }
+  must(["component", "delete", probe, "--quiet"], "remove the component");
+}
+
 // A tampered copy of the reviewed example files, so a plan refusal is proved
 // against a real fixture rather than a hand-built object.
-function tamperedExampleRoot(workRoot, label, edit) {
+function tamperedExampleRoot(workRoot, label, edit, target = "variants.yaml") {
   const root = join(workRoot, `tamper-${label}`);
   const planRoot = join(root, "examples", "sveltos", "env-rollout");
   mkdirSync(planRoot, { recursive: true });
@@ -5242,10 +6132,11 @@ function tamperedExampleRoot(workRoot, label, edit) {
     "change-candidate.yaml",
     "variants.yaml",
     "clusterprofile-base.yaml",
+    "change-workflow.yaml",
   ]) {
     cpSync(join(exampleRoot, name), join(planRoot, name));
   }
-  const path = join(planRoot, "variants.yaml");
+  const path = join(planRoot, target);
   const text = readFileSync(path, "utf8");
   const next = edit(text);
   check(next !== text, `the ${label} tamper did not change the fixture`);
@@ -5466,13 +6357,28 @@ function createFakeConfigHub() {
   });
   let releaseSequence = 0;
   const state = {
-    neverPopulateGates: false,
     refuseUpstreamLink: false,
     mergeKeepsDepartureOnly: false,
     severUpstreamLineage: false,
     ignoreStageGates: false,
     triggerIdOverride: null,
     releaseTargetOverride: null,
+    // What the platform filter resolves today: the profile's seven
+    // validating triggers. The approval trigger was deleted with the old
+    // approval mechanism, so the filter's selector no longer finds it.
+    resolvedTriggerRefs: readYaml(policyPath).spec.baseline.checks
+      .map((item) => item.trigger)
+      .sort(),
+    // Every write and every attestation in the fake is this one user's, as
+    // every live run of this chapter is one operator's.
+    actingUser: "self-test-operator",
+    dropAttestationPrerequisites: false,
+    clientPredatesAttestations: false,
+    refuseChangeOrderCreate: false,
+    refusePromotion: false,
+    noChangePromotionCutsRevision: false,
+    releaseGateDisabled: false,
+    refuseApprovals: false,
   };
   // The ChangeWorkflow model: component entities Spaces attach to, workflows
   // and change orders held in a Space, and, per Space, the change orders a
@@ -5501,24 +6407,26 @@ function createFakeConfigHub() {
     .map((item) => item.trim())
     .filter(Boolean);
   const unitKey = (space, slug) => `${space}/${slug}`;
-  const approvalsOn = (unit) =>
-    Array.isArray(unit.ApprovedBy) ? unit.ApprovedBy.length : 0;
+  // A new revision queues the Space's validating triggers. None of them is
+  // an approval gate any more, so once they have run the unit carries no
+  // blocking gate: what holds a release back is the workflow's release gate.
   const tick = () => {
     for (const key of pending) {
       const unit = units.get(key);
       if (!unit) continue;
-      if (state.neverPopulateGates) unit.ApplyGates = {};
-      else if (approvalsOn(unit) >= 1) unit.ApplyGates = {};
-      else unit.ApplyGates = { [approvalGate]: true };
+      unit.ApplyGates = {};
     }
     pending.clear();
   };
   const ok = (output) => ({ ok: true, status: 0, output, error: "" });
   const refuse = (error) => ({ ok: false, status: 1, output: "", error });
+  // Each revision records who wrote it, which is what a release gate's
+  // separation of duties reads.
   const store = (unit, text) => {
     unit.Data = Buffer.from(text).toString("base64");
     unit.ContentHash = sha256(text);
     unit.history.set(unit.HeadRevisionNum, text);
+    unit.authors = { ...(unit.authors ?? {}), [unit.HeadRevisionNum]: state.actingUser };
   };
   const dataOf = (unit) => Buffer.from(unit.Data, "base64").toString("utf8");
   // The where evaluator understands the label conjunctions this chapter
@@ -5533,9 +6441,93 @@ function createFakeConfigHub() {
         (predicate) => unit.Labels?.[predicate[1]] === predicate[2],
       ));
   };
+  // The Spaces a stage selects: in the change order's scope, attached to its
+  // component, and carrying the stage's Stage label.
+  const stageSpacesOf = (order, stage) => [...spaces.values()]
+    .filter((row) =>
+      row.ComponentID === order.ComponentID
+      && row.Labels?.Stage === stage.StageLabel
+      && order.InScopeSpaceIDs.includes(row.SpaceID))
+    .sort((left, right) => left.Slug.localeCompare(right.Slug));
+  // A stage's release gate, evaluated as confighubai/confighub's
+  // checkReleasePrerequisites does and worded as it words a refusal: for
+  // every bundled revision, the distinct users with a Pass of the required
+  // type on it, or on an earlier revision of the same unit with the same
+  // content, not counting an author of the change there unless the
+  // requirement allows authors. The authors are whoever wrote the unit's
+  // revisions after the change order's start, and always the revision's own
+  // writer.
+  const releaseGateRefusal = (order, spaceSlug, bundled) => {
+    const workflow = workflows.get(order.ChangeWorkflow);
+    const stage = workflow.Stages.find((row) =>
+      stageSpacesOf(order, row).some((space) => space.Slug === spaceSlug));
+    if (!stage || stage.ReleasePrerequisites.length === 0) return null;
+    const failures = [];
+    for (const name of stage.ReleasePrerequisites) {
+      const requirement = workflow.AttestationPrerequisites.find((row) => row.Name === name);
+      if (!requirement) {
+        failures.push(`unrecognized release prerequisite '${name}'`);
+        continue;
+      }
+      const count = Number(requirement.Count ?? 1);
+      const type = requirement.Type ?? "Approval";
+      const unitFailures = [];
+      for (const row of bundled) {
+        const start = row.unit.changeStarts?.[order.Key] ?? row.revision;
+        const authors = new Set([row.unit.authors?.[row.revision]]);
+        for (let revision = start + 1; revision <= row.revision; revision += 1) {
+          authors.add(row.unit.authors?.[revision]);
+        }
+        const content = sha256(row.text);
+        const passes = new Set();
+        let failed = false;
+        for (const attestation of row.unit.attestations ?? []) {
+          if (attestation.type !== type || attestation.revision > row.revision) continue;
+          if (sha256(row.unit.history.get(attestation.revision) ?? "") !== content) continue;
+          if (!requirement.AllowAuthors && authors.has(attestation.user)) continue;
+          if (attestation.result === "Fail") failed = true;
+          else passes.add(attestation.user);
+        }
+        if (failed && !requirement.IgnoreFail) {
+          unitFailures.push(`${row.unit.Slug} revision ${row.revision} was rejected`);
+        } else if (passes.size < count) {
+          unitFailures.push(`${row.unit.Slug} revision ${row.revision} has ${passes.size} of ${count}`);
+        }
+      }
+      if (unitFailures.length > 0) {
+        const who = requirement.AllowAuthors
+          ? "eligible attesters"
+          : "eligible attesters who did not write the change";
+        failures.push(`requires ${requirement.Name}: ${count} ${type} attestation(s) from ${who}; ${unitFailures.join("; ")}`);
+      }
+    }
+    return failures.length === 0
+      ? null
+      : `unable to publish a release of change order '${order.Slug}' in stage '${stage.Name}': ${failures.join("; ")}`;
+  };
   const handle = (args) => {
     const { positionals, flags } = parseCubCommand(args);
     const [entity, verb, ...rest] = positionals;
+    // The per-unit approve verb is gone from ConfigHub and from cub. Asked
+    // with the flags the old approval path passed, cub v0.6.2 answered this,
+    // measured on 2026-09-26; the fake answers the same, whatever the shared
+    // flag table still lists for the chapters that have not moved.
+    if (entity === "unit" && verb === "approve") {
+      return refuse(args.includes("--revision")
+        ? "Failed: unknown flag: --revision"
+        : 'unknown command "approve" for "cub unit"');
+    }
+    // The runner asks the local client whether it records approvals as
+    // attestations before it builds anything. A client from before them has
+    // no --change-order on variant approve.
+    if (args.includes("--help")) {
+      if (entity === "variant" && verb === "approve") {
+        return ok(state.clientPredatesAttestations
+          ? "Usage:\n  cub variant approve <space> [flags]\n\nFlags:\n      --no-wait\n"
+          : "Usage:\n  cub variant approve [<space>] [flags]\n\nFlags:\n      --change-order string\n      --stage string\n");
+      }
+      return refuse(`the self-test fake hub has no help for cub ${positionals.join(" ")}`);
+    }
     // The surface is closed both ways: a verb the flag table does not name is
     // refused before its flags are read, and a flag outside a verb's row is
     // refused in the CLI's own words.
@@ -5550,8 +6542,26 @@ function createFakeConfigHub() {
     if (entity === "filter" && verb === "get") {
       return ok(JSON.stringify({ Filter: { FilterID: filterId, Hash: "self-test-filter-hash" } }));
     }
+    // A trigger is read by slug or by ID. The approval trigger was deleted,
+    // and reading it answers as the live run found on 2026-09-26.
     if (entity === "trigger" && verb === "get") {
-      return ok(JSON.stringify({ Trigger: { TriggerID: `self-test-trigger-${rest[0]}` } }));
+      const slug = String(rest[0]).replace(/^self-test-trigger-/, "");
+      const ref = `${flags.space}/${slug}`;
+      if (!state.resolvedTriggerRefs.includes(ref)) return refuse("trigger not found");
+      return ok(JSON.stringify({ Trigger: { TriggerID: triggerIdFor(ref), Slug: slug } }));
+    }
+    // Declaring that a component requires a workflow is recorded, and, as
+    // measured on 2026-09-26, not enforced on a plain publish.
+    if (entity === "component" && verb === "update") {
+      const row = componentFor(rest[0]);
+      if (!row) return refuse(`component ${rest[0]} not found`);
+      const allowed = repeated(flags["allowed-change-workflow"]);
+      for (const ref of allowed) {
+        if (!workflows.has(ref)) return refuse(`ChangeWorkflow ${ref} not found`);
+      }
+      row.ChangeWorkflowRequired = flags["change-workflow-required"] === true;
+      row.AllowedChangeWorkflows = allowed;
+      return ok("");
     }
     if (entity === "component" && verb === "create") {
       const slug = rest[0];
@@ -5585,7 +6595,7 @@ function createFakeConfigHub() {
     }
     if (entity === "space" && verb === "create") {
       const slug = rest[0];
-      if (flags["trigger-filter"] !== approvalFilterRef) {
+      if (flags["trigger-filter"] !== gateFilterRef) {
         return refuse(`unexpected trigger filter ${flags["trigger-filter"]}`);
       }
       const component = flags.component ? componentFor(flags.component) : null;
@@ -5623,7 +6633,7 @@ function createFakeConfigHub() {
       }
       if (flags["refresh-triggers"]) {
         row.TriggerIDs = state.triggerIdOverride
-          ?? expectedTriggers.map(triggerIdFor).sort();
+          ?? state.resolvedTriggerRefs.map(triggerIdFor).sort();
       }
       return ok("");
     }
@@ -5717,7 +6727,6 @@ function createFakeConfigHub() {
           UnitID: `self-test-unit-${slug}-${row.Slug}`,
           HeadRevisionNum: 1,
           ApplyGates: { "awaiting/triggers": true },
-          ApprovedBy: [],
           Labels: { ...(row.Labels ?? {}) },
           TargetID: null,
           UpstreamUnitID: state.refuseUpstreamLink ? "" : row.UnitID,
@@ -5758,7 +6767,6 @@ function createFakeConfigHub() {
         UnitID: `self-test-unit-${flags.space}-${slug}`,
         HeadRevisionNum: 1,
         ApplyGates: { "awaiting/triggers": true },
-        ApprovedBy: [],
         Labels: labelsFrom(flags.label),
         TargetID: flags.target ? resolveTargetRef(flags.target, flags.space)?.TargetID ?? null : null,
         UpstreamUnitID: upstreamKey && !state.refuseUpstreamLink
@@ -5792,9 +6800,13 @@ function createFakeConfigHub() {
     if (entity === "unit" && verb === "update" && flags.patch) {
       return refuse("the self-test fake hub refuses a runner-issued set upgrade; chapter three promotes its change order through the workflow's stages");
     }
-    // A workflow holds its stages in order and one set of gates for every
-    // stage. A stage named with --stage selects Labels.Stage = '<name>' within
-    // the change order's component.
+    // A workflow holds its stages in order. From flags, every stage gets the
+    // one set of --prerequisites and selects Labels.Stage = '<name>'. From a
+    // file, each stage carries its own entry Prerequisites and release
+    // ReleasePrerequisites, and the file declares the attestation
+    // requirements those name. A release gate may name only an attestation
+    // requirement, since the built-in gates read a stage after a change has
+    // moved through it.
     if (entity === "changeworkflow" && verb === "create") {
       const space = spaces.get(flags.space);
       if (!space) return refuse(`space ${flags.space} not found`);
@@ -5802,21 +6814,77 @@ function createFakeConfigHub() {
       const key = `${space.Slug}/${slug}`;
       if (!slug) return refuse("a ChangeWorkflow needs a slug");
       if (workflows.has(key)) return refuse(`ChangeWorkflow ${key} already exists`);
-      const stageNames = repeated(flags.stage);
-      if (stageNames.length === 0) return refuse("a ChangeWorkflow needs at least one stage");
-      const prerequisites = repeated(flags.prerequisites);
-      const unknown = prerequisites.find(
-        (name) => !["Validated", "Released", "Healthy"].includes(name),
-      );
-      if (unknown) return refuse(`unknown prerequisite ${unknown}; a custom prerequisite is written in a file`);
+      const builtIn = ["Validated", "Released", "Healthy"];
+      let stages;
+      let attestationPrerequisites = [];
+      if (flags.filename) {
+        if (flags.stage || flags.prerequisites) {
+          return refuse("--filename is mutually exclusive with --stage and --prerequisites");
+        }
+        const spec = readYaml(flags.filename);
+        attestationPrerequisites = structuredClone(spec?.AttestationPrerequisites ?? []);
+        const declared = attestationPrerequisites.map((row) => row.Name);
+        for (const row of attestationPrerequisites) {
+          if (!row.Name || !row.Type) return refuse("an attestation prerequisite needs a Name and a Type");
+        }
+        stages = [];
+        for (const row of spec?.Stages ?? []) {
+          const selector = /^Labels\.Stage = '([^']+)'$/.exec(String(row.WhereSpace ?? ""));
+          if (!selector) {
+            return refuse(`the self-test fake hub selects a stage's Spaces by Labels.Stage only, not ${row.WhereSpace}`);
+          }
+          for (const name of row.Prerequisites ?? []) {
+            if (!builtIn.includes(name) && !declared.includes(name)) {
+              return refuse(`stage '${row.Name}' names unknown prerequisite '${name}'`);
+            }
+          }
+          for (const name of row.ReleasePrerequisites ?? []) {
+            if (!declared.includes(name)) {
+              return refuse(`stage '${row.Name}' release prerequisite '${name}' is not an attestation prerequisite; a release gate may name only attestation requirements`);
+            }
+          }
+          stages.push({
+            Name: row.Name,
+            WhereSpace: row.WhereSpace,
+            StageLabel: selector[1],
+            Prerequisites: [...(row.Prerequisites ?? [])],
+            ReleasePrerequisites: [...(row.ReleasePrerequisites ?? [])],
+          });
+        }
+      } else {
+        const prerequisites = repeated(flags.prerequisites);
+        const unknown = prerequisites.find((name) => !builtIn.includes(name));
+        if (unknown) return refuse(`unknown prerequisite ${unknown}; a custom prerequisite is written in a file`);
+        stages = repeated(flags.stage).map((name) => ({
+          Name: name,
+          WhereSpace: `Labels.Stage = '${name}'`,
+          StageLabel: name,
+          Prerequisites: prerequisites,
+          ReleasePrerequisites: [],
+        }));
+      }
+      if (stages.length === 0) return refuse("a ChangeWorkflow needs at least one stage");
       workflows.set(key, {
         Key: key,
         Slug: slug,
         SpaceSlug: space.Slug,
-        Stages: stageNames,
-        Prerequisites: prerequisites,
+        Stages: stages,
+        AttestationPrerequisites: attestationPrerequisites,
       });
       return ok("");
+    }
+    if (entity === "changeworkflow" && verb === "get") {
+      const row = workflows.get(`${flags.space}/${rest[0]}`);
+      if (!row) return refuse(`ChangeWorkflow ${flags.space}/${rest[0]} not found`);
+      const projected = {
+        Slug: row.Slug,
+        SpaceSlug: row.SpaceSlug,
+        Stages: row.Stages.map(({ StageLabel, ...stage }) => stage),
+        ...(state.dropAttestationPrerequisites
+          ? {}
+          : { AttestationPrerequisites: row.AttestationPrerequisites }),
+      };
+      return ok(JSON.stringify({ ChangeWorkflow: structuredClone(projected) }));
     }
     // A change order created after an edit captures it: for each unit of the
     // Space, the range runs from the revision its downstream clones already
@@ -5829,6 +6897,9 @@ function createFakeConfigHub() {
       const key = `${space.Slug}/${slug}`;
       if (!slug) return refuse("a change order needs a slug");
       if (changeOrders.has(key)) return refuse(`change order ${key} already exists`);
+      if (state.refuseChangeOrderCreate) {
+        return refuse("Failed: HTTP 409 for req self-test: the change order could not be created");
+      }
       const workflowRef = String(flags["change-workflow"] ?? "");
       const workflow = workflows.get(workflowRef.includes("/")
         ? workflowRef
@@ -5880,29 +6951,27 @@ function createFakeConfigHub() {
       if (!flags["change-order"] || !flags["target-stage"]) {
         return refuse("the self-test fake hub promotes a change order into a named stage, nothing else");
       }
+      if (state.refusePromotion) {
+        return refuse("Failed: HTTP 409 for req self-test: the promotion could not be applied");
+      }
       const order = resolveChangeOrder(flags["change-order"]);
       if (!order) return refuse(`change order ${flags["change-order"]} not found`);
       const workflow = workflows.get(order.ChangeWorkflow);
       const target = String(flags["target-stage"]);
-      const index = workflow.Stages.indexOf(target);
+      const index = workflow.Stages.findIndex((row) => row.Name === target);
       if (index < 0) {
         return refuse(`stage '${target}' is not a stage of ChangeWorkflow ${workflow.Key}`);
       }
-      const stageSpaces = (name) => [...spaces.values()]
-        .filter((row) =>
-          row.ComponentID === order.ComponentID
-          && row.Labels?.Stage === name
-          && order.InScopeSpaceIDs.includes(row.SpaceID))
-        .sort((left, right) => left.Slug.localeCompare(right.Slug));
       const covered = (space) => [...units.values()].filter((unit) =>
         unit.SpaceSlug === space.Slug && order.range[unit.UpstreamUnitKey ?? ""]);
+      const entryGates = workflow.Stages[index].Prerequisites;
       if (index > 0 && !state.ignoreStageGates) {
         const ahead = workflow.Stages[index - 1];
-        for (const space of stageSpaces(ahead)) {
+        for (const space of stageSpacesOf(order, ahead)) {
           const variant = space.Labels?.Variant ?? space.Slug;
           const taken = covered(space).length > 0
             && covered(space).every((unit) => unit.tags?.[order.Key] !== undefined);
-          if (workflow.Prerequisites.includes("Released")) {
+          if (entryGates.includes("Released")) {
             // Only the second wording below is the live server's, recorded
             // on 2026-09-26. This first one, for a variant that has not taken
             // the change at all, is the fake's own; the runner records
@@ -5917,17 +6986,27 @@ function createFakeConfigHub() {
           // Healthy reads a live-status annotation nothing writes for a
           // Sveltos-delivered Space, so in this fleet it never holds. The
           // wording is the fake's own.
-          if (workflow.Prerequisites.includes("Healthy")) {
+          if (entryGates.includes("Healthy")) {
             return refuse(`unable to promote to stage '${target}', Variant '${variant}' does not report Healthy`);
           }
         }
       }
-      for (const space of stageSpaces(target)) {
+      for (const space of stageSpacesOf(order, workflow.Stages[index])) {
         for (const unit of covered(space)) {
           if (unit.tags?.[order.Key] !== undefined) continue;
           const bounds = order.range[unit.UpstreamUnitKey];
           if (unit.UpstreamRevisionNum !== bounds.start) {
             return refuse(`${space.Slug}/${unit.Slug} is not where change order ${order.Slug} starts`);
+          }
+          // The revision the change order starts from on this unit, which
+          // bounds who counts as an author of the change here.
+          unit.changeStarts = { ...(unit.changeStarts ?? {}), [order.Key]: unit.HeadRevisionNum };
+          // A change order with no change marks the unit where it stands and
+          // cuts no revision, which is what lets a release pinned to it bundle
+          // every unit of the Space.
+          if (bounds.start === bounds.end && !state.noChangePromotionCutsRevision) {
+            unit.tags = { ...(unit.tags ?? {}), [order.Key]: unit.HeadRevisionNum };
+            continue;
           }
           const upstream = units.get(unit.UpstreamUnitKey);
           const merged = state.mergeKeepsDepartureOnly
@@ -5946,7 +7025,6 @@ function createFakeConfigHub() {
           };
           unit.HeadRevisionNum += 1;
           unit.UpstreamRevisionNum = bounds.end;
-          unit.ApprovedBy = [];
           unit.ApplyGates = { "awaiting/triggers": true };
           store(unit, documentsToText(merged));
           unit.tags = { ...(unit.tags ?? {}), [order.Key]: unit.HeadRevisionNum };
@@ -5961,7 +7039,6 @@ function createFakeConfigHub() {
       const unit = units.get(key);
       if (!unit) return refuse(`unit ${key} not found`);
       unit.HeadRevisionNum += 1;
-      unit.ApprovedBy = [];
       unit.ApplyGates = { "awaiting/triggers": true };
       store(unit, readFileSync(path, "utf8"));
       pending.add(key);
@@ -6022,22 +7099,48 @@ function createFakeConfigHub() {
       if (!selected) return refuse(`unsupported where expression ${flags.where}`);
       return ok(JSON.stringify(selected.map((unit) => ({ Unit: projectUnit(unit) }))));
     }
-    if (entity === "unit" && verb === "approve") {
-      const selected = flags.where
-        ? matching(flags.where)
-        : [units.get(unitKey(flags.space, rest[0]))].filter(Boolean);
-      if (!selected) return refuse(`unsupported where expression ${flags.where}`);
-      if (flags.where && flags.space !== "*") {
-        return refuse("bulk approve across Spaces needs --space \"*\"");
+    // An approval is an Attestation of type Approval on exact revisions: with
+    // --change-order and --stage, the revision the change order's end tag
+    // marks on each unit it reached in every Space of the stage; with a Space
+    // named, the head of each unit with a Target. It records a claim and
+    // cuts no revision.
+    if (entity === "variant" && verb === "approve") {
+      if (state.refuseApprovals) {
+        return refuse("Failed: HTTP 403 for req self-test: the caller lacks Approve on the Space");
       }
-      if (selected.length === 0) return refuse("no unit matched the approval query");
-      if (flags.revision !== "HeadRevisionNum") {
-        return refuse(`the self-test fake hub approves HeadRevisionNum, not ${flags.revision}`);
+      const attest = (unit, revision) => {
+        unit.attestations = [
+          ...(unit.attestations ?? []),
+          { revision, user: state.actingUser, type: "Approval", result: "Pass" },
+        ];
+      };
+      if (flags["change-order"]) {
+        const stageNames = repeated(flags.stage);
+        if (stageNames.length !== 1) {
+          return refuse("the self-test fake hub approves a change order in one stage, named with --stage");
+        }
+        const order = resolveChangeOrder(flags["change-order"]);
+        if (!order) return refuse(`change order ${flags["change-order"]} not found`);
+        const workflow = workflows.get(order.ChangeWorkflow);
+        const stage = workflow.Stages.find((row) => row.Name === stageNames[0]);
+        if (!stage) return refuse(`stage '${stageNames[0]}' is not a stage of ChangeWorkflow ${workflow.Key}`);
+        let covered = 0;
+        for (const space of stageSpacesOf(order, stage)) {
+          for (const unit of units.values()) {
+            if (unit.SpaceSlug !== space.Slug || unit.tags?.[order.Key] === undefined) continue;
+            attest(unit, unit.tags[order.Key]);
+            covered += 1;
+          }
+        }
+        if (covered === 0) return refuse(`change order ${order.Slug} has reached no unit in stage '${stage.Name}'`);
+        return ok("");
       }
-      for (const unit of selected) {
-        unit.ApprovedBy = ["self-test-reviewer"];
-        pending.add(unitKey(unit.SpaceSlug, unit.Slug));
-      }
+      const spaceSlug = rest[0];
+      if (!spaces.has(spaceSlug)) return refuse(`space ${spaceSlug} not found`);
+      const targeted = [...units.values()]
+        .filter((unit) => unit.SpaceSlug === spaceSlug && unit.TargetID);
+      if (targeted.length === 0) return refuse(`${spaceSlug} has no unit with a Target to approve`);
+      for (const unit of targeted) attest(unit, unit.HeadRevisionNum);
       return ok("");
     }
     // With no revision each unit is bundled at its head. With
@@ -6066,6 +7169,21 @@ function createFakeConfigHub() {
           : unit.HeadRevisionNum;
         return { unit, revision, text: unit.history.get(revision) };
       });
+      // Measured on 2026-09-26: a publish whose bundle is identical to what
+      // the Space already serves is refused, whatever it is pinned to.
+      const data = bundled.map((row) => row.text).join("\n---\n");
+      if (releases.get(spaceSlug)?.data === data) {
+        return refuse("Failed: HTTP 400 for req self-test: no changes were made since :latest bundle");
+      }
+      // The release gate: a release of a change order into a Space of a stage
+      // with ReleasePrerequisites is evaluated over the revisions it bundles,
+      // and refused, in the server's words, until each requirement holds.
+      // A plain publish is not gated, and neither is a component's declared
+      // workflow requirement enforced on it, as measured on 2026-09-26.
+      if (order && !state.releaseGateDisabled) {
+        const refusal = releaseGateRefusal(order, spaceSlug, bundled);
+        if (refusal) return refuse(`Failed: HTTP 422 for req self-test: ${refusal}`);
+      }
       const digestInput = bundled
         .map((row) => `${row.unit.Slug}:${sha256(row.text)}:${row.revision}`)
         .join("|");
@@ -6073,10 +7191,7 @@ function createFakeConfigHub() {
       const manifestDigest = `sha256:${sha256(`manifest:${spaceSlug}:${releaseSequence}:${digestInput}`)}`;
       // The gateway serves what was published, so the fake keeps the published
       // bytes and the fake cluster reads them back through the tag.
-      releases.set(spaceSlug, {
-        manifestDigest,
-        data: bundled.map((row) => row.text).join("\n---\n"),
-      });
+      releases.set(spaceSlug, { manifestDigest, data });
       const carried = releasedChangeOrders.get(spaceSlug) ?? new Set();
       const tagged = new Set(bundled.flatMap((row) => Object.keys(row.unit.tags ?? {})));
       for (const key of tagged) {
@@ -6105,11 +7220,40 @@ function createFakeConfigHub() {
       if (!unit.snapshot) continue;
       unit.history.delete(unit.HeadRevisionNum);
       Object.assign(unit, unit.snapshot);
-      unit.ApprovedBy = ["self-test-reviewer"];
       unit.ApplyGates = {};
       delete unit.snapshot;
     }
   };
+  // The whole hub, taken and put back, so a self-test can walk a path that
+  // fails partway and start again from exactly where it stood.
+  const tables = {
+    spaces, units, releases, targets, components, workflows, changeOrders,
+    releasedChangeOrders,
+  };
+  const snapshot = () => structuredClone({
+    tables,
+    pending: [...pending],
+    releaseSequence,
+    state: { ...state },
+  });
+  const restore = (saved) => {
+    const copy = structuredClone(saved);
+    for (const [name, table] of Object.entries(tables)) {
+      table.clear();
+      for (const [key, value] of copy.tables[name]) table.set(key, value);
+    }
+    pending.clear();
+    for (const key of copy.pending) pending.add(key);
+    releaseSequence = copy.releaseSequence;
+    Object.assign(state, copy.state);
+  };
+  const componentRequires = (slug) => {
+    const row = componentFor(slug);
+    return row?.ChangeWorkflowRequired ? (row.AllowedChangeWorkflows ?? [])[0] : null;
+  };
+  const attestationsOn = (spaceSlug) => [...units.values()]
+    .filter((unit) => unit.SpaceSlug === spaceSlug)
+    .reduce((total, unit) => total + (unit.attestations ?? []).length, 0);
   const releaseFor = (space) => releases.get(space) ?? null;
   // A label moved by hand, so the self-test can show a stage that no longer
   // selects the wave being refused. Undefined removes the label.
@@ -6127,6 +7271,10 @@ function createFakeConfigHub() {
     releaseFor,
     restoreVariantBaselines,
     setSpaceLabel,
+    snapshot,
+    restore,
+    componentRequires,
+    attestationsOn,
     spaceLabels: (slug) => spaces.get(slug)?.Labels ?? null,
     releasedChangeOrders: (slug) => [...(releasedChangeOrders.get(slug) ?? [])],
     filterId,
@@ -6180,7 +7328,7 @@ function mergeValue(baseOld, baseNew, mine) {
 function parseCubCommand(args) {
   const booleans = new Set([
     "--quiet", "--wait", "--patch", "--refresh-triggers", "--recursive-force",
-    "--upgrade",
+    "--upgrade", "--change-workflow-required", "--help",
   ]);
   const repeatable = new Set(["label", "stage", "prerequisites"]);
   const positionals = [];

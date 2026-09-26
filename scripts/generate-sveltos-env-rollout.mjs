@@ -62,7 +62,7 @@ const proofStatus = "awaiting-live-run";
 const supersededReasons = {
   environmentRecords: "The committed receipt governs three environment records and predates the per-cluster variant design.",
   sharedTarget: "The committed receipt predates the per-cluster Target model.",
-  runnerWaves: "The committed receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued, not stages ConfigHub promoted and gated.",
+  runnerWaves: "The committed receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued, not stages ConfigHub promoted and gated, and its approvals used a mechanism ConfigHub has since removed.",
 };
 
 if (mode === "--generate") {
@@ -461,9 +461,10 @@ function renderMarkdown(compiled) {
     "It is made once, on the base record. ConfigHub holds one variant per",
     "cluster over that base, so the matrix shows exactly which cluster runs",
     "which revision at every checkpoint, and which departure each cluster keeps",
-    "through the change. Each wave is one stage of a ConfigHub ChangeWorkflow,",
-    "and ConfigHub promotes the change into a stage only once every variant of",
-    "the stage ahead has released it.",
+    "through the change. Each wave is one stage of a ConfigHub ChangeWorkflow.",
+    "ConfigHub promotes the change into a stage only once every variant of the",
+    "stage ahead has released it, and publishes a stage's releases only once the",
+    "change as it stands there is approved.",
     "",
     "New to this table? The per-cluster variant model and its terms, including",
     "what a departure is and how a revision id names exact bytes, are",
@@ -516,7 +517,7 @@ function renderHtml(compiled) {
     '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sveltos environment rollout matrix</title>',
     "<style>:root{color-scheme:light dark}body{font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;margin:24px;background:#fff;color:#17212b}h1{font-size:1.7rem;margin-bottom:.25rem}.lede{max-width:95ch;color:#3f4d5a}.legend{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0}.key{border-radius:.25rem;padding:.3rem .5rem;font-weight:700}.baseline{background:#dce9ff;color:#173b75}.changed{background:#d7f2df;color:#14532d}.awaiting{background:#fff0bd;color:#634b00}.observed{background:#d7f2df;color:#14532d}.failed{background:#fadbd8;color:#7b241c}table{border-collapse:collapse;width:100%;margin:1.25rem 0;font-size:.84rem}caption{text-align:left;font-size:1rem;font-weight:700;padding:.5rem 0}th,td{border:1px solid #aeb8c2;padding:.5rem;text-align:left;vertical-align:top}thead th{background:#edf1f5;color:#17212b}code{white-space:normal;overflow-wrap:anywhere}@media(prefers-color-scheme:dark){body{background:#10161d;color:#eef4fa}.lede{color:#c6d1dc}thead th{background:#25313d;color:#fff}.baseline{background:#173b75;color:#fff}.changed{background:#14532d;color:#fff}.awaiting{background:#634b00;color:#fff}.observed{background:#14532d;color:#fff}.failed{background:#7b241c;color:#fff}}</style></head>",
     "<body><main><h1>Sveltos environment rollout, the per-cluster matrix</h1>",
-    `<p class="lede">One reviewed change moves through the environment groups: <code>${change.spec.valuesPath}</code> goes from ${change.spec.before} to ${change.spec.after} in ${change.spec.chart} ${change.spec.chartVersion}. It is made once on the base record, and ConfigHub holds one variant per cluster over that base. Each wave is one stage of a ConfigHub ChangeWorkflow, and ConfigHub promotes the change into a stage only once every variant of the stage ahead has released it. ${compiled.live ? "The observed columns come from the committed live receipt in <code>runs/sveltos-env-rollout-proof/receipt.yaml</code>." : `No live run of this design has been recorded yet, so every observed cell stays empty until the live proof earns it.${compiled.superseded ? ` ${compiled.supersededReason}` : ""}`}</p>`,
+    `<p class="lede">One reviewed change moves through the environment groups: <code>${change.spec.valuesPath}</code> goes from ${change.spec.before} to ${change.spec.after} in ${change.spec.chart} ${change.spec.chartVersion}. It is made once on the base record, and ConfigHub holds one variant per cluster over that base. Each wave is one stage of a ConfigHub ChangeWorkflow. ConfigHub promotes the change into a stage only once every variant of the stage ahead has released it, and publishes a stage's releases only once the change as it stands there is approved. ${compiled.live ? "The observed columns come from the committed live receipt in <code>runs/sveltos-env-rollout-proof/receipt.yaml</code>." : `No live run of this design has been recorded yet, so every observed cell stays empty until the live proof earns it.${compiled.superseded ? ` ${compiled.supersededReason}` : ""}`}</p>`,
     `<div class="legend"><span class="key baseline">baseline revision</span><span class="key changed">changed revision</span>${compiled.live ? '<span class="key observed">observed live</span>' : '<span class="key awaiting">awaiting live run</span>'}</div>`,
   ];
   const tables = [];

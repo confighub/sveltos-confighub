@@ -45,9 +45,11 @@ across many clusters.
 ## What the delivery path is
 
 1. Config comes from ConfigHub, where a reviewed record is stored, checked,
-   and held at an approval gate.
+   and held until someone approves it.
 2. A named person approves one exact revision, and ConfigHub publishes it as
-   an OCI image on its OCI gateway.
+   an OCI image on its OCI gateway. In chapter three's current design the
+   approval is an attestation, `cub variant approve`, and ConfigHub refuses
+   the release until it is recorded.
 3. Sveltos on the management cluster fetches that image and sends the
    reviewed profile to the one cluster its clusterRefs entry names.
 4. Sveltos keeps that cluster aligned and repairs drift.
@@ -103,6 +105,10 @@ enough to be the point of the repository.
 - **Approval binds to an exact revision.** It is not a sync button and not a
   paused bundle. Approving yesterday's revision authorises nothing about
   today's, and the bytes that shipped are the bytes that were approved.
+  ConfigHub now records an approval as an attestation on exact revisions and
+  lets a ChangeWorkflow require it before a release is published; the
+  recorded chapters used the earlier trigger-based gate, which ConfigHub
+  removed on 2026-09-25.
 - **The matrix keeps four facts apart** that a status page usually collapses
   into one green tick: which revision each cluster should run, which release
   was published, what the controller fetched, and what Kubernetes reports.
@@ -157,8 +163,23 @@ reviewed edit on the base, `cub variant promote --change-order` moves exactly
 that change into the variants a stage selects, and ConfigHub enforces the
 `Released` gate on the server, refusing to enter a stage until every variant
 of the stage ahead has released the change. The runner proves the refusal
-before wave one by asking ConfigHub to skip straight into staging. The
-`Healthy` gate waits for a Sveltos status reporter
+before wave one by asking ConfigHub to skip straight into staging.
+
+Approval in that design is an attestation. On 2026-09-25 ConfigHub removed
+the trigger-based approval gate the recordings used (confighubai/confighub#5495),
+so every stage of chapter three's reviewed
+[workflow](examples/sveltos/env-rollout/change-workflow.yaml) now requires one
+Approval attestation before a release of the change is published into it. Each
+wave attempts the release first and records ConfigHub's refusal, then
+approves the change in the stage with
+`cub variant approve --change-order <base-space>/<change-order> --stage <stage>`
+and publishes. The baseline goes through a change order of its own that
+carries no change, so every release that reaches a cluster passes the same
+gate. The runs are single-operator, and ConfigHub does not by default count
+an approval from whoever promoted the change, so the workflow sets
+`AllowAuthors: true` and the receipt says plainly that the demo relaxes
+separation of duties; a production workflow keeps the default and has a
+second approver. The `Healthy` gate waits for a Sveltos status reporter
 ([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and for
 ConfigHub to recognise the provider (confighubai/confighub#5049), so the
 runner's checkpoint evidence stays the observed-health layer. That design
@@ -230,10 +251,19 @@ gateway: each cluster with its own governed variant, its own named Target,
 and its own clusterRefs address, every wave's approval carrying the
 checkpoint evidence that unlocked it, and every observed matrix cell
 coming from a committed receipt. Chapter three's matrix holds no observed
-cells for now, because its runner moved to ChangeWorkflows after that
-recording. Every receipt that builds a fleet records the addon controller
-image its run used; chapter six builds nothing and names the recorded cohort
-that does.
+cells for now, because its runner moved to ChangeWorkflows and attestations
+after that recording. Every receipt that builds a fleet records the addon
+controller image its run used; chapter six builds nothing and names the
+recorded cohort that does.
+
+Those recordings approved through the trigger-based gate ConfigHub removed
+on 2026-09-25, and they stay valid as records of what happened. The live
+lanes of chapters one, two, four, five, and six are still written against
+that gate, so each now stops before building anything and says why; they
+move to attestations next
+([#34](https://github.com/confighub/sveltos-confighub/issues/34)). Their
+offline self-tests keep walking the old path against their own fakes.
+Chapter three's live lane is the one written against attestations.
 
 ## How to run it
 
@@ -259,7 +289,12 @@ HELM_EXPT_ALLOW_LIVE_SVELTOS_REHEARSAL=1 npm run sveltos-fleet-rehearsal:run
 
 The governed chapters need the `cub` CLI and one authenticated context.
 Install it with `curl -fsSL https://hub.confighub.com/cub/install.sh | bash`,
-then `cub auth login`. Confirm the approval wiring before building a fleet:
+then `cub auth login`; a cub from before attestations cannot run chapter
+three, and the runner says so. Confirm what the run gates on before building
+a fleet. The probe checks that the platform trigger filter resolves its
+validating triggers and no approval trigger, creates the reviewed workflow
+in a throwaway Space, reads its approval requirement back, and removes the
+Space:
 
 ```bash
 CUB_CONTEXT=my-policy npm run sveltos-gate:probe
@@ -275,11 +310,12 @@ npm run sveltos-env-rollout-proof:run
 ```
 
 The recorded runs used the maintainers' catalog organization, which owns the
-approval policy space and trigger filter the runners check for. In another
+policy Space and trigger filter the runners check for. In another
 organization, create that wiring first from
-[the committed policy](config-catalog/policies/catalog-standard.yaml). Each
-runner checks its preconditions and stops early with a named reason instead
-of failing after the fleet build. Fleet proofs run serially, never in
+[the committed policy](config-catalog/policies/catalog-standard.yaml), leaving
+out its require-approval trigger, whose function ConfigHub no longer has.
+Each runner checks its preconditions and stops early with a named reason
+instead of failing after the fleet build. Fleet proofs run serially, never in
 parallel.
 
 Requirements: node 22 or newer, python3 with pyyaml, and tar. The live lanes
