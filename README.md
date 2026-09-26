@@ -90,7 +90,10 @@ enough to be the point of the repository.
   label query over the per-cluster records, not a pipeline object beside
   them, and widening a rollout means approving the next cluster's variant.
   Each approval goes through the same gate as any other change and lands
-  that record at its own new digest.
+  that record at its own new digest. Chapter three's runner now also hands
+  the order of the waves to ConfigHub: each wave is a stage of a
+  ChangeWorkflow, and ConfigHub refuses to promote a change into a stage
+  until the stage ahead has released it.
 - **Approval binds to an exact revision.** It is not a sync button and not a
   paused bundle. Approving yesterday's revision authorises nothing about
   today's, and the bytes that shipped are the bytes that were approved.
@@ -136,16 +139,26 @@ bootstrap boundary. Its receipt records the shape of that fan-out
 honestly: one reviewed edit, four variant updates, four approvals, and
 four release publishes, because each Space publishes its own release.
 
-Chapter three now governs one variant per cluster over a shared base, so
+Chapter three governs one variant per cluster over a shared base, so
 ConfigHub answers which cluster runs which revision from its own records
-rather than from a label query Sveltos resolves at delivery time. Each wave
-selects its variants with one query and approves that set in one operation,
-and ConfigHub records one approval per cluster and one release for every
-cluster it delivers to. That design is recorded live, so every observed cell
-in the [per-cluster matrix](data/sveltos-env-rollout/matrix.md) comes from the
-committed [receipt](runs/sveltos-env-rollout-proof/receipt.yaml): four
-clusters at four checkpoints, each carrying its own departure through the
-change.
+rather than from a label query Sveltos resolves at delivery time. Its
+committed [receipt](runs/sveltos-env-rollout-proof/receipt.yaml) records that
+design live, with waves the runner moved itself: one set upgrade and one set
+approval per wave, one approval per cluster, and one release for every
+cluster it delivered to. The runner has since moved its waves onto ConfigHub
+ChangeWorkflows. Each wave is now a stage: one ChangeOrder captures the
+reviewed edit on the base, `cub variant promote --change-order` moves exactly
+that change into the variants a stage selects, and ConfigHub enforces the
+`Released` gate on the server, refusing to enter a stage until every variant
+of the stage ahead has released the change. The runner proves the refusal
+before wave one by asking ConfigHub to skip straight into staging. The
+`Healthy` gate waits for a Sveltos status reporter
+([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and for
+ConfigHub to recognise the provider (confighubai/confighub#5049), so the
+runner's checkpoint evidence stays the observed-health layer. That design
+awaits its live re-record, so the observed cells of the
+[per-cluster matrix](data/sveltos-env-rollout/matrix.md) stay empty until the
+re-record earns them.
 
 Chapter six continues that same recorded fleet and makes the opposite move.
 One production cluster was restored to its exact pre-advance revision, the
@@ -188,7 +201,9 @@ and records its phase timings.
 3. **[Environment rollout](examples/sveltos/env-rollout/README.md)** promotes
    one reviewed values change pilot to staging to production, with one
    governed variant per cluster and no variant addressing two clusters.
-   Recorded live on the gateway.
+   Recorded live on the gateway with waves the runner moved itself; the
+   runner now promotes each wave as a ConfigHub ChangeWorkflow stage and
+   awaits its live re-record.
 4. **[CVE patching](examples/sveltos/cve-patch/README.md)**: one reviewed
    version bump with digest-bound provenance, closed by a coverage audit
    that proves no cluster was missed. No vulnerability scanning is claimed.
@@ -208,9 +223,11 @@ All six chapters are recorded live on the per-cluster design over the
 gateway: each cluster with its own governed variant, its own named Target,
 and its own clusterRefs address, every wave's approval carrying the
 checkpoint evidence that unlocked it, and every observed matrix cell
-coming from a committed receipt. Every receipt that builds a fleet records
-the addon controller image its run used; chapter six builds nothing and
-names the recorded cohort that does.
+coming from a committed receipt. Chapter three's matrix holds no observed
+cells for now, because its runner moved to ChangeWorkflows after that
+recording. Every receipt that builds a fleet records the addon controller
+image its run used; chapter six builds nothing and names the recorded cohort
+that does.
 
 ## How to run it
 

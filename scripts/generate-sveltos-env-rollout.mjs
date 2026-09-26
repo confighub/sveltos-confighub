@@ -52,11 +52,18 @@ const addressingDepartures = [
   "metadata.name",
   "spec.clusterRefs",
 ];
-// The committed receipt governs three environment records, which this chapter
-// no longer builds, so it fills nothing until the per-cluster run is recorded.
-const blocker = "awaiting-per-cluster-rerecord";
+// The committed receipt was recorded before the ChangeWorkflow design, when
+// the runner moved every wave with a set upgrade of its own, so it fills
+// nothing until a run of this design is recorded.
+const blocker = "awaiting-changeworkflow-rerecord";
 const proofStatus = "awaiting-live-run";
-const supersededNote = "the recorded receipt governs three environment records and predates the per-cluster variant design; it awaits a live re-record";
+// Why a committed receipt fills nothing, one sentence per superseded shape,
+// oldest first. The matrix says which one it is looking at.
+const supersededReasons = {
+  environmentRecords: "The committed receipt governs three environment records and predates the per-cluster variant design.",
+  sharedTarget: "The committed receipt predates the per-cluster Target model.",
+  runnerWaves: "The committed receipt predates the ChangeWorkflow design: its waves were set upgrades the runner issued, not stages ConfigHub promoted and gated.",
+};
 
 if (mode === "--generate") {
   const outputs = buildOutputs(compileRollout(repoRoot));
@@ -73,12 +80,14 @@ if (mode === "--generate") {
       `${file} is stale; run node scripts/generate-sveltos-env-rollout.mjs --generate`,
     );
   }
-  if (compiled.superseded) console.log(supersededNote);
+  if (compiled.superseded) {
+    console.log(`${compiled.supersededReason} It awaits a live re-record, so the observed cells stay empty.`);
+  }
   console.log("verified the Sveltos environment rollout matrix surfaces");
 } else {
   selfTest();
   console.log(
-    "sveltos env rollout self-test passed: deterministic surfaces, one base with per-cluster variants, the departure and fan-out refusals, self-contained HTML, the receipt compiled against in full or recognized as superseded, and the receipt-fill path with its refusals",
+    "sveltos env rollout self-test passed: deterministic surfaces, one base with per-cluster variants, the departure and fan-out refusals, self-contained HTML, the receipt compiled against in full or recognized as superseded, a receipt of runner-issued waves filling nothing until the ChangeWorkflow re-record, and the receipt-fill path with its refusals",
   );
 }
 
@@ -294,29 +303,44 @@ function compileRollout(root) {
     rows,
     live: null,
     superseded: false,
+    supersededReason: "",
   };
   fillObservedColumns(compiled, root);
   return compiled;
 }
 
 // When the live runner has committed a receipt of this design, the observed
-// columns come from it. The committed receipt governs three environment
-// records, so it fills nothing and says so instead.
+// columns come from it. A receipt of an earlier design fills nothing and the
+// matrix says which design it predates instead.
 function fillObservedColumns(compiled, root) {
   const liveReceiptPath = join(
     root, "runs", "sveltos-env-rollout-proof", "receipt.yaml",
   );
   if (!existsSync(liveReceiptPath)) return;
   const receipt = readYaml(liveReceiptPath);
-  if (!Array.isArray(receipt?.spec?.variants)) {
+  const supersede = (reason) => {
     compiled.superseded = true;
+    compiled.supersededReason = reason;
+  };
+  if (!Array.isArray(receipt?.spec?.variants)) {
+    supersede(supersededReasons.environmentRecords);
     return;
   }
   // A per-cluster receipt recorded before the Target and clusterRefs model
   // hashed the example files as they were reviewed then, so its revisions
   // cannot match today's reviewed expectations. It fills nothing either.
   if (!receipt.spec.variants.some((row) => row.target)) {
-    compiled.superseded = true;
+    supersede(supersededReasons.sharedTarget);
+    return;
+  }
+  // A receipt recorded before the ChangeWorkflow design observed the same
+  // revisions, but its waves were ordered by the runner rather than enforced
+  // by ConfigHub, which is not the claim this matrix now makes. It fills
+  // nothing until the re-record. The runner's verifier is what refuses a
+  // receipt of this design that lost its change management; here its absence
+  // is enough to fill nothing.
+  if (!receipt.spec.changeManagement) {
+    supersede(supersededReasons.runnerWaves);
     return;
   }
   for (const row of compiled.clusters) {
@@ -437,7 +461,9 @@ function renderMarkdown(compiled) {
     "It is made once, on the base record. ConfigHub holds one variant per",
     "cluster over that base, so the matrix shows exactly which cluster runs",
     "which revision at every checkpoint, and which departure each cluster keeps",
-    "through the change.",
+    "through the change. Each wave is one stage of a ConfigHub ChangeWorkflow,",
+    "and ConfigHub promotes the change into a stage only once every variant of",
+    "the stage ahead has released it.",
     "",
     "New to this table? The per-cluster variant model and its terms, including",
     "what a departure is and how a revision id names exact bytes, are",
@@ -451,7 +477,7 @@ function renderMarkdown(compiled) {
       ]
       : [
         "No live run of this design has been recorded yet, so every observed",
-        `cell below stays empty until the live proof earns it. ${compiled.superseded ? "The committed receipt governs three environment records and predates the per-cluster variant design." : ""}`,
+        `cell below stays empty until the live proof earns it.${compiled.superseded ? ` ${compiled.supersededReason}` : ""}`,
         "The expected columns come from the reviewed example files.",
       ]),
     "",
@@ -490,7 +516,7 @@ function renderHtml(compiled) {
     '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sveltos environment rollout matrix</title>',
     "<style>:root{color-scheme:light dark}body{font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;margin:24px;background:#fff;color:#17212b}h1{font-size:1.7rem;margin-bottom:.25rem}.lede{max-width:95ch;color:#3f4d5a}.legend{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0}.key{border-radius:.25rem;padding:.3rem .5rem;font-weight:700}.baseline{background:#dce9ff;color:#173b75}.changed{background:#d7f2df;color:#14532d}.awaiting{background:#fff0bd;color:#634b00}.observed{background:#d7f2df;color:#14532d}.failed{background:#fadbd8;color:#7b241c}table{border-collapse:collapse;width:100%;margin:1.25rem 0;font-size:.84rem}caption{text-align:left;font-size:1rem;font-weight:700;padding:.5rem 0}th,td{border:1px solid #aeb8c2;padding:.5rem;text-align:left;vertical-align:top}thead th{background:#edf1f5;color:#17212b}code{white-space:normal;overflow-wrap:anywhere}@media(prefers-color-scheme:dark){body{background:#10161d;color:#eef4fa}.lede{color:#c6d1dc}thead th{background:#25313d;color:#fff}.baseline{background:#173b75;color:#fff}.changed{background:#14532d;color:#fff}.awaiting{background:#634b00;color:#fff}.observed{background:#14532d;color:#fff}.failed{background:#7b241c;color:#fff}}</style></head>",
     "<body><main><h1>Sveltos environment rollout, the per-cluster matrix</h1>",
-    `<p class="lede">One reviewed change moves through the environment groups: <code>${change.spec.valuesPath}</code> goes from ${change.spec.before} to ${change.spec.after} in ${change.spec.chart} ${change.spec.chartVersion}. It is made once on the base record, and ConfigHub holds one variant per cluster over that base. ${compiled.live ? "The observed columns come from the committed live receipt in <code>runs/sveltos-env-rollout-proof/receipt.yaml</code>." : `No live run of this design has been recorded yet, so every observed cell stays empty until the live proof earns it.${compiled.superseded ? " The committed receipt governs three environment records and predates the per-cluster variant design." : ""}`}</p>`,
+    `<p class="lede">One reviewed change moves through the environment groups: <code>${change.spec.valuesPath}</code> goes from ${change.spec.before} to ${change.spec.after} in ${change.spec.chart} ${change.spec.chartVersion}. It is made once on the base record, and ConfigHub holds one variant per cluster over that base. Each wave is one stage of a ConfigHub ChangeWorkflow, and ConfigHub promotes the change into a stage only once every variant of the stage ahead has released it. ${compiled.live ? "The observed columns come from the committed live receipt in <code>runs/sveltos-env-rollout-proof/receipt.yaml</code>." : `No live run of this design has been recorded yet, so every observed cell stays empty until the live proof earns it.${compiled.superseded ? ` ${compiled.supersededReason}` : ""}`}</p>`,
     `<div class="legend"><span class="key baseline">baseline revision</span><span class="key changed">changed revision</span>${compiled.live ? '<span class="key observed">observed live</span>' : '<span class="key awaiting">awaiting live run</span>'}</div>`,
   ];
   const tables = [];
@@ -757,6 +783,12 @@ function selfTestReceiptFill() {
           space: row.space,
           target: { name: row.cluster, ref: `${row.space}/${row.cluster}`, provider: "OCI" },
         })),
+        changeManagement: {
+          workflow: {
+            stages: environments,
+            prerequisites: ["Released"],
+          },
+        },
         revisions: {
           clusters: Object.fromEntries(
             planned.clusters.map((row) => [row.cluster, row.revisions]),
@@ -805,9 +837,34 @@ function selfTestReceiptFill() {
     const untouched = compileRollout(receiptRoot);
     check(
       untouched.superseded === true
+        && untouched.supersededReason === supersededReasons.environmentRecords
         && untouched.live === null
         && untouched.rows.every((row) => row.proofStatus === proofStatus),
       "a receipt that predates the per-cluster design must fill nothing and say so",
+    );
+
+    // The shape committed on 2026-08-21: per-cluster and targeted, but its
+    // waves were set upgrades the runner issued. It observed the same
+    // revisions and still fills nothing, because the matrix now claims waves
+    // ConfigHub promoted and gated.
+    const runnerWaves = structuredClone(fakeReceipt);
+    delete runnerWaves.spec.changeManagement;
+    write(receiptFile, `${toYaml(runnerWaves)}\n`);
+    const unfilled = compileRollout(receiptRoot);
+    const unfilledOutputs = buildOutputs(unfilled);
+    check(
+      unfilled.superseded === true
+        && unfilled.supersededReason === supersededReasons.runnerWaves
+        && unfilled.live === null
+        && unfilled.rows.every((row) =>
+          row.proofStatus === proofStatus && row.blocker === blocker)
+        && unfilledOutputs["data/sveltos-env-rollout/matrix.md"].includes(
+          supersededReasons.runnerWaves,
+        )
+        && unfilledOutputs["data/sveltos-env-rollout/matrix.html"].includes(
+          supersededReasons.runnerWaves,
+        ),
+      "a receipt that predates the ChangeWorkflow design must fill nothing and say which design it predates",
     );
 
     const revisionDrift = structuredClone(fakeReceipt);
