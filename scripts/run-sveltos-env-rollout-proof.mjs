@@ -4167,7 +4167,20 @@ function cubTry(context, args, options = {}) {
 }
 
 function cubJson(context, args, options = {}) {
-  return JSON.parse(cub(context, args, options));
+  const parsed = JSON.parse(cub(context, args, options));
+  // Since confighubai/confighub#5343 (2026-09-11) a Unit's configuration lives on
+  // its head Revision: `cub unit get` returns metadata only, the content is read
+  // with `cub unit data`, and its hash is DataHash. Every reader in this runner
+  // and the shared lib expects Data and ContentHash on the Unit, so a read that
+  // arrives without them is completed here, in the one place all reads pass.
+  if (args[0] === "unit" && args[1] === "get" && parsed?.Unit && parsed.Unit.Data === undefined) {
+    const spaceAt = args.indexOf("--space");
+    const space = spaceAt >= 0 ? args[spaceAt + 1] : parsed.Unit.SpaceSlug;
+    const data = cub(context, ["unit", "data", "--space", space, parsed.Unit.Slug], options);
+    parsed.Unit.Data = Buffer.from(data, "utf8").toString("base64");
+    if (parsed.Unit.ContentHash === undefined) parsed.Unit.ContentHash = parsed.Unit.DataHash;
+  }
+  return parsed;
 }
 
 function cubEnvironment(context) {
