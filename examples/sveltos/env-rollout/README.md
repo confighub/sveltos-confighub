@@ -14,9 +14,8 @@ publishes each approved revision as an OCI image that Sveltos fetches. The
 runner pins the released Sveltos v1.15.0, whose own addon controller
 decompresses the gzipped layers the ConfigHub gateway serves, so it runs that
 controller as released and refuses an image override. The committed
-recording ran Sveltos v1.13.0 with the `v1.13.0-ch` addon controller build,
-which carried the gzip fix before it shipped in v1.14.0, and its receipt
-names that image.
+recording ran exactly that, `projectsveltos/addon-controller:v1.15.0` with
+no override, and its receipt names that image.
 
 The runner preloads exactly the images the pinned manifest names into every
 cluster, so a release that adds a controller cannot be pulled from Docker
@@ -310,18 +309,26 @@ comes from a live run, and empty cells stay empty until a run earns them.
 
 ## Current status
 
-The per-cluster design is recorded live with waves the runner issued. The
-committed receipt at
+This design is recorded live. The committed receipt at
 [runs/sveltos-env-rollout-proof/receipt.yaml](../../../runs/sveltos-env-rollout-proof/receipt.yaml)
-records five governed records over one base, one set upgrade and one set
-approval per wave, and the per-cluster observations of that run. Its
-[summary](../../../data/sveltos-env-rollout/summary.md) stays as recorded.
+was recorded on 2026-09-26 against the released Sveltos v1.15.0. It records
+one base, the four workload variants over it, and the management record,
+each in a Space of the run; the baseline released through a change order that carries
+no change; the reviewed edit captured by one change order and promoted
+through the three stages of the reviewed workflow; ConfigHub's refusal to
+promote into staging before pilot had released; each wave's release refused
+with HTTP 422 until its Approval attestation was recorded; and the
+checkpoint evidence that unlocked each wave. Every observed cell of the
+matrix, four clusters at four checkpoints, comes from that receipt, and the
+[summary](../../../data/sveltos-env-rollout/summary.md) quotes the server's
+refusals word for word.
 
-The runner now promotes through a ChangeWorkflow and approves with
-attestations, as described above, and that design awaits its live re-record.
-The verifier recognises the committed receipt by its shape, says that it
-predates the ChangeWorkflow design, and fills nothing from it, so every
-observed cell in the matrix stays empty until the re-record earns it.
+The run is single-operator, so the workflow sets `AllowAuthors: true` and
+the receipt says that the demo relaxes separation of duties. It also records
+the strict setting's refusal as measured on the same day, which is what a
+production workflow with a second approver sees. The Spaces of that run are
+kept, so the fleet can be inspected in ConfigHub by its run stamp,
+`20260926190447`.
 
 Before it builds anything the runner checks that the local cub records
 approvals as attestations, then probes the gates on a throwaway Space: it

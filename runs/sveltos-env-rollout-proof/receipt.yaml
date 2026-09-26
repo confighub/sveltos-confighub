@@ -3,10 +3,10 @@ kind: "SveltosEnvRolloutProofReceipt"
 metadata:
   name: "kyverno-environment-rollout"
 spec:
-  recordedAt: "2026-08-21T14:08:04.694Z"
+  recordedAt: "2026-09-26T19:04:47.786Z"
   flow:
-    path: "source -> one reviewed base record in ConfigHub -> one variant per cluster -> approval per variant -> ConfigHub release -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes"
-    promotion: "one reviewed values change made once on the base and inherited by the variants pilot, then staging, then both production clusters"
+    path: "source -> one reviewed base record in ConfigHub -> one variant per cluster -> one change order promoted stage by stage through a ChangeWorkflow -> a release refused by the stage's approval gate -> one Approval attestation of the change in the stage -> ConfigHub release of the change order -> the ConfigHub OCI gateway -> Sveltos -> Kubernetes"
+    promotion: "one reviewed values change made once on the base, captured by one change order, and promoted by ConfigHub into the pilot stage, then staging, then the production stage holding both production clusters, each stage entered only once every variant of the stage ahead had released the change"
     mapping: "ConfigHub holds one record per cluster, so this receipt answers which cluster runs which revision without reading a Sveltos selector or a cluster"
   source:
     base:
@@ -22,6 +22,9 @@ spec:
       before: 1
       after: 2
       editedRecord: "base"
+    workflow:
+      path: "examples/sveltos/env-rollout/change-workflow.yaml"
+      rawSha256: "e71920c8e21ce20ab825bdfd4d795fd28e3fa57e6c9766f3d3ad479aac077127"
     sourceLock: "examples/sveltos/env-rollout/source-lock.yaml"
     gatewayRecord: "docs/planning/remote-url-oci-probe.md"
   revisions:
@@ -48,16 +51,16 @@ spec:
     filter:
       ref: "platform/helm-catalog-prod-gates"
       id: "8784a447-0e4d-4471-b924-eae5377778a2"
-      hash: "31133ade3ebd259030d3d2ef559e6aec14a62590779fbce9c0d13b188f717dc1"
+      hash: "536ee75f4b2e9b2bcd992918374a1cd3de6af9aee85b53774cd08c04f26ef9ec"
       triggerRefs:
         - "platform/aicr-training-images-pinned"
         - "platform/aicr-training-secret-refs"
         - "platform/digest-pinned-images"
         - "platform/lifecycle-route-evidence"
         - "platform/probes-declared"
-        - "platform/require-approval"
         - "platform/vet-placeholders"
         - "platform/vet-schemas"
+        - "platform/workload-sensitive-env-secret-refs"
       triggerIds:
         - "04746183-327b-484e-b061-91d2c7753a76"
         - "1823a4c6-9743-467a-8e9a-5e1893e31d17"
@@ -66,18 +69,24 @@ spec:
         - "4d7664a3-9ac0-4160-868f-95eaa0b59f8f"
         - "5ce74cb1-7129-43c8-a48c-a0ba4322de3d"
         - "894ba8a0-eb84-4105-9557-4854f3739cf2"
-        - "9d281daf-79f4-4244-84cc-fbde411e3c11"
-    approvalGate: "platform/require-approval/vet-approvedby"
+        - "bc7e0c83-41f6-4597-b77c-f272ef7c9289"
+      resolvedFrom: "the TriggerIDs a Space wired to the filter carries after a refresh, each named by reading it back"
+      approvalTrigger: "none: platform/require-approval was removed with the old approval mechanism (confighubai/confighub#5495), and approval is an attestation the workflow requires"
+    approval:
+      kind: "attestation"
+      requiredBy: "the ChangeWorkflow's approval release prerequisite on every stage"
+      recordedWith: "cub variant approve"
+      retired: "ConfigHub removed its trigger-based approval gate and the per-unit approve verb on 2026-09-25 (confighubai/confighub#5495, API_MINOR 6). No trigger in this run gates approval."
     targetHost:
       space: "bitnami-redis-27-0-0-default-pilot-live-20260705"
       worker: "server-worker"
   prerequisite:
-    source: "https://raw.githubusercontent.com/projectsveltos/sveltos/v1.13.0/manifest/manifest.yaml"
-    version: "v1.13.0"
-    manifestSha256: "5538558ad428617153f963318f22e70eb32fa949e9e0f07e07f02a0db700e2d7"
-    addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.13.0-ch"
-    pinnedAddonControllerImage: "docker.io/projectsveltos/addon-controller:v1.13.0"
-    addonControllerImageOverridden: true
+    source: "https://raw.githubusercontent.com/projectsveltos/sveltos/v1.15.0/manifest/manifest.yaml"
+    version: "v1.15.0"
+    manifestSha256: "ad80fa92a73b167e30df7a98cc0295acd3716b476dd0cc25859df3f45b69b4ce"
+    addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.15.0"
+    pinnedAddonControllerImage: "docker.io/projectsveltos/addon-controller:v1.15.0"
+    addonControllerImageOverridden: false
     addonControllerImageLines: 2
     objectCount: 102
     crdCount: 29
@@ -155,21 +164,36 @@ spec:
         available: 1
         observedGenerationMatches: true
     installationMethod: "pinned manifest applied as a management-cluster prerequisite"
+    imagePreload:
+      source: "the image lines of the pinned manifest"
+      images:
+        - "docker.io/projectsveltos/addon-controller:v1.15.0"
+        - "docker.io/projectsveltos/access-manager:v1.15.0"
+        - "docker.io/projectsveltos/sveltoscluster-manager:v1.15.0"
+        - "docker.io/projectsveltos/healthcheck-manager:v1.15.0"
+        - "docker.io/projectsveltos/event-manager:v1.15.0"
+        - "docker.io/projectsveltos/classifier:v1.15.0"
+        - "docker.io/projectsveltos/shard-controller:v1.15.0"
+        - "docker.io/projectsveltos/register-mgmt-cluster:v1.15.0"
+        - "docker.io/projectsveltos/techsupport:v1.15.0"
+        - "docker.io/projectsveltos/mcp-server:v1.15.0"
+      sveltosAgent: "not preloaded: no sveltos-agent digest is recorded for v1.15.0, so each workload node pulls the agent directly by the digest Sveltos deploys it with"
   base:
-    space: "hx-sveltos-env-base-20260821140804"
+    space: "hx-sveltos-env-base-20260926190447"
     unit: "clusterprofile"
+    component: "sveltos-kyverno-env-rollout-20260926190447"
     revisionId: "b1-2e750fbca33f"
-    revision: 3
-    contentHash: -546688568
+    revision: 2
+    contentHash: "125a0e06c524233e6628762fa92dbaec301108dfd78508df44eae1457d07baae"
     target: "none"
     published: false
     reachesCluster: false
     note: "The base carries no target and its Space is never published, so it reaches no cluster on its own."
     change:
-      space: "hx-sveltos-env-base-20260821140804"
+      space: "hx-sveltos-env-base-20260926190447"
       unit: "clusterprofile"
       revisionId: "b2-589fb3c0f643"
-      revision: 4
+      revision: 3
       valuesPath: "backgroundController.replicas"
       before: 1
       after: 2
@@ -181,8 +205,10 @@ spec:
       role: "workload"
       environment: "pilot"
       wave: 1
-      space: "hx-sveltos-env-pilot-20260821140804"
-      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+      stage: "pilot"
+      component: "sveltos-kyverno-env-rollout-20260926190447"
+      space: "hx-sveltos-env-pilot-20260926190447"
+      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
       unit: "clusterprofile"
       profile: "kyverno-hx-sveltos-env-pilot"
       clusterRef:
@@ -191,10 +217,10 @@ spec:
         name: "hx-sveltos-env-pilot"
         namespace: "projectsveltos"
       upstream:
-        space: "hx-sveltos-env-base-20260821140804"
+        space: "hx-sveltos-env-base-20260926190447"
         unit: "clusterprofile"
         unitLinked: true
-        revisionAtClone: 3
+        revisionAtClone: 2
       departures:
         metadata.name: "kyverno-hx-sveltos-env-pilot"
         spec.clusterRefs:
@@ -221,39 +247,41 @@ spec:
           stage: "baseline"
           wave: 0
           cluster: "hx-sveltos-env-pilot"
-          space: "hx-sveltos-env-pilot-20260821140804"
+          space: "hx-sveltos-env-pilot-20260926190447"
           revisionId: "r1-b93243ea8e14"
-          contentHash: -834146584
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "75711464947c7a2bb762f31765f1f5fa3b23fb0a7bca44e6549953c045526733"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req AFsKvwioRtvHOvJVUhUmtcyqtuPdbGte: unable to publish a release of change order 'baseline-20260926190447' in stage 'pilot': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 3 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage pilot"
             revision: 3
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:baseline-20260926190447"
           release:
-            space: "hx-sveltos-env-pilot-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+            space: "hx-sveltos-env-pilot-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:25c177f6c0533f9fd1e3d734251775e35e922de9e0b23bb5012fe76d7c312026"
-            bundleDigest: "sha256:9c385b54840f966b180672d5780d534d3e562a946c65832d08475b7a2e587403"
-            releaseId: "4efdcaa5-c9bd-4c38-8af0-72d8b8dcc346"
+            revision: "ChangeOrder:baseline-20260926190447"
+            manifestDigest: "sha256:96e39966a94d307300a401fba2a7f0cf3836c6616bfe110b725f7ea3563d0e5b"
+            bundleDigest: "sha256:08b6220816c30e5f2ab17838702c5f1539ead4fbf87f86c1ea7665880a408fbd"
+            releaseId: "af4e5306-da86-4443-ac7b-150b05777eaf"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-pilot-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-pilot"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
-            releaseManifestDigest: "sha256:25c177f6c0533f9fd1e3d734251775e35e922de9e0b23bb5012fe76d7c312026"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
+            releaseManifestDigest: "sha256:96e39966a94d307300a401fba2a7f0cf3836c6616bfe110b725f7ea3563d0e5b"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -261,39 +289,41 @@ spec:
           stage: "changed"
           wave: 1
           cluster: "hx-sveltos-env-pilot"
-          space: "hx-sveltos-env-pilot-20260821140804"
+          space: "hx-sveltos-env-pilot-20260926190447"
           revisionId: "r2-ed215f0c9741"
-          contentHash: 541265849
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "3c50037810749255f9df854ab1089ebd0a7d1ea8ded90d9b810f038f277d9bb7"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req uAtoUyOVHtDcmurpEufRwQUIyBgdaxjM: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'pilot': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage pilot"
             revision: 4
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
           release:
-            space: "hx-sveltos-env-pilot-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+            space: "hx-sveltos-env-pilot-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:b309ed9d4429cf0c9786d344b9c6cd8a95489443d1b0ef8525ee88cb4ad70767"
-            bundleDigest: "sha256:63da4633afda5b8c55a31a58795b56161965c5a327c270c83caf23d78d2ffaf2"
-            releaseId: "7471c81e-d415-487b-a0eb-4a8146a15b67"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
+            manifestDigest: "sha256:1c4e2d25fed05bab963cc3bb7a94b4c9a5a5ef09040eda70989dca32e19541d9"
+            bundleDigest: "sha256:9fef2d0ae59540ccb7ecda1fe358e9f1efbe168b1c953d4fcf1232ddb8f73df8"
+            releaseId: "7f50a38d-e78a-4e9b-b994-33bb7e42f8cb"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-pilot-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-pilot"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
-            releaseManifestDigest: "sha256:b309ed9d4429cf0c9786d344b9c6cd8a95489443d1b0ef8525ee88cb4ad70767"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
+            releaseManifestDigest: "sha256:1c4e2d25fed05bab963cc3bb7a94b4c9a5a5ef09040eda70989dca32e19541d9"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -302,8 +332,10 @@ spec:
       role: "workload"
       environment: "staging"
       wave: 2
-      space: "hx-sveltos-env-staging-20260821140804"
-      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+      stage: "staging"
+      component: "sveltos-kyverno-env-rollout-20260926190447"
+      space: "hx-sveltos-env-staging-20260926190447"
+      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
       unit: "clusterprofile"
       profile: "kyverno-hx-sveltos-env-staging"
       clusterRef:
@@ -312,10 +344,10 @@ spec:
         name: "hx-sveltos-env-staging"
         namespace: "projectsveltos"
       upstream:
-        space: "hx-sveltos-env-base-20260821140804"
+        space: "hx-sveltos-env-base-20260926190447"
         unit: "clusterprofile"
         unitLinked: true
-        revisionAtClone: 3
+        revisionAtClone: 2
       departures:
         metadata.name: "kyverno-hx-sveltos-env-staging"
         spec.clusterRefs:
@@ -342,39 +374,41 @@ spec:
           stage: "baseline"
           wave: 0
           cluster: "hx-sveltos-env-staging"
-          space: "hx-sveltos-env-staging-20260821140804"
+          space: "hx-sveltos-env-staging-20260926190447"
           revisionId: "r1-072923eeaa54"
-          contentHash: 422170149
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "610d89c14cc8571fe073152eadb5b4c07f20b3962157b90c042d18c1ff5bd863"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req ajAaQJRtjTOHHtASYNFSMGRfmAHSSlqL: unable to publish a release of change order 'baseline-20260926190447' in stage 'staging': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 3 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage staging"
             revision: 3
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:baseline-20260926190447"
           release:
-            space: "hx-sveltos-env-staging-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+            space: "hx-sveltos-env-staging-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:a945ceeefd9281e19af6ee9c4e4a691ddd3bb4e6501ca1c903f5a6c9c6652332"
-            bundleDigest: "sha256:ff67a4cb5c8d4f3573696105f663f34ae788c94353efb60bb31d07d643c04c61"
-            releaseId: "62d16ac9-709c-4fbf-887c-a5f109d25ad5"
+            revision: "ChangeOrder:baseline-20260926190447"
+            manifestDigest: "sha256:e207bfd3f42df63d8134959b1dd6dcd2f7c0e45c5e840292d17f38dc216c0a26"
+            bundleDigest: "sha256:ef89e7c4a6c72f9be8c771e0d978f0c26e3abf28e9551b996e86851850cab52b"
+            releaseId: "33fd8997-db0c-4e8b-bb67-7d37bfe613d1"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-staging-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-staging"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
-            releaseManifestDigest: "sha256:a945ceeefd9281e19af6ee9c4e4a691ddd3bb4e6501ca1c903f5a6c9c6652332"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
+            releaseManifestDigest: "sha256:e207bfd3f42df63d8134959b1dd6dcd2f7c0e45c5e840292d17f38dc216c0a26"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -382,39 +416,41 @@ spec:
           stage: "changed"
           wave: 2
           cluster: "hx-sveltos-env-staging"
-          space: "hx-sveltos-env-staging-20260821140804"
+          space: "hx-sveltos-env-staging-20260926190447"
           revisionId: "r2-c6651525c7f3"
-          contentHash: -148033676
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "552b7206bb9c5ad89b8da2dcec0d650c582e901c3c309de749684736520ea9ec"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req YzXwoHwNIxjzdVBNfdCOUIsFCtEdRxBd: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'staging': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage staging"
             revision: 4
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
           release:
-            space: "hx-sveltos-env-staging-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+            space: "hx-sveltos-env-staging-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:bad5e795bd2d58954b242dfdd5b010daf2b0cf202ff2354f77984204dab7001b"
-            bundleDigest: "sha256:290b647695a7b1771e6d5d414a021086d474cafc4a4477af2fbe569e4406d0c6"
-            releaseId: "c5cc8051-422f-42d0-ac5c-949987fcea96"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
+            manifestDigest: "sha256:b228b240cbc3e1aa3afcd399b32112a4e89cf4eebaadce5e719d2b003da628cf"
+            bundleDigest: "sha256:cfa42ada008f50e199ce33b8814e34da4b0f218672315b2257f96a18562b6282"
+            releaseId: "a7777cdb-c85c-4a8d-bd5b-802da992eaed"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-staging-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-staging"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
-            releaseManifestDigest: "sha256:bad5e795bd2d58954b242dfdd5b010daf2b0cf202ff2354f77984204dab7001b"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
+            releaseManifestDigest: "sha256:b228b240cbc3e1aa3afcd399b32112a4e89cf4eebaadce5e719d2b003da628cf"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -423,8 +459,10 @@ spec:
       role: "workload"
       environment: "prod"
       wave: 3
-      space: "hx-sveltos-env-prod-a-20260821140804"
-      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+      stage: "prod"
+      component: "sveltos-kyverno-env-rollout-20260926190447"
+      space: "hx-sveltos-env-prod-a-20260926190447"
+      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
       unit: "clusterprofile"
       profile: "kyverno-hx-sveltos-env-prod-a"
       clusterRef:
@@ -433,10 +471,10 @@ spec:
         name: "hx-sveltos-env-prod-a"
         namespace: "projectsveltos"
       upstream:
-        space: "hx-sveltos-env-base-20260821140804"
+        space: "hx-sveltos-env-base-20260926190447"
         unit: "clusterprofile"
         unitLinked: true
-        revisionAtClone: 3
+        revisionAtClone: 2
       departures:
         metadata.name: "kyverno-hx-sveltos-env-prod-a"
         spec.clusterRefs:
@@ -463,39 +501,41 @@ spec:
           stage: "baseline"
           wave: 0
           cluster: "hx-sveltos-env-prod-a"
-          space: "hx-sveltos-env-prod-a-20260821140804"
+          space: "hx-sveltos-env-prod-a-20260926190447"
           revisionId: "r1-a3686db9f046"
-          contentHash: -1357544183
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "271d255b29b8d5e8fc6b46ba711965eff0aa4ef3e9d97dbe0986d006367a3273"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req ziTxqmnJpTZYBrVwnuagHzKggWFgoefO: unable to publish a release of change order 'baseline-20260926190447' in stage 'prod': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 3 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage prod"
             revision: 3
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:baseline-20260926190447"
           release:
-            space: "hx-sveltos-env-prod-a-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+            space: "hx-sveltos-env-prod-a-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:015c28e4ea53603534d85817ff9c0aa611ef78f2988ea4a5d196afb90926ccc1"
-            bundleDigest: "sha256:c2ff45e5332c5bebe162e7eeb8904d4702cbc4c53005a31c91a57c8c159789a7"
-            releaseId: "3f1da86b-87f0-4a3a-bdfd-b9815f20dd06"
+            revision: "ChangeOrder:baseline-20260926190447"
+            manifestDigest: "sha256:e39ebc3aede226c9a4666cf7e6b944222bcd79395ce382d07425029c5ee87826"
+            bundleDigest: "sha256:fa7d3f00df8e5c73ad71d0a0bb33df3eee733061de8782a60c1eed992fd9c7a2"
+            releaseId: "b05bd0be-62c1-4746-9b18-49044c25741c"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-prod-a-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-prod-a"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
-            releaseManifestDigest: "sha256:015c28e4ea53603534d85817ff9c0aa611ef78f2988ea4a5d196afb90926ccc1"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
+            releaseManifestDigest: "sha256:e39ebc3aede226c9a4666cf7e6b944222bcd79395ce382d07425029c5ee87826"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -503,39 +543,41 @@ spec:
           stage: "changed"
           wave: 3
           cluster: "hx-sveltos-env-prod-a"
-          space: "hx-sveltos-env-prod-a-20260821140804"
+          space: "hx-sveltos-env-prod-a-20260926190447"
           revisionId: "r2-d00434703da3"
-          contentHash: 425181340
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "b5ab0cebaa4b98fa81bc6eb87530a78a8bd1cd6344f6ae302b8c0ec6c12f8e16"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req FFuSulncNCXyWELwnOFgndfZbJBfLGRL: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'prod': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage prod"
             revision: 4
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
           release:
-            space: "hx-sveltos-env-prod-a-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+            space: "hx-sveltos-env-prod-a-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:e7d752ba6ddbe2d6787d60253d1d30171955d8487859104d93069b0c6ad17740"
-            bundleDigest: "sha256:1c0738e1ee1b5c2383a9a7bb94fccab8783ba1785345df17512d87b1c37f19be"
-            releaseId: "fa893d94-656d-464e-93ad-69417d08a9b6"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
+            manifestDigest: "sha256:b369e8cf46d2bd7d60d61ae619d25f6603764507ad2074d4fee38fa5cd1c1370"
+            bundleDigest: "sha256:aadb6a16ca3efdbfcb2eaf278b7d86e9369d4e4e9cbcc663a96a49a6814d45bd"
+            releaseId: "71dc15a6-f965-4daa-b128-6508e93d4448"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-prod-a-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-prod-a"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
-            releaseManifestDigest: "sha256:e7d752ba6ddbe2d6787d60253d1d30171955d8487859104d93069b0c6ad17740"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
+            releaseManifestDigest: "sha256:b369e8cf46d2bd7d60d61ae619d25f6603764507ad2074d4fee38fa5cd1c1370"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -544,8 +586,10 @@ spec:
       role: "workload"
       environment: "prod"
       wave: 3
-      space: "hx-sveltos-env-prod-b-20260821140804"
-      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+      stage: "prod"
+      component: "sveltos-kyverno-env-rollout-20260926190447"
+      space: "hx-sveltos-env-prod-b-20260926190447"
+      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
       unit: "clusterprofile"
       profile: "kyverno-hx-sveltos-env-prod-b"
       clusterRef:
@@ -554,10 +598,10 @@ spec:
         name: "hx-sveltos-env-prod-b"
         namespace: "projectsveltos"
       upstream:
-        space: "hx-sveltos-env-base-20260821140804"
+        space: "hx-sveltos-env-base-20260926190447"
         unit: "clusterprofile"
         unitLinked: true
-        revisionAtClone: 3
+        revisionAtClone: 2
       departures:
         metadata.name: "kyverno-hx-sveltos-env-prod-b"
         spec.clusterRefs:
@@ -584,39 +628,41 @@ spec:
           stage: "baseline"
           wave: 0
           cluster: "hx-sveltos-env-prod-b"
-          space: "hx-sveltos-env-prod-b-20260821140804"
+          space: "hx-sveltos-env-prod-b-20260926190447"
           revisionId: "r1-5eafaf9b10e5"
-          contentHash: -1369240019
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "7032301f1a8c5f68268b81f7a435b7813c5d5feb48761f3418ea85e50ec45b97"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req heUIBnSRXaynkbXqRuVUkSOrcDEZUZun: unable to publish a release of change order 'baseline-20260926190447' in stage 'prod': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 3 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage prod"
             revision: 3
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:baseline-20260926190447"
           release:
-            space: "hx-sveltos-env-prod-b-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+            space: "hx-sveltos-env-prod-b-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:adf7ede74df0c3ae5b8d34243cfc536049d48d9cf562fd28fc9e78f222e278bf"
-            bundleDigest: "sha256:7610f8a6808bff45224a52522cfd00b2abe0c1134628dea43c050e7d2e635933"
-            releaseId: "4d00aded-33c1-4ae6-a533-d6814c48a3b4"
+            revision: "ChangeOrder:baseline-20260926190447"
+            manifestDigest: "sha256:0f74f907a7a7a7df1dd753e07fd6edac062bb6f69aee494101f00015ca017559"
+            bundleDigest: "sha256:0a184aafa87975a455b35fc68f4a0e3077fe8e99754cbf27e6194fc296318255"
+            releaseId: "bc5a609d-d356-4978-9881-5d2de72d5d23"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-prod-b-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-prod-b"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
-            releaseManifestDigest: "sha256:adf7ede74df0c3ae5b8d34243cfc536049d48d9cf562fd28fc9e78f222e278bf"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
+            releaseManifestDigest: "sha256:0f74f907a7a7a7df1dd753e07fd6edac062bb6f69aee494101f00015ca017559"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -624,39 +670,41 @@ spec:
           stage: "changed"
           wave: 3
           cluster: "hx-sveltos-env-prod-b"
-          space: "hx-sveltos-env-prod-b-20260821140804"
+          space: "hx-sveltos-env-prod-b-20260926190447"
           revisionId: "r2-126b6338a471"
-          contentHash: 404835256
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          contentHash: "64dad70c7688fd2ceb24302e9b3e752c50a563c3bd95dbe1992918b3a53cb72b"
+          releaseGate:
+            result: "refused"
+            httpStatus: 422
+            requirement: "approval"
+            observation: "release-refused-before-approval"
+            message: "Failed: HTTP 422 for req mWWYpbWISTDFyefpjRMLzLIsmaUtdMJe: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'prod': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
           approval:
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve --change-order <base-space>/<change-order> --stage prod"
             revision: 4
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            headUnchanged: true
             contentHashUnchanged: true
+            approverIdentityRecordedInReceipt: false
           afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            result: "published"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
           release:
-            space: "hx-sveltos-env-prod-b-20260821140804"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+            space: "hx-sveltos-env-prod-b-20260926190447"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
             tag: "latest"
-            manifestDigest: "sha256:dd39be5dc38bbdb6c98925b641c57e0bb8a7db7edac4ca5e3429ed3b11c31bec"
-            bundleDigest: "sha256:252d3adc7749794907d52d8c9f6f5323c1dc4ac7e0d512942ea289ed9bb5567c"
-            releaseId: "61c0fb39-684d-4f0b-a709-e1f53726d547"
+            revision: "ChangeOrder:bg-replicas-20260926190447"
+            manifestDigest: "sha256:9f89dabe95a5b4ba83ced395d81d11c5443006f098ea3a2af9448c005462e8c4"
+            bundleDigest: "sha256:012ce298fe7ecedbd955d6d9c30dda59bac71dd0c44fde9643ea9f59f4e5b0e1"
+            releaseId: "1090888b-a552-41be-950d-8c465a7a4056"
           delivery:
             result: "pass"
             profile: "sveltos-env-rollout-hx-sveltos-env-prod-b-bootstrap"
-            cluster: "hx-sveltos-envmgmt-20260821140804"
+            cluster: "hx-sveltos-envmgmt-20260926190447"
             reviewedProfile: "kyverno-hx-sveltos-env-prod-b"
-            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
-            releaseManifestDigest: "sha256:dd39be5dc38bbdb6c98925b641c57e0bb8a7db7edac4ca5e3429ed3b11c31bec"
+            reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
+            releaseManifestDigest: "sha256:9f89dabe95a5b4ba83ced395d81d11c5443006f098ea3a2af9448c005462e8c4"
             interval: "1m0s"
             status: "Provisioned"
             profileMatchesApprovedRevision: true
@@ -665,8 +713,9 @@ spec:
       role: "management"
       environment: "management"
       wave: 0
-      space: "hx-sveltos-env-mgmt-20260821140804"
-      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-mgmt-20260821140804:latest"
+      component: "sveltos-kyverno-env-rollout-management-20260926190447"
+      space: "hx-sveltos-env-mgmt-20260926190447"
+      gatewayReference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-mgmt-20260926190447:latest"
       unit: "clusterprofile"
       profile: "sveltos-env-rollout-hx-sveltos-env-pilot-bootstrap,sveltos-env-rollout-hx-sveltos-env-staging-bootstrap,sveltos-env-rollout-hx-sveltos-env-prod-a-bootstrap,sveltos-env-rollout-hx-sveltos-env-prod-b-bootstrap"
       selector:
@@ -682,23 +731,23 @@ spec:
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-pilot-bootstrap"
           cluster: "hx-sveltos-env-pilot"
-          space: "hx-sveltos-env-pilot-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+          space: "hx-sveltos-env-pilot-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-staging-bootstrap"
           cluster: "hx-sveltos-env-staging"
-          space: "hx-sveltos-env-staging-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+          space: "hx-sveltos-env-staging-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-prod-a-bootstrap"
           cluster: "hx-sveltos-env-prod-a"
-          space: "hx-sveltos-env-prod-a-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+          space: "hx-sveltos-env-prod-a-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-prod-b-bootstrap"
           cluster: "hx-sveltos-env-prod-b"
-          space: "hx-sveltos-env-prod-b-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+          space: "hx-sveltos-env-prod-b-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
       boundary:
         appliedOutOfBandWith: "kubectl"
         firstRevisionDeliveredThroughGateway: false
@@ -715,42 +764,223 @@ spec:
           stage: "baseline"
           wave: 0
           cluster: "hx-sveltos-env-mgmt"
-          space: "hx-sveltos-env-mgmt-20260821140804"
-          revisionId: "m1-063cb9e42ccd"
-          contentHash: -1959556616
-          beforeApproval:
-            result: "blocked"
-            gate: "platform/require-approval/vet-approvedby"
-            observation: "apply-gate-present-approval-absent"
-            dryRun: false
-            exitCode: 0
+          space: "hx-sveltos-env-mgmt-20260926190447"
+          revisionId: "m1-a8111dc60451"
+          contentHash: "4856d69be8246b753f8025352ce2be25c9087ea5566ae3be10300c8456393215"
+          releaseGate:
+            result: "not-applicable"
+            reason: "The management record is applied out of band with kubectl, because it is what opens the gateway path, and no release of it is published, so no release gate reads its approval. It is recorded as an attestation all the same, and nothing server-side gates it."
           approval:
-            revision: 3
-            recordedApprovals: 1
-            approverIdentityRecordedInReceipt: false
+            kind: "attestation"
+            type: "Approval"
+            command: "cub variant approve <management-space>"
+            revision: 2
+            gatedServerSide: false
+            headUnchanged: true
             contentHashUnchanged: true
-          afterApproval:
-            result: "allowed"
-            observation: "approval-recorded"
-            dryRun: false
-            exitCode: 0
+            approverIdentityRecordedInReceipt: false
           release: null
-  baselineApproval:
+  baselineRelease:
+    path: "baseline change order"
+    changeOrder:
+      space: "hx-sveltos-env-base-20260926190447"
+      slug: "baseline-20260926190447"
+      ref: "hx-sveltos-env-base-20260926190447/baseline-20260926190447"
+      workflow: "hx-sveltos-env-base-20260926190447/rollout-20260926190447"
+      description: "Release each variant's reviewed baseline through the workflow; the base itself does not change"
+      carriesBaseChange: false
+      inScopeSpaces:
+        - "hx-sveltos-env-base-20260926190447"
+        - "hx-sveltos-env-pilot-20260926190447"
+        - "hx-sveltos-env-prod-a-20260926190447"
+        - "hx-sveltos-env-prod-b-20260926190447"
+        - "hx-sveltos-env-staging-20260926190447"
+      command: "cub changeorder create --space <base-space> <baseline-change-order> --change-workflow <base-space>/<workflow> --description <text>"
     scope: "cub unit list --space \"*\""
-    query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Record = 'variant'"
+    query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260926190447' AND Labels.Record = 'variant'"
     matched:
-      - "hx-sveltos-env-mgmt-20260821140804/clusterprofile"
-      - "hx-sveltos-env-pilot-20260821140804/clusterprofile"
-      - "hx-sveltos-env-prod-a-20260821140804/clusterprofile"
-      - "hx-sveltos-env-prod-b-20260821140804/clusterprofile"
-      - "hx-sveltos-env-staging-20260821140804/clusterprofile"
-    command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
-    appliedAsOneOperation: true
-    members: 5
-    recordedApprovals: 5
+      - "hx-sveltos-env-mgmt-20260926190447/clusterprofile"
+      - "hx-sveltos-env-pilot-20260926190447/clusterprofile"
+      - "hx-sveltos-env-prod-a-20260926190447/clusterprofile"
+      - "hx-sveltos-env-prod-b-20260926190447/clusterprofile"
+      - "hx-sveltos-env-staging-20260926190447/clusterprofile"
+    stages:
+      -
+        stage: "pilot"
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260926190447' AND Labels.Environment = 'pilot'"
+          matched:
+            - "hx-sveltos-env-pilot-20260926190447/clusterprofile"
+        members:
+          - "hx-sveltos-env-pilot-20260926190447"
+        promotion:
+          command: "cub variant promote --change-order <base-space>/<change-order> --target-stage pilot"
+          changeOrder: "hx-sveltos-env-base-20260926190447/baseline-20260926190447"
+          cutRevisions: false
+        approval:
+          kind: "attestation"
+          command: "cub variant approve --change-order <base-space>/<change-order> --stage pilot"
+          appliedAsOneOperation: true
+          members: 1
+          recordedApprovals: 1
+      -
+        stage: "staging"
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260926190447' AND Labels.Environment = 'staging'"
+          matched:
+            - "hx-sveltos-env-staging-20260926190447/clusterprofile"
+        members:
+          - "hx-sveltos-env-staging-20260926190447"
+        promotion:
+          command: "cub variant promote --change-order <base-space>/<change-order> --target-stage staging"
+          changeOrder: "hx-sveltos-env-base-20260926190447/baseline-20260926190447"
+          cutRevisions: false
+        approval:
+          kind: "attestation"
+          command: "cub variant approve --change-order <base-space>/<change-order> --stage staging"
+          appliedAsOneOperation: true
+          members: 1
+          recordedApprovals: 1
+      -
+        stage: "prod"
+        selection:
+          scope: "cub unit list --space \"*\""
+          query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260926190447' AND Labels.Environment = 'prod'"
+          matched:
+            - "hx-sveltos-env-prod-a-20260926190447/clusterprofile"
+            - "hx-sveltos-env-prod-b-20260926190447/clusterprofile"
+        members:
+          - "hx-sveltos-env-prod-a-20260926190447"
+          - "hx-sveltos-env-prod-b-20260926190447"
+        promotion:
+          command: "cub variant promote --change-order <base-space>/<change-order> --target-stage prod"
+          changeOrder: "hx-sveltos-env-base-20260926190447/baseline-20260926190447"
+          cutRevisions: false
+        approval:
+          kind: "attestation"
+          command: "cub variant approve --change-order <base-space>/<change-order> --stage prod"
+          appliedAsOneOperation: true
+          members: 2
+          recordedApprovals: 2
+    management:
+      cluster: "hx-sveltos-env-mgmt"
+      approval: "cub variant approve <management-space>"
+      gatedServerSide: false
+      reason: "The management record is applied out of band with kubectl, because it is what opens the gateway path, and no release of it is published, so no release gate reads its approval. It is recorded as an attestation all the same, and nothing server-side gates it."
   advance:
     evidenceGated: true
     rule: "No wave's approval is requested until the preceding checkpoint shows every cluster the wave depends on reporting healthy: the whole fleet at the baseline for wave one, the environment the previous wave promoted after that. Each wave records the evidence that unlocked it."
+  changeManagement:
+    component:
+      slug: "sveltos-kyverno-env-rollout-20260926190447"
+      id: "eadc5cea-400e-4242-933b-bc35c49033b5"
+      label: "sveltos-kyverno-env-rollout"
+      runScoped: true
+      reason: "Recorded Spaces from earlier runs are kept on purpose, and a change order's scope is every Space attached to its base's component, so the component is per run: a component shared across runs would put an earlier run's variants in this change order's scope, where a promotion into a stage would reach them."
+      spaces:
+        - "hx-sveltos-env-base-20260926190447"
+        - "hx-sveltos-env-pilot-20260926190447"
+        - "hx-sveltos-env-staging-20260926190447"
+        - "hx-sveltos-env-prod-a-20260926190447"
+        - "hx-sveltos-env-prod-b-20260926190447"
+    managementComponent:
+      slug: "sveltos-kyverno-env-rollout-management-20260926190447"
+      id: "aa9ef305-8913-4e19-ba70-8d923deb0c71"
+      runScoped: true
+      reason: "The management Space is not a variant of the base, and a change order's scope is every Space attached to its base's component, so the management Space has a run-scoped component of its own: it keeps a home in the component view and never sits in a change order's scope."
+      spaces:
+        - "hx-sveltos-env-mgmt-20260926190447"
+    workflow:
+      space: "hx-sveltos-env-base-20260926190447"
+      slug: "rollout-20260926190447"
+      ref: "hx-sveltos-env-base-20260926190447/rollout-20260926190447"
+      file:
+        path: "examples/sveltos/env-rollout/change-workflow.yaml"
+        rawSha256: "e71920c8e21ce20ab825bdfd4d795fd28e3fa57e6c9766f3d3ad479aac077127"
+      stages:
+        - "pilot"
+        - "staging"
+        - "prod"
+      stageSelector: "Labels.Stage = '<stage>' within the change order's component"
+      prerequisites:
+        - "Released"
+      stageGates:
+        -
+          stage: "pilot"
+          prerequisites:
+            []
+          releasePrerequisites:
+            - "approval"
+        -
+          stage: "staging"
+          prerequisites:
+            - "Released"
+          releasePrerequisites:
+            - "approval"
+        -
+          stage: "prod"
+          prerequisites:
+            - "Released"
+          releasePrerequisites:
+            - "approval"
+      attestationPrerequisites:
+        -
+          Name: "approval"
+          Type: "Approval"
+          Count: 1
+          AllowAuthors: true
+      separationOfDuties:
+        allowAuthors: true
+        relaxed: true
+        statement: "This single-operator demo relaxes separation of duties: its approval requirement sets AllowAuthors: true, so the operator who promoted a change may also approve it. A production workflow sets AllowAuthors: false and has a second approver sign off, because ConfigHub counts whoever promoted a change into a Space as one of its authors there and does not count an author's approval."
+        strictModeRefusal: "unable to publish a release of change order '<change-order>' in stage '<stage>': requires approval: 1 Approval attestation(s) from eligible attesters who did not write the change; <unit> revision <n> has 0 of 1"
+        strictModeMeasuredOn: "2026-09-26"
+      healthy:
+        declared: false
+        reason: "Healthy reads the confighub.com/live-status annotation and passes only on the literal words Synced, Succeeded and Healthy. Sveltos has no reporter that writes it yet (confighub/sveltos-confighub#33), and ConfigHub does not yet recognise the provider (confighubai/confighub#5049), so declaring it would hold every stage forever. Until both exist, the checkpoint evidence each wave records as unlockedBy is the observed-health layer."
+      workflowRequired:
+        component: "sveltos-kyverno-env-rollout-20260926190447"
+        declared: true
+        command: "cub component update --patch <component> --change-workflow-required --allowed-change-workflow <base-space>/<workflow>"
+        enforcedOnPlainPublish: false
+        measuredOn: "2026-09-26"
+        note: "Declared on the run's component to state that its promotions and releases go through this workflow. Measured on 2026-09-26, ConfigHub does not yet refuse a plain publish of one of its Spaces outside a change order, so every release in this run goes through a change order because the runner sends it there, not because the server would refuse the other path."
+      command: "cub changeworkflow create --space <base-space> <workflow> --filename examples/sveltos/env-rollout/change-workflow.yaml"
+    changeOrder:
+      space: "hx-sveltos-env-base-20260926190447"
+      slug: "bg-replicas-20260926190447"
+      ref: "hx-sveltos-env-base-20260926190447/bg-replicas-20260926190447"
+      workflow: "hx-sveltos-env-base-20260926190447/rollout-20260926190447"
+      description: "Raise backgroundController.replicas from 1 to 2 on the base record"
+      createdAfterBaseRevision: 3
+      inScopeSpaces:
+        - "hx-sveltos-env-base-20260926190447"
+        - "hx-sveltos-env-pilot-20260926190447"
+        - "hx-sveltos-env-prod-a-20260926190447"
+        - "hx-sveltos-env-prod-b-20260926190447"
+        - "hx-sveltos-env-staging-20260926190447"
+      command: "cub changeorder create --space <base-space> <change-order> --change-workflow <base-space>/<workflow> --description <text>"
+    gateRefusal:
+      command: "cub variant promote --change-order <base-space>/<change-order> --target-stage staging"
+      attempted: "after the change order was created and before wave 1"
+      targetStage: "staging"
+      stageAhead: "pilot"
+      refused: true
+      enforcedBy: "the ConfigHub server"
+      message: "Failed: unable to promote to stage 'staging', Variant 'hx-sveltos-env-pilot' has not taken change order 'bg-replicas-20260926190447'"
+      headsUnchanged: true
+    release:
+      command: "cub release publish <space> --revision ChangeOrder:<change-order>"
+      gate: "every stage's ReleasePrerequisites name approval, so a release of a change order into a stage is refused with HTTP 422 until the change as it stands there is approved"
+      baseline: "The baseline went through the baseline-20260926190447 change order, which carries no change to the base, so every release that reached a cluster in this run passed the approval gate."
+    approval:
+      kind: "attestation"
+      command: "cub variant approve --change-order <base-space>/<change-order> --stage <stage>"
+      management: "cub variant approve <management-space>"
+      observation: "Before each approval the release was attempted and refused by the stage's release gate, and the refusal is recorded as that wave's gate observation."
+    observedHealth: "The server's Released gate says the stage ahead published the change. The unlockedBy evidence on each wave says its clusters are running it, which ConfigHub cannot yet read for itself."
   waves:
     -
       wave: 1
@@ -760,48 +990,62 @@ spec:
         environment: "baseline"
         clusters:
           -
-            cluster: "hx-sveltos-env-pilot-20260821140804"
+            cluster: "hx-sveltos-env-pilot-20260926190447"
             logicalCluster: "hx-sveltos-env-pilot"
             environment: "pilot"
             result: "pass"
           -
-            cluster: "hx-sveltos-env-staging-20260821140804"
+            cluster: "hx-sveltos-env-staging-20260926190447"
             logicalCluster: "hx-sveltos-env-staging"
             environment: "staging"
             result: "pass"
           -
-            cluster: "hx-sveltos-env-prod-a-20260821140804"
+            cluster: "hx-sveltos-env-prod-a-20260926190447"
             logicalCluster: "hx-sveltos-env-prod-a"
             environment: "prod"
             result: "pass"
           -
-            cluster: "hx-sveltos-env-prod-b-20260821140804"
+            cluster: "hx-sveltos-env-prod-b-20260926190447"
             logicalCluster: "hx-sveltos-env-prod-b"
             environment: "prod"
             result: "pass"
         approvalFollowedEvidence: true
       selection:
         scope: "cub unit list --space \"*\""
-        query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'pilot'"
+        query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260926190447' AND Labels.Environment = 'pilot'"
         matched:
-          - "hx-sveltos-env-pilot-20260821140804/clusterprofile"
-      upgrade:
-        command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          - "hx-sveltos-env-pilot-20260926190447/clusterprofile"
+      stage:
+        name: "pilot"
+        members:
+          - "hx-sveltos-env-pilot-20260926190447"
+      promotion:
+        command: "cub variant promote --change-order <base-space>/<change-order> --target-stage pilot"
+        changeOrder: "hx-sveltos-env-base-20260926190447/bg-replicas-20260926190447"
+        targetStage: "pilot"
+        serverGate: "none; the first stage's gates are never evaluated"
         appliedAsOneOperation: true
         members: 1
+      release:
+        command: "cub release publish <space> --revision ChangeOrder:<change-order>"
+        revision: "ChangeOrder:bg-replicas-20260926190447"
+        gate: "approval, the stage's release prerequisite"
       approval:
-        command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+        kind: "attestation"
+        command: "cub variant approve --change-order <base-space>/<change-order> --stage pilot"
         appliedAsOneOperation: true
         members: 1
         recordedApprovals: 1
       clusters:
         -
           cluster: "hx-sveltos-env-pilot"
-          space: "hx-sveltos-env-pilot-20260821140804"
+          space: "hx-sveltos-env-pilot-20260926190447"
           revision: 4
           revisionId: "r2-ed215f0c9741"
-          recordedApprovals: 1
-          releaseManifestDigest: "sha256:b309ed9d4429cf0c9786d344b9c6cd8a95489443d1b0ef8525ee88cb4ad70767"
+          releaseRefusal: "Failed: HTTP 422 for req uAtoUyOVHtDcmurpEufRwQUIyBgdaxjM: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'pilot': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
+          approval: "attestation"
+          releaseManifestDigest: "sha256:1c4e2d25fed05bab963cc3bb7a94b4c9a5a5ef09040eda70989dca32e19541d9"
+          releaseRevision: "ChangeOrder:bg-replicas-20260926190447"
           inheritedFields:
             - "spec.helmCharts.0.values"
           departedFields:
@@ -816,33 +1060,47 @@ spec:
         environment: "pilot"
         clusters:
           -
-            cluster: "hx-sveltos-env-pilot-20260821140804"
+            cluster: "hx-sveltos-env-pilot-20260926190447"
             logicalCluster: "hx-sveltos-env-pilot"
             environment: "pilot"
             result: "pass"
         approvalFollowedEvidence: true
       selection:
         scope: "cub unit list --space \"*\""
-        query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'staging'"
+        query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260926190447' AND Labels.Environment = 'staging'"
         matched:
-          - "hx-sveltos-env-staging-20260821140804/clusterprofile"
-      upgrade:
-        command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          - "hx-sveltos-env-staging-20260926190447/clusterprofile"
+      stage:
+        name: "staging"
+        members:
+          - "hx-sveltos-env-staging-20260926190447"
+      promotion:
+        command: "cub variant promote --change-order <base-space>/<change-order> --target-stage staging"
+        changeOrder: "hx-sveltos-env-base-20260926190447/bg-replicas-20260926190447"
+        targetStage: "staging"
+        serverGate: "Released over the pilot stage"
         appliedAsOneOperation: true
         members: 1
+      release:
+        command: "cub release publish <space> --revision ChangeOrder:<change-order>"
+        revision: "ChangeOrder:bg-replicas-20260926190447"
+        gate: "approval, the stage's release prerequisite"
       approval:
-        command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+        kind: "attestation"
+        command: "cub variant approve --change-order <base-space>/<change-order> --stage staging"
         appliedAsOneOperation: true
         members: 1
         recordedApprovals: 1
       clusters:
         -
           cluster: "hx-sveltos-env-staging"
-          space: "hx-sveltos-env-staging-20260821140804"
+          space: "hx-sveltos-env-staging-20260926190447"
           revision: 4
           revisionId: "r2-c6651525c7f3"
-          recordedApprovals: 1
-          releaseManifestDigest: "sha256:bad5e795bd2d58954b242dfdd5b010daf2b0cf202ff2354f77984204dab7001b"
+          releaseRefusal: "Failed: HTTP 422 for req YzXwoHwNIxjzdVBNfdCOUIsFCtEdRxBd: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'staging': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
+          approval: "attestation"
+          releaseManifestDigest: "sha256:b228b240cbc3e1aa3afcd399b32112a4e89cf4eebaadce5e719d2b003da628cf"
+          releaseRevision: "ChangeOrder:bg-replicas-20260926190447"
           inheritedFields:
             - "spec.helmCharts.0.values"
           departedFields:
@@ -857,34 +1115,49 @@ spec:
         environment: "staging"
         clusters:
           -
-            cluster: "hx-sveltos-env-staging-20260821140804"
+            cluster: "hx-sveltos-env-staging-20260926190447"
             logicalCluster: "hx-sveltos-env-staging"
             environment: "staging"
             result: "pass"
         approvalFollowedEvidence: true
       selection:
         scope: "cub unit list --space \"*\""
-        query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260821140804' AND Labels.Environment = 'prod'"
+        query: "Labels.Proof = 'sveltos-env-rollout' AND Labels.Run = '20260926190447' AND Labels.Environment = 'prod'"
         matched:
-          - "hx-sveltos-env-prod-a-20260821140804/clusterprofile"
-          - "hx-sveltos-env-prod-b-20260821140804/clusterprofile"
-      upgrade:
-        command: "cub unit update --patch --space \"*\" --where <query> --upgrade"
+          - "hx-sveltos-env-prod-a-20260926190447/clusterprofile"
+          - "hx-sveltos-env-prod-b-20260926190447/clusterprofile"
+      stage:
+        name: "prod"
+        members:
+          - "hx-sveltos-env-prod-a-20260926190447"
+          - "hx-sveltos-env-prod-b-20260926190447"
+      promotion:
+        command: "cub variant promote --change-order <base-space>/<change-order> --target-stage prod"
+        changeOrder: "hx-sveltos-env-base-20260926190447/bg-replicas-20260926190447"
+        targetStage: "prod"
+        serverGate: "Released over the staging stage"
         appliedAsOneOperation: true
         members: 2
+      release:
+        command: "cub release publish <space> --revision ChangeOrder:<change-order>"
+        revision: "ChangeOrder:bg-replicas-20260926190447"
+        gate: "approval, the stage's release prerequisite"
       approval:
-        command: "cub unit approve --space \"*\" --where <query> --revision HeadRevisionNum"
+        kind: "attestation"
+        command: "cub variant approve --change-order <base-space>/<change-order> --stage prod"
         appliedAsOneOperation: true
         members: 2
         recordedApprovals: 2
       clusters:
         -
           cluster: "hx-sveltos-env-prod-a"
-          space: "hx-sveltos-env-prod-a-20260821140804"
+          space: "hx-sveltos-env-prod-a-20260926190447"
           revision: 4
           revisionId: "r2-d00434703da3"
-          recordedApprovals: 1
-          releaseManifestDigest: "sha256:e7d752ba6ddbe2d6787d60253d1d30171955d8487859104d93069b0c6ad17740"
+          releaseRefusal: "Failed: HTTP 422 for req FFuSulncNCXyWELwnOFgndfZbJBfLGRL: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'prod': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
+          approval: "attestation"
+          releaseManifestDigest: "sha256:b369e8cf46d2bd7d60d61ae619d25f6603764507ad2074d4fee38fa5cd1c1370"
+          releaseRevision: "ChangeOrder:bg-replicas-20260926190447"
           inheritedFields:
             - "spec.helmCharts.0.values"
           departedFields:
@@ -893,11 +1166,13 @@ spec:
             - "spec.stopMatchingBehavior"
         -
           cluster: "hx-sveltos-env-prod-b"
-          space: "hx-sveltos-env-prod-b-20260821140804"
+          space: "hx-sveltos-env-prod-b-20260926190447"
           revision: 4
           revisionId: "r2-126b6338a471"
-          recordedApprovals: 1
-          releaseManifestDigest: "sha256:dd39be5dc38bbdb6c98925b641c57e0bb8a7db7edac4ca5e3429ed3b11c31bec"
+          releaseRefusal: "Failed: HTTP 422 for req mWWYpbWISTDFyefpjRMLzLIsmaUtdMJe: unable to publish a release of change order 'bg-replicas-20260926190447' in stage 'prod': requires approval: 1 Approval attestation(s) from eligible attesters; clusterprofile revision 4 has 0 of 1"
+          approval: "attestation"
+          releaseManifestDigest: "sha256:9f89dabe95a5b4ba83ced395d81d11c5443006f098ea3a2af9448c005462e8c4"
+          releaseRevision: "ChangeOrder:bg-replicas-20260926190447"
           inheritedFields:
             - "spec.helmCharts.0.values"
           departedFields:
@@ -910,7 +1185,7 @@ spec:
     interval: "1m0s"
     deploymentType: "Remote"
     fetchedBy: "the Sveltos addon controller on the management cluster"
-    addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.13.0-ch"
+    addonControllerImage: "docker.io/projectsveltos/addon-controller:v1.15.0"
     secret:
       name: "confighub-gateway"
       namespace: "projectsveltos"
@@ -925,23 +1200,23 @@ spec:
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-pilot-bootstrap"
           cluster: "hx-sveltos-env-pilot"
-          space: "hx-sveltos-env-pilot-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+          space: "hx-sveltos-env-pilot-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-staging-bootstrap"
           cluster: "hx-sveltos-env-staging"
-          space: "hx-sveltos-env-staging-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+          space: "hx-sveltos-env-staging-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-prod-a-bootstrap"
           cluster: "hx-sveltos-env-prod-a"
-          space: "hx-sveltos-env-prod-a-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+          space: "hx-sveltos-env-prod-a-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
         -
           profile: "sveltos-env-rollout-hx-sveltos-env-prod-b-bootstrap"
           cluster: "hx-sveltos-env-prod-b"
-          space: "hx-sveltos-env-prod-b-20260821140804"
-          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+          space: "hx-sveltos-env-prod-b-20260926190447"
+          reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
       interval: "1m0s"
       deploymentType: "Remote"
       clusterSelector:
@@ -953,29 +1228,29 @@ spec:
       changedByPromotion: false
     clusters:
       hx-sveltos-env-pilot:
-        space: "hx-sveltos-env-pilot-20260821140804"
-        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260821140804:latest"
+        space: "hx-sveltos-env-pilot-20260926190447"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-pilot-20260926190447:latest"
         bootstrapProfile: "sveltos-env-rollout-hx-sveltos-env-pilot-bootstrap"
-        baselineReleaseManifestDigest: "sha256:25c177f6c0533f9fd1e3d734251775e35e922de9e0b23bb5012fe76d7c312026"
-        changedReleaseManifestDigest: "sha256:b309ed9d4429cf0c9786d344b9c6cd8a95489443d1b0ef8525ee88cb4ad70767"
+        baselineReleaseManifestDigest: "sha256:96e39966a94d307300a401fba2a7f0cf3836c6616bfe110b725f7ea3563d0e5b"
+        changedReleaseManifestDigest: "sha256:1c4e2d25fed05bab963cc3bb7a94b4c9a5a5ef09040eda70989dca32e19541d9"
       hx-sveltos-env-staging:
-        space: "hx-sveltos-env-staging-20260821140804"
-        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260821140804:latest"
+        space: "hx-sveltos-env-staging-20260926190447"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-staging-20260926190447:latest"
         bootstrapProfile: "sveltos-env-rollout-hx-sveltos-env-staging-bootstrap"
-        baselineReleaseManifestDigest: "sha256:a945ceeefd9281e19af6ee9c4e4a691ddd3bb4e6501ca1c903f5a6c9c6652332"
-        changedReleaseManifestDigest: "sha256:bad5e795bd2d58954b242dfdd5b010daf2b0cf202ff2354f77984204dab7001b"
+        baselineReleaseManifestDigest: "sha256:e207bfd3f42df63d8134959b1dd6dcd2f7c0e45c5e840292d17f38dc216c0a26"
+        changedReleaseManifestDigest: "sha256:b228b240cbc3e1aa3afcd399b32112a4e89cf4eebaadce5e719d2b003da628cf"
       hx-sveltos-env-prod-a:
-        space: "hx-sveltos-env-prod-a-20260821140804"
-        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260821140804:latest"
+        space: "hx-sveltos-env-prod-a-20260926190447"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-a-20260926190447:latest"
         bootstrapProfile: "sveltos-env-rollout-hx-sveltos-env-prod-a-bootstrap"
-        baselineReleaseManifestDigest: "sha256:015c28e4ea53603534d85817ff9c0aa611ef78f2988ea4a5d196afb90926ccc1"
-        changedReleaseManifestDigest: "sha256:e7d752ba6ddbe2d6787d60253d1d30171955d8487859104d93069b0c6ad17740"
+        baselineReleaseManifestDigest: "sha256:e39ebc3aede226c9a4666cf7e6b944222bcd79395ce382d07425029c5ee87826"
+        changedReleaseManifestDigest: "sha256:b369e8cf46d2bd7d60d61ae619d25f6603764507ad2074d4fee38fa5cd1c1370"
       hx-sveltos-env-prod-b:
-        space: "hx-sveltos-env-prod-b-20260821140804"
-        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260821140804:latest"
+        space: "hx-sveltos-env-prod-b-20260926190447"
+        reference: "oci://oci.hub.confighub.com/space/hx-sveltos-env-prod-b-20260926190447:latest"
         bootstrapProfile: "sveltos-env-rollout-hx-sveltos-env-prod-b-bootstrap"
-        baselineReleaseManifestDigest: "sha256:adf7ede74df0c3ae5b8d34243cfc536049d48d9cf562fd28fc9e78f222e278bf"
-        changedReleaseManifestDigest: "sha256:dd39be5dc38bbdb6c98925b641c57e0bb8a7db7edac4ca5e3429ed3b11c31bec"
+        baselineReleaseManifestDigest: "sha256:0f74f907a7a7a7df1dd753e07fd6edac062bb6f69aee494101f00015ca017559"
+        changedReleaseManifestDigest: "sha256:9f89dabe95a5b4ba83ced395d81d11c5443006f098ea3a2af9448c005462e8c4"
     waves:
       -
         wave: 1
@@ -983,26 +1258,26 @@ spec:
         clusters:
           -
             cluster: "hx-sveltos-env-pilot"
-            releaseManifestDigest: "sha256:b309ed9d4429cf0c9786d344b9c6cd8a95489443d1b0ef8525ee88cb4ad70767"
+            releaseManifestDigest: "sha256:1c4e2d25fed05bab963cc3bb7a94b4c9a5a5ef09040eda70989dca32e19541d9"
       -
         wave: 2
         environment: "staging"
         clusters:
           -
             cluster: "hx-sveltos-env-staging"
-            releaseManifestDigest: "sha256:bad5e795bd2d58954b242dfdd5b010daf2b0cf202ff2354f77984204dab7001b"
+            releaseManifestDigest: "sha256:b228b240cbc3e1aa3afcd399b32112a4e89cf4eebaadce5e719d2b003da628cf"
       -
         wave: 3
         environment: "prod"
         clusters:
           -
             cluster: "hx-sveltos-env-prod-a"
-            releaseManifestDigest: "sha256:e7d752ba6ddbe2d6787d60253d1d30171955d8487859104d93069b0c6ad17740"
+            releaseManifestDigest: "sha256:b369e8cf46d2bd7d60d61ae619d25f6603764507ad2074d4fee38fa5cd1c1370"
           -
             cluster: "hx-sveltos-env-prod-b"
-            releaseManifestDigest: "sha256:dd39be5dc38bbdb6c98925b641c57e0bb8a7db7edac4ca5e3429ed3b11c31bec"
+            releaseManifestDigest: "sha256:9f89dabe95a5b4ba83ced395d81d11c5443006f098ea3a2af9448c005462e8c4"
   fleet:
-    managementCluster: "hx-sveltos-envmgmt-20260821140804"
+    managementCluster: "hx-sveltos-envmgmt-20260926190447"
     creationCommand: "kind create cluster"
     managementRegistration:
       method: "programmatic SveltosCluster registration of the management cluster"
@@ -1022,7 +1297,7 @@ spec:
         method: "programmatic SveltosCluster registration"
         namespace: "projectsveltos"
         cluster: "hx-sveltos-env-pilot"
-        kindCluster: "hx-sveltos-env-pilot-20260821140804"
+        kindCluster: "hx-sveltos-env-pilot-20260926190447"
         labels:
           environment: "pilot"
           sveltos-agent: "present"
@@ -1037,7 +1312,7 @@ spec:
         method: "programmatic SveltosCluster registration"
         namespace: "projectsveltos"
         cluster: "hx-sveltos-env-staging"
-        kindCluster: "hx-sveltos-env-staging-20260821140804"
+        kindCluster: "hx-sveltos-env-staging-20260926190447"
         labels:
           environment: "staging"
           sveltos-agent: "present"
@@ -1052,7 +1327,7 @@ spec:
         method: "programmatic SveltosCluster registration"
         namespace: "projectsveltos"
         cluster: "hx-sveltos-env-prod-a"
-        kindCluster: "hx-sveltos-env-prod-a-20260821140804"
+        kindCluster: "hx-sveltos-env-prod-a-20260926190447"
         labels:
           environment: "prod"
           sveltos-agent: "present"
@@ -1067,7 +1342,7 @@ spec:
         method: "programmatic SveltosCluster registration"
         namespace: "projectsveltos"
         cluster: "hx-sveltos-env-prod-b"
-        kindCluster: "hx-sveltos-env-prod-b-20260821140804"
+        kindCluster: "hx-sveltos-env-prod-b-20260926190447"
         labels:
           environment: "prod"
           sveltos-agent: "present"
@@ -1084,7 +1359,7 @@ spec:
       completedWaves: 0
       observations:
         -
-          cluster: "hx-sveltos-env-pilot-20260821140804"
+          cluster: "hx-sveltos-env-pilot-20260926190447"
           logicalCluster: "hx-sveltos-env-pilot"
           environment: "pilot"
           expectedRevisionId: "r1-b93243ea8e14"
@@ -1133,7 +1408,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-staging-20260821140804"
+          cluster: "hx-sveltos-env-staging-20260926190447"
           logicalCluster: "hx-sveltos-env-staging"
           environment: "staging"
           expectedRevisionId: "r1-072923eeaa54"
@@ -1182,7 +1457,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          cluster: "hx-sveltos-env-prod-a-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-a"
           environment: "prod"
           expectedRevisionId: "r1-a3686db9f046"
@@ -1231,7 +1506,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          cluster: "hx-sveltos-env-prod-b-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-b"
           environment: "prod"
           expectedRevisionId: "r1-5eafaf9b10e5"
@@ -1284,7 +1559,7 @@ spec:
       completedWaves: 1
       observations:
         -
-          cluster: "hx-sveltos-env-pilot-20260821140804"
+          cluster: "hx-sveltos-env-pilot-20260926190447"
           logicalCluster: "hx-sveltos-env-pilot"
           environment: "pilot"
           expectedRevisionId: "r2-ed215f0c9741"
@@ -1333,7 +1608,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-staging-20260821140804"
+          cluster: "hx-sveltos-env-staging-20260926190447"
           logicalCluster: "hx-sveltos-env-staging"
           environment: "staging"
           expectedRevisionId: "r1-072923eeaa54"
@@ -1382,7 +1657,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          cluster: "hx-sveltos-env-prod-a-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-a"
           environment: "prod"
           expectedRevisionId: "r1-a3686db9f046"
@@ -1431,7 +1706,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          cluster: "hx-sveltos-env-prod-b-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-b"
           environment: "prod"
           expectedRevisionId: "r1-5eafaf9b10e5"
@@ -1484,7 +1759,7 @@ spec:
       completedWaves: 2
       observations:
         -
-          cluster: "hx-sveltos-env-pilot-20260821140804"
+          cluster: "hx-sveltos-env-pilot-20260926190447"
           logicalCluster: "hx-sveltos-env-pilot"
           environment: "pilot"
           expectedRevisionId: "r2-ed215f0c9741"
@@ -1533,7 +1808,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-staging-20260821140804"
+          cluster: "hx-sveltos-env-staging-20260926190447"
           logicalCluster: "hx-sveltos-env-staging"
           environment: "staging"
           expectedRevisionId: "r2-c6651525c7f3"
@@ -1582,7 +1857,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          cluster: "hx-sveltos-env-prod-a-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-a"
           environment: "prod"
           expectedRevisionId: "r1-a3686db9f046"
@@ -1631,7 +1906,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          cluster: "hx-sveltos-env-prod-b-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-b"
           environment: "prod"
           expectedRevisionId: "r1-5eafaf9b10e5"
@@ -1684,7 +1959,7 @@ spec:
       completedWaves: 3
       observations:
         -
-          cluster: "hx-sveltos-env-pilot-20260821140804"
+          cluster: "hx-sveltos-env-pilot-20260926190447"
           logicalCluster: "hx-sveltos-env-pilot"
           environment: "pilot"
           expectedRevisionId: "r2-ed215f0c9741"
@@ -1733,7 +2008,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-staging-20260821140804"
+          cluster: "hx-sveltos-env-staging-20260926190447"
           logicalCluster: "hx-sveltos-env-staging"
           environment: "staging"
           expectedRevisionId: "r2-c6651525c7f3"
@@ -1782,7 +2057,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-a-20260821140804"
+          cluster: "hx-sveltos-env-prod-a-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-a"
           environment: "prod"
           expectedRevisionId: "r2-d00434703da3"
@@ -1831,7 +2106,7 @@ spec:
                 available: 1
                 observedGenerationMatches: true
         -
-          cluster: "hx-sveltos-env-prod-b-20260821140804"
+          cluster: "hx-sveltos-env-prod-b-20260926190447"
           logicalCluster: "hx-sveltos-env-prod-b"
           environment: "prod"
           expectedRevisionId: "r2-126b6338a471"
@@ -1884,7 +2159,7 @@ spec:
     expectedBackgroundReplicas: 2
     clusters:
       -
-        cluster: "hx-sveltos-env-pilot-20260821140804"
+        cluster: "hx-sveltos-env-pilot-20260926190447"
         logicalCluster: "hx-sveltos-env-pilot"
         environment: "pilot"
         expectedReplicas:
@@ -1927,7 +2202,7 @@ spec:
               available: 1
               observedGenerationMatches: true
       -
-        cluster: "hx-sveltos-env-staging-20260821140804"
+        cluster: "hx-sveltos-env-staging-20260926190447"
         logicalCluster: "hx-sveltos-env-staging"
         environment: "staging"
         expectedReplicas:
@@ -1970,7 +2245,7 @@ spec:
               available: 1
               observedGenerationMatches: true
       -
-        cluster: "hx-sveltos-env-prod-a-20260821140804"
+        cluster: "hx-sveltos-env-prod-a-20260926190447"
         logicalCluster: "hx-sveltos-env-prod-a"
         environment: "prod"
         expectedReplicas:
@@ -2013,7 +2288,7 @@ spec:
               available: 1
               observedGenerationMatches: true
       -
-        cluster: "hx-sveltos-env-prod-b-20260821140804"
+        cluster: "hx-sveltos-env-prod-b-20260926190447"
         logicalCluster: "hx-sveltos-env-prod-b"
         environment: "prod"
         expectedReplicas:
@@ -2063,60 +2338,73 @@ spec:
       managementCluster: "kept"
       workloadClusters: "kept"
       policySpaces: "kept"
+      components: "kept"
       localFiles: "pass"
     kept:
       -
         kind: "kind cluster"
-        name: "hx-sveltos-envmgmt-20260821140804"
-        removeWith: "kind delete cluster --name hx-sveltos-envmgmt-20260821140804"
+        name: "hx-sveltos-envmgmt-20260926190447"
+        removeWith: "kind delete cluster --name hx-sveltos-envmgmt-20260926190447"
       -
         kind: "kind cluster"
-        name: "hx-sveltos-env-pilot-20260821140804"
-        removeWith: "kind delete cluster --name hx-sveltos-env-pilot-20260821140804"
+        name: "hx-sveltos-env-pilot-20260926190447"
+        removeWith: "kind delete cluster --name hx-sveltos-env-pilot-20260926190447"
       -
         kind: "kind cluster"
-        name: "hx-sveltos-env-staging-20260821140804"
-        removeWith: "kind delete cluster --name hx-sveltos-env-staging-20260821140804"
+        name: "hx-sveltos-env-staging-20260926190447"
+        removeWith: "kind delete cluster --name hx-sveltos-env-staging-20260926190447"
       -
         kind: "kind cluster"
-        name: "hx-sveltos-env-prod-a-20260821140804"
-        removeWith: "kind delete cluster --name hx-sveltos-env-prod-a-20260821140804"
+        name: "hx-sveltos-env-prod-a-20260926190447"
+        removeWith: "kind delete cluster --name hx-sveltos-env-prod-a-20260926190447"
       -
         kind: "kind cluster"
-        name: "hx-sveltos-env-prod-b-20260821140804"
-        removeWith: "kind delete cluster --name hx-sveltos-env-prod-b-20260821140804"
+        name: "hx-sveltos-env-prod-b-20260926190447"
+        removeWith: "kind delete cluster --name hx-sveltos-env-prod-b-20260926190447"
       -
         kind: "ConfigHub Space"
-        name: "hx-sveltos-env-base-20260821140804"
-        removeWith: "cub space delete hx-sveltos-env-base-20260821140804 --recursive-force"
+        name: "hx-sveltos-env-pilot-20260926190447"
+        removeWith: "cub space delete hx-sveltos-env-pilot-20260926190447 --recursive-force"
       -
         kind: "ConfigHub Space"
-        name: "hx-sveltos-env-pilot-20260821140804"
-        removeWith: "cub space delete hx-sveltos-env-pilot-20260821140804 --recursive-force"
+        name: "hx-sveltos-env-staging-20260926190447"
+        removeWith: "cub space delete hx-sveltos-env-staging-20260926190447 --recursive-force"
       -
         kind: "ConfigHub Space"
-        name: "hx-sveltos-env-staging-20260821140804"
-        removeWith: "cub space delete hx-sveltos-env-staging-20260821140804 --recursive-force"
+        name: "hx-sveltos-env-prod-a-20260926190447"
+        removeWith: "cub space delete hx-sveltos-env-prod-a-20260926190447 --recursive-force"
       -
         kind: "ConfigHub Space"
-        name: "hx-sveltos-env-prod-a-20260821140804"
-        removeWith: "cub space delete hx-sveltos-env-prod-a-20260821140804 --recursive-force"
+        name: "hx-sveltos-env-prod-b-20260926190447"
+        removeWith: "cub space delete hx-sveltos-env-prod-b-20260926190447 --recursive-force"
       -
         kind: "ConfigHub Space"
-        name: "hx-sveltos-env-prod-b-20260821140804"
-        removeWith: "cub space delete hx-sveltos-env-prod-b-20260821140804 --recursive-force"
+        name: "hx-sveltos-env-mgmt-20260926190447"
+        removeWith: "cub space delete hx-sveltos-env-mgmt-20260926190447 --recursive-force"
       -
         kind: "ConfigHub Space"
-        name: "hx-sveltos-env-mgmt-20260821140804"
-        removeWith: "cub space delete hx-sveltos-env-mgmt-20260821140804 --recursive-force"
+        name: "hx-sveltos-env-base-20260926190447"
+        removeWith: "cub space delete hx-sveltos-env-base-20260926190447 --recursive-force"
+      -
+        kind: "ConfigHub Component"
+        name: "sveltos-kyverno-env-rollout-20260926190447"
+        removeWith: "cub component delete sveltos-kyverno-env-rollout-20260926190447"
+      -
+        kind: "ConfigHub Component"
+        name: "sveltos-kyverno-env-rollout-management-20260926190447"
+        removeWith: "cub component delete sveltos-kyverno-env-rollout-management-20260926190447"
   limits:
     - "The pinned Sveltos controllers were installed directly as a prerequisite on the throwaway management cluster."
     - "The reviewed ClusterProfiles, not the Sveltos controller installation, were delivered through ConfigHub and its OCI gateway."
     - "The management record was applied out of band with kubectl, because it is the record that opens the gateway path."
-    - "The gateway serves each release as a gzipped tar layer, so the run needs an addon controller that gunzips. The image it ran is recorded above."
+    - "The gateway serves each release as a gzipped tar layer, and the pinned release's own addon controller gunzips it, so the run installed the manifest's images as released. The image it ran is recorded above."
     - "The management cluster read the gateway with the operator's own ConfigHub token, taken once at the start of the run and removed with the clusters."
     - "The proof used four local kind workload clusters. It does not prove a large production fleet or a failure-and-pause rollout."
     - "The proof covers one reviewed values change to this Kyverno base, not a chart version bump."
+    - "The ChangeWorkflow declares Released and not Healthy, because nothing reports Sveltos's view of a cluster to ConfigHub yet. The observed-health evidence is the runner's own checkpoints."
+    - "This single-operator demo relaxes separation of duties: its approval requirement sets AllowAuthors: true, so the operator who promoted a change may also approve it. A production workflow sets AllowAuthors: false and has a second approver sign off, because ConfigHub counts whoever promoted a change into a Space as one of its authors there and does not count an author's approval."
+    - "Declared on the run's component to state that its promotions and releases go through this workflow. Measured on 2026-09-26, ConfigHub does not yet refuse a plain publish of one of its Spaces outside a change order, so every release in this run goes through a change order because the runner sends it there, not because the server would refuse the other path."
+    - "The management record is applied out of band with kubectl, because it is what opens the gateway path, and no release of it is published, so no release gate reads its approval. It is recorded as an attestation all the same, and nothing server-side gates it."
 status:
   result: "pass"
-  claim: "ConfigHub held one variant per cluster over a shared base, each carrying its own departures, and one reviewed change made on the base was inherited wave by wave. Each wave selected its variants with one query and approved that set in one operation, and every approval bound one cluster's record to its own exact revision. Each approved revision was published as a release the ConfigHub OCI gateway serves, Sveltos fetched each release itself, and every cluster converged on its own reviewed state with its departures intact, with the clusters outside the wave verified stable at every checkpoint."
+  claim: "ConfigHub held one variant per cluster over a shared base, each carrying its own departures and its environment as its stage, and released every variant's baseline through a change order of its own, so every release that reached a cluster passed the approval gate. One reviewed change made on the base was captured by one change order under a ChangeWorkflow. ConfigHub refused to promote that change into staging before pilot had released it, then promoted it stage by stage, pilot, staging, and production, each stage entered only once the stage ahead had released it. In every stage ConfigHub refused the release until the change as it stood there was approved, the approval was recorded as an attestation on that exact revision in one operation for the stage, and each variant then published the release the change order arrived at. The single-operator run relaxed separation of duties and says so. The ConfigHub OCI gateway served each release, Sveltos fetched it itself, and every cluster converged on its own reviewed state with its departures intact, with the clusters outside the wave verified stable at every checkpoint."
