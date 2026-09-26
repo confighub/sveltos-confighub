@@ -93,9 +93,12 @@ These were each paid for once so you do not have to.
   repository names do not admit uppercase, so an uppercase run stamp makes a
   Space unpublishable.
 - **The gateway serves gzipped layers**, so the addon controller needs the
-  gzip fix: `projectsveltos/addon-controller:v1.13.0-ch` until it ships in a
-  release. Stock v1.13.0 fails with "failed to decode k8s resource" on the
-  same profile. Every receipt records the image its run used.
+  gzip fix. Stock v1.13.0 fails with "failed to decode k8s resource" on the
+  same profile, which is why every gateway recording so far ran the
+  `projectsveltos/addon-controller:v1.13.0-ch` build. The fix shipped in
+  Sveltos v1.14.0, and chapter three now pins the released v1.15.0 and runs
+  its stock controller; its re-record will be the first on a released
+  controller. Every receipt records the image its run used.
 - **The gateway auth secret must be typed** `addons.projectsveltos.io/cluster-profile`
   with the token under the `token` key; an Opaque secret is rejected. The
   ORAS client is HTTPS-only.
@@ -229,7 +232,8 @@ ChangeWorkflows, and that design awaits its live re-record. Its `Healthy`
 gate waits on a Sveltos status reporter
 ([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and on
 ConfigHub recognising the provider (confighubai/confighub#5049).
-What else waits is an upstream release
-([#2](https://github.com/confighub/sveltos-confighub/issues/2)): the gateway
-serves gzipped layers, the recordings used the gzip-capable addon controller
-build, and the chapters re-record when that fix ships in a Sveltos release.
+The gzip fix the recordings needed has shipped in a Sveltos release
+([#2](https://github.com/confighub/sveltos-confighub/issues/2)): chapter
+three now pins the released v1.15.0 and re-records on it together with its
+ChangeWorkflows. The other chapters still pin v1.13.0, and their recordings
+name the gzip-capable v1.13.0-ch build until they re-record on a release.

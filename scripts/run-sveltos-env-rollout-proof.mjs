@@ -35,7 +35,10 @@ import {
   writeStoredDocuments,
   preloadSveltosImages,
   knownCubCommand,
+  manifestImages,
   runScopedComponents,
+  sveltosAgentPreloaded,
+  sveltosPreloadList,
   unknownCubFlag,
 } from "./lib/per-cluster-fleet.mjs";
 import {
@@ -322,6 +325,7 @@ function run() {
   const plan = loadRolloutPlan();
   const sveltos = loadSveltosPin();
   const addonControllerImage = resolveAddonControllerImage(sveltos);
+  assertAddonControllerFitsPin(sveltos, addonControllerImage);
 
   const topology = readApprovalTopology(policyContext);
 
@@ -397,6 +401,9 @@ function run() {
     for (const row of [managementName, ...fleetClusters.map((item) => item.cluster)]) {
       check(!clusterPresent(row), `refusing to reuse the kind cluster ${row}`);
     }
+    // The pinned manifest is fetched and checked against the lock before any
+    // cluster exists, because its own image lines are the preload list.
+    const pinnedManifest = fetchPinnedManifest({ workRoot, sveltos });
 
     createCluster(managementName, managementKubeconfig);
     managementStarted = true;
@@ -410,19 +417,24 @@ function run() {
     cleanup.results.workloadClusters = "pending";
     phase("four workload clusters ready");
 
-    preloadSveltosImages({
+    const preloadedImages = preloadSveltosImages({
       clusters: [managementName, ...fleetClusters.map((row) => row.cluster)],
       version: sveltos.version,
       addonControllerImage,
+      images: manifestImages(pinnedManifest),
     });
-    phase("the Sveltos images loaded into every cluster from the local daemon");
+    phase(`the ${preloadedImages.length} images the pinned manifest names loaded into every cluster from the local daemon`);
 
-    const sveltosInstall = installSveltos({
-      managementKubeconfig,
-      workRoot,
-      sveltos,
-      addonControllerImage,
-    });
+    const sveltosInstall = {
+      ...installSveltos({
+        managementKubeconfig,
+        workRoot,
+        sveltos,
+        addonControllerImage,
+        pinnedManifest,
+      }),
+      imagePreload: imagePreloadRecord(sveltos, preloadedImages),
+    };
     phase(`Sveltos controllers converged on ${sveltosInstall.addonControllerImage}`);
 
     const registrations = fleetClusters.map((row) =>
@@ -1105,28 +1117,83 @@ function baselineQuery(plan, runId) {
 }
 
 // Chapter three pins its own Sveltos release, because it runs the gateway
-// fetch path the earlier chapters were recorded without.
+// fetch path the earlier chapters were recorded without. The lock also says
+// whether that release's own addon controller reads the gateway's gzipped
+// layers, which decides whether a run may override the controller image.
 function loadSveltosPin(path = sourceLockPath) {
   const lock = readYaml(path);
   const sveltos = lock.spec?.sveltos ?? {};
   check(
     lock.kind === "SveltosEnvRolloutLock"
+      && /^v\d+\.\d+\.\d+$/.test(String(sveltos.version ?? ""))
       && /^[0-9a-f]{64}$/.test(String(sveltos.manifestSha256))
-      && String(sveltos.manifestUrl ?? "").includes(String(sveltos.version ?? " ")),
-    "the environment rollout lock lost its Sveltos pin",
+      && String(sveltos.manifestUrl ?? "").includes(String(sveltos.version ?? " "))
+      && typeof sveltos.releasedControllerReadsGatewayLayers === "boolean",
+    "the environment rollout lock lost its Sveltos pin or its word on whether the released addon controller reads the gateway's layers",
   );
   return {
     version: String(sveltos.version),
     manifestUrl: String(sveltos.manifestUrl),
     manifestSha256: String(sveltos.manifestSha256),
+    releasedControllerReadsGatewayLayers:
+      sveltos.releasedControllerReadsGatewayLayers,
+  };
+}
+
+function pinnedAddonControllerImage(sveltos) {
+  return `${addonControllerRepository}:${sveltos.version}`;
+}
+
+// A pin whose released addon controller reads the gateway's layers runs that
+// controller as released, and its receipt says so. An override there would
+// record a run the verifier refuses, so the run refuses it before building
+// anything. The override mechanism itself stays, for a pin that needs it.
+function assertAddonControllerFitsPin(sveltos, addonControllerImage) {
+  check(
+    !sveltos.releasedControllerReadsGatewayLayers
+      || addonControllerImage === pinnedAddonControllerImage(sveltos),
+    `the pinned Sveltos ${sveltos.version} addon controller reads the gateway's gzipped layers itself, so this chapter runs ${pinnedAddonControllerImage(sveltos)} as released; unset SVELTOS_ADDON_CONTROLLER_IMAGE rather than record an override this pin does not need`,
+  );
+}
+
+// The pinned manifest, fetched once and checked against the lock before a
+// byte of it is used: its image lines are the preload list, and its text is
+// what the install applies.
+function fetchPinnedManifest({ workRoot, sveltos }) {
+  const manifestPath = join(workRoot, "sveltos-manifest.yaml");
+  command("curl", ["-fsSL", sveltos.manifestUrl, "-o", manifestPath], {
+    timeout: 180_000,
+  });
+  const downloaded = readFileSync(manifestPath, "utf8");
+  // The pin covers the bytes upstream published, so it is checked before the
+  // image substitution rewrites any of them.
+  check(
+    sha256(downloaded) === sveltos.manifestSha256,
+    "the downloaded Sveltos manifest differs from the source lock",
+  );
+  return downloaded;
+}
+
+// What the receipt says about the preload: that the list came from the pinned
+// manifest's own image lines, and what happened to the sveltos-agent, which
+// no manifest line names because Sveltos deploys it into each workload
+// cluster itself.
+function imagePreloadRecord(sveltos, images) {
+  return {
+    source: "the image lines of the pinned manifest",
+    images,
+    sveltosAgent: sveltosAgentPreloaded(sveltos.version)
+      ? "preloaded by the digest the shared fleet library pins for this version"
+      : `not preloaded: no sveltos-agent digest is recorded for ${sveltos.version}, so each workload node pulls the agent directly by the digest Sveltos deploys it with`,
   };
 }
 
 // The gateway serves each release as a gzipped tar layer, so this run needs an
-// addon controller that gunzips. The pinned image is the default, and an
-// operator holding the build with the gzip fix names it in the environment.
+// addon controller that gunzips. The pinned image is the default. For a pin
+// whose released controller does not gunzip, an operator holding a build with
+// the fix names it in the environment.
 function resolveAddonControllerImage(sveltos) {
-  const pinnedImage = `${addonControllerRepository}:${sveltos.version}`;
+  const pinnedImage = pinnedAddonControllerImage(sveltos);
   const override = process.env.SVELTOS_ADDON_CONTROLLER_IMAGE?.trim() ?? "";
   if (!override) return pinnedImage;
   check(
@@ -2003,7 +2070,9 @@ function buildReceipt({
         "The pinned Sveltos controllers were installed directly as a prerequisite on the throwaway management cluster.",
         "The reviewed ClusterProfiles, not the Sveltos controller installation, were delivered through ConfigHub and its OCI gateway.",
         "The management record was applied out of band with kubectl, because it is the record that opens the gateway path.",
-        "The gateway serves each release as a gzipped tar layer, so the run needs an addon controller that gunzips. The image it ran is recorded above.",
+        sveltosInstall.addonControllerImageOverridden
+          ? "The gateway serves each release as a gzipped tar layer, and the pinned release's addon controller does not gunzip, so the run replaced it with a build that does. The image it ran is recorded above."
+          : "The gateway serves each release as a gzipped tar layer, and the pinned release's own addon controller gunzips it, so the run installed the manifest's images as released. The image it ran is recorded above.",
         "The management cluster read the gateway with the operator's own ConfigHub token, taken once at the start of the run and removed with the clusters.",
         "The proof used four local kind workload clusters. It does not prove a large production fleet or a failure-and-pause rollout.",
         "The proof covers one reviewed values change to this Kyverno base, not a chart version bump.",
@@ -2696,6 +2765,32 @@ function verifyGatewayDelivery(receipt, plan) {
       === receipt.spec?.prerequisite?.addonControllerImage,
     "the receipt must record the addon controller image the run used",
   );
+  // Pin-aware: a pin whose released controller reads the gateway's layers
+  // must have run that controller as released. A receipt recorded on the
+  // v1.13.0 pin with the v1.13.0-ch build predates this check and is
+  // recognised before any check here is reached.
+  const sveltos = loadSveltosPin();
+  if (sveltos.releasedControllerReadsGatewayLayers) {
+    check(
+      receipt.spec.prerequisite.addonControllerImage
+        === pinnedAddonControllerImage(sveltos)
+        && receipt.spec.prerequisite.addonControllerImageOverridden === false,
+      `the pinned Sveltos ${sveltos.version} addon controller reads the gateway's layers itself, so the run must record ${pinnedAddonControllerImage(sveltos)} as released and not overridden`,
+    );
+  }
+  const preload = receipt.spec.prerequisite.imagePreload ?? {};
+  const preloaded = preload.images ?? [];
+  check(
+    preload.source === "the image lines of the pinned manifest"
+      && preloaded.length > 0
+      && preloaded.includes(receipt.spec.prerequisite.addonControllerImage)
+      && preloaded.every((image) =>
+        image === receipt.spec.prerequisite.addonControllerImage
+        || image.includes("@sha256:")
+        || image.endsWith(`:${sveltos.version}`))
+      && String(preload.sveltosAgent ?? "").length > 0,
+    `the receipt must record the images preloaded from the pinned manifest, each at ${sveltos.version}, and what happened to the sveltos-agent`,
+  );
   const digests = [];
   for (const row of plan.clusters) {
     const record = delivery.clusters?.[row.cluster] ?? {};
@@ -2998,7 +3093,7 @@ function waitForRemoteDeploy({
         };
         check(
           !looksLikeGzipDecodeFailure(failureMessage),
-          `the addon controller could not read the ${cluster} release: it decoded gzipped bytes as YAML. The gateway serves each release as a gzipped tar layer, so this run needs an addon controller that gunzips. Set SVELTOS_ADDON_CONTROLLER_IMAGE to that build and see ${probeRecord}.`,
+          `the addon controller could not read the ${cluster} release: it decoded gzipped bytes as YAML. The gateway serves each release as a gzipped tar layer, so this run needs an addon controller that gunzips, which released Sveltos does from v1.14.0; check the image the run installed against the pin in ${relativeRepo(sourceLockPath)} and see ${probeRecord}.`,
         );
         check(
           feature.status !== "Failed",
@@ -3150,19 +3245,16 @@ function installSveltos({
   workRoot,
   sveltos,
   addonControllerImage,
+  pinnedManifest,
 }) {
-  const manifestPath = join(workRoot, "sveltos-manifest.yaml");
-  command("curl", ["-fsSL", sveltos.manifestUrl, "-o", manifestPath], {
-    timeout: 180_000,
-  });
-  const downloaded = readFileSync(manifestPath, "utf8");
-  // The pin covers the bytes upstream published, so it is checked before the
-  // image substitution rewrites any of them.
+  // A run fetches the manifest before building anything and hands it in; a
+  // caller that has not fetched it gets the same checked fetch here.
+  const downloaded = pinnedManifest ?? fetchPinnedManifest({ workRoot, sveltos });
   check(
     sha256(downloaded) === sveltos.manifestSha256,
     "the downloaded Sveltos manifest differs from the source lock",
   );
-  const pinnedImage = `${addonControllerRepository}:${sveltos.version}`;
+  const pinnedImage = pinnedAddonControllerImage(sveltos);
   const overridden = addonControllerImage !== pinnedImage;
   // The substitution matches whole image lines. A plain string replacement
   // would also fire inside a longer tag, and the build carrying the gzip fix
@@ -3821,18 +3913,40 @@ function selfTest() {
     );
 
     // The pin this chapter reads, and the controller image rule the gateway
-    // forces on top of it.
+    // forces on top of it. The checks read the lock rather than naming a
+    // version, the way the rehearsal checks its own pin.
     const sveltos = loadSveltosPin();
-    const pinnedImage = `${addonControllerRepository}:${sveltos.version}`;
+    const pinnedImage = pinnedAddonControllerImage(sveltos);
     check(
-      sveltos.version === "v1.13.0"
+      /^v\d+\.\d+\.\d+$/.test(sveltos.version)
         && sveltos.manifestUrl.includes(sveltos.version)
-        && /^[0-9a-f]{64}$/.test(sveltos.manifestSha256),
+        && /^[0-9a-f]{64}$/.test(sveltos.manifestSha256)
+        && typeof sveltos.releasedControllerReadsGatewayLayers === "boolean",
       "the chapter three Sveltos pin lost its shape",
+    );
+    // The committed pin is a release whose own controller reads the gateway's
+    // layers, so the run records it as released and never overrides it.
+    check(
+      sveltos.releasedControllerReadsGatewayLayers === true
+        && pinnedImage === `${addonControllerRepository}:${sveltos.version}`,
+      "the chapter three pin must be a release whose addon controller reads the gateway's layers",
     );
     check(
       resolveAddonControllerImage(sveltos) === pinnedImage,
       "the default addon controller image no longer follows the pin",
+    );
+    const overrideImage = `${pinnedImage}-ch`;
+    assertAddonControllerFitsPin(sveltos, pinnedImage);
+    expectFailure(
+      () => assertAddonControllerFitsPin(sveltos, overrideImage),
+      /reads the gateway's gzipped layers itself, so this chapter runs .* as released; unset SVELTOS_ADDON_CONTROLLER_IMAGE/,
+      "override on a pin whose released controller reads the layers",
+    );
+    // A pin whose released controller does not read the layers, as v1.13.0's
+    // did not, still takes the override; the mechanism stays for that case.
+    assertAddonControllerFitsPin(
+      { ...sveltos, releasedControllerReadsGatewayLayers: false },
+      overrideImage,
     );
     expectFailure(
       () => installSveltos({
@@ -3847,13 +3961,59 @@ function selfTest() {
 
     // A small pinned manifest exercises the install path and the image
     // override without downloading twenty thousand lines.
-    const overrideImage = `${addonControllerRepository}:v1.13.0-ch`;
-    download.bytes = fakeSveltosManifest(pinnedImage);
+    download.bytes = fakeSveltosManifest(pinnedImage, sveltos.version);
     const syntheticPin = {
       version: sveltos.version,
       manifestUrl: sveltos.manifestUrl,
       manifestSha256: sha256(download.bytes),
+      releasedControllerReadsGatewayLayers: false,
     };
+    // The preload list is the manifest's own image lines: every controller it
+    // names, the one the hardcoded list never knew included, with the pinned
+    // addon controller swapped for the image the lane runs, and no agent
+    // digest invented for a version that has none recorded.
+    const pinnedManifest = fetchPinnedManifest({ workRoot, sveltos: syntheticPin });
+    const fromManifest = manifestImages(pinnedManifest);
+    check(
+      fromManifest.length === 2
+        && fromManifest.includes(pinnedImage)
+        && fromManifest.includes(`docker.io/projectsveltos/register-mgmt-cluster:${sveltos.version}`),
+      "the manifest's image lines must be read once each",
+    );
+    const releasedPreload = sveltosPreloadList({
+      version: sveltos.version,
+      addonControllerImage: pinnedImage,
+      images: fromManifest,
+    });
+    const overriddenPreload = sveltosPreloadList({
+      version: sveltos.version,
+      addonControllerImage: overrideImage,
+      images: fromManifest,
+    });
+    check(
+      sameSet(releasedPreload, fromManifest)
+        && overriddenPreload.includes(overrideImage)
+        && !overriddenPreload.includes(pinnedImage)
+        && sveltosAgentPreloaded(sveltos.version) === false
+        && !releasedPreload.some((image) => image.includes("sveltos-agent")),
+      "the preload must be exactly the pinned manifest's images, with no agent digest invented",
+    );
+    // The other chapters pass no manifest and keep the list they always had.
+    const legacyPreload = sveltosPreloadList({
+      version: "v1.13.0",
+      addonControllerImage: `${addonControllerRepository}:v1.13.0-ch`,
+    });
+    check(
+      legacyPreload.length === 10
+        && legacyPreload.includes(`${addonControllerRepository}:v1.13.0-ch`)
+        && legacyPreload.some((image) => image.includes("sveltos-agent@sha256:"))
+        && !legacyPreload.some((image) => image.includes("register-mgmt-cluster")),
+      "the v1.13.0 chapters' preload list must stay exactly as it was",
+    );
+    check(
+      imagePreloadRecord(sveltos, releasedPreload).sveltosAgent.startsWith("not preloaded"),
+      "the receipt must say the agent is pulled by the nodes when no digest is recorded",
+    );
     const installed = installSveltos({
       managementKubeconfig,
       workRoot,
@@ -3871,7 +4031,7 @@ function selfTest() {
         && !cluster.appliedText().includes(`"${pinnedImage}"`),
       "the addon controller image override did not reach the applied manifest",
     );
-    download.bytes = fakeSveltosManifest("docker.io/projectsveltos/other:v1");
+    download.bytes = fakeSveltosManifest("docker.io/projectsveltos/other:v1", sveltos.version);
     expectFailure(
       () => installSveltos({
         managementKubeconfig,
@@ -4590,7 +4750,7 @@ function selfTest() {
       topology,
       managementName,
       managementRegistration,
-      sveltosInstall: fakeSveltosInstall(sveltos, overrideImage),
+      sveltosInstall: fakeSveltosInstall(sveltos, pinnedImage, releasedPreload),
       gatewayCredential,
       registrations,
       baseRecord,
@@ -4617,7 +4777,7 @@ function selfTest() {
         receipt.spec.variants[3].records[1].release.manifestDigest,
       )
         && summary.includes(`oci://${configHubOciHost}/space/`)
-        && summary.includes(overrideImage)
+        && summary.includes(pinnedImage)
         && summary.includes("Convergence audit")
         && summary.includes(gateRefusal.message)
         && summary.includes(changeOrder.slug)
@@ -4761,6 +4921,31 @@ function selfTest() {
       ["controller image disagreement", (c) => {
         c.spec.gatewayDelivery.addonControllerImage = `${addonControllerRepository}:v0.0.0`;
       }, /must record the addon controller image/],
+      ["controller overridden on a released pin", (c) => {
+        const override = `${pinnedImage}-ch`;
+        c.spec.prerequisite.addonControllerImage = override;
+        c.spec.prerequisite.addonControllerImageOverridden = true;
+        c.spec.gatewayDelivery.addonControllerImage = override;
+        c.spec.prerequisite.imagePreload.images = c.spec.prerequisite.imagePreload.images
+          .map((image) => (image === pinnedImage ? override : image));
+      }, /reads the gateway's layers itself, so the run must record .* as released and not overridden/],
+      ["controller marked overridden on a released pin", (c) => {
+        c.spec.prerequisite.addonControllerImageOverridden = true;
+      }, /as released and not overridden/],
+      ["the v1.13.0-ch build on the v1.15.0 pin", (c) => {
+        const historical = `${addonControllerRepository}:v1.13.0-ch`;
+        c.spec.prerequisite.addonControllerImage = historical;
+        c.spec.gatewayDelivery.addonControllerImage = historical;
+      }, /as released and not overridden/],
+      ["prerequisite on the old pin", (c) => { c.spec.prerequisite.version = "v1.13.0"; }, /prerequisite record changed/],
+      ["preload list dropped", (c) => { delete c.spec.prerequisite.imagePreload; }, /images preloaded from the pinned manifest/],
+      ["preload from another version", (c) => {
+        c.spec.prerequisite.imagePreload.images.push("docker.io/projectsveltos/classifier:v1.13.0");
+      }, /images preloaded from the pinned manifest, each at/],
+      ["preload without the controller that ran", (c) => {
+        c.spec.prerequisite.imagePreload.images = c.spec.prerequisite.imagePreload.images
+          .filter((image) => image !== pinnedImage);
+      }, /images preloaded from the pinned manifest/],
       ["fetch interval", (c) => { c.spec.gatewayDelivery.interval = "24h0m0s"; }, /gateway delivery contract changed/],
       ["gateway host", (c) => { c.spec.gatewayDelivery.host = "registry.example.com"; }, /gateway delivery contract changed/],
       ["secret type", (c) => { c.spec.gatewayDelivery.secret.type = "Opaque"; }, /requires a Secret of type/],
@@ -4885,7 +5070,7 @@ function selfTest() {
     }
 
     console.log(
-      "sveltos env rollout runner self-test passed: the 2026-09-26 ChangeWorkflow probe replayed against the fake hub, with the Released gate refusing in the server's own words and unknown flags and verbs refused; one base and five per-cluster variants each naming its own SveltosCluster, the base and its four variants in a run-scoped component with each variant's environment as its stage and the management Space in a component of its own, with the management-in-base, wrong-stage, and staged-base refusals; one workflow gated on Released and not Healthy; one change order headed for exactly the run's five Spaces, with another run's Space in its scope refused; the server refusing a promotion into staging before pilot released, and the runner refusing to record a skip the server allowed; the departure collision and clusterRefs-addressing refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, three stages promoted by ConfigHub with one set approval each and wave three approving two variants separately, each variant releasing where the change order arrived, a stage that is not the wave refused, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin and image override, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
+      "sveltos env rollout runner self-test passed: the 2026-09-26 ChangeWorkflow probe replayed against the fake hub, with the Released gate refusing in the server's own words and unknown flags and verbs refused; one base and five per-cluster variants each naming its own SveltosCluster, the base and its four variants in a run-scoped component with each variant's environment as its stage and the management Space in a component of its own, with the management-in-base, wrong-stage, and staged-base refusals; one workflow gated on Released and not Healthy; one change order headed for exactly the run's five Spaces, with another run's Space in its scope refused; the server refusing a promotion into staging before pilot released, and the runner refusing to record a skip the server allowed; the departure collision and clusterRefs-addressing refusals, the upstream link and its refusal, the component and owner labels the component view groups by, the severed-lineage refusal that a serialization change causes, the set query with its empty and over-broad refusals, three stages promoted by ConfigHub with one set approval each and wave three approving two variants separately, each variant releasing where the change order arrived, a stage that is not the wave refused, the silent departure win refusal, the evidence-gated advance with its unhealthy-cluster and incomplete-evidence refusals, the Sveltos pin read from the lock with its released controller run as released and an override refused on that pin, the preload list taken from the pinned manifest's own image lines with no agent digest invented, the image override mechanism kept for a pin that needs it, the lowercase Space and Secret type refusals the gateway imposes, the gate preflight pass and its refusal, nine approval brackets of which the eight workload ones are delivered through the gateway to a fake management cluster while the management record is applied out of band and publishes no release, the gzip fetch refusal, the queued apply-gate wait told apart from a refusing gate, the keep-alive cleanup record, and the receipt tamper battery",
     );
   } finally {
     commandRunner = realRunner;
@@ -5112,7 +5297,7 @@ function keptCleanup() {
 // The install path only needs a manifest with one CRD and one workload, so the
 // self-test writes a small one instead of pulling the pinned twenty thousand
 // lines over the network.
-function fakeSveltosManifest(image) {
+function fakeSveltosManifest(image, version) {
   return `apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -5134,6 +5319,18 @@ spec:
           image: ${image}
         - name: initialization
           image: ${image}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: register-mgmt-cluster-job
+  namespace: ${registrationNamespace}
+spec:
+  template:
+    spec:
+      containers:
+        - name: register-mgmt-cluster
+          image: docker.io/projectsveltos/register-mgmt-cluster:${version}
 `;
 }
 
@@ -5150,18 +5347,18 @@ function gzipDecodeFailureMessage(namesControlCharacters = true) {
   return `failed to decode k8s resource ${noise}${tail}`;
 }
 
-function fakeSveltosInstall(sveltos, addonControllerImage) {
+function fakeSveltosInstall(sveltos, addonControllerImage, preloadedImages) {
   return {
     source: sveltos.manifestUrl,
     version: sveltos.version,
     manifestSha256: sveltos.manifestSha256,
     addonControllerImage,
-    pinnedAddonControllerImage: `${addonControllerRepository}:${sveltos.version}`,
+    pinnedAddonControllerImage: pinnedAddonControllerImage(sveltos),
     addonControllerImageOverridden:
-      addonControllerImage !== `${addonControllerRepository}:${sveltos.version}`,
-    objectCount: 3,
+      addonControllerImage !== pinnedAddonControllerImage(sveltos),
+    objectCount: 4,
     crdCount: 1,
-    appliedObjectCount: 3,
+    appliedObjectCount: 4,
     omittedOptionalServiceMonitorCount: 0,
     deployments: [{
       name: "addon-controller",
@@ -5172,6 +5369,7 @@ function fakeSveltosInstall(sveltos, addonControllerImage) {
       observedGenerationMatches: true,
     }],
     installationMethod: "self-test fake surface",
+    imagePreload: imagePreloadRecord(sveltos, preloadedImages),
   };
 }
 

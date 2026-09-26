@@ -11,8 +11,21 @@ has released it.
 [Sveltos](https://projectsveltos.io) delivers the change and keeps each
 cluster reconciled; ConfigHub holds the reviewed records, gates them, and
 publishes each approved revision as an OCI image that Sveltos fetches. The
-runner pins Sveltos v1.13.0 and expects the addon controller build that
-decompresses gzipped layers, which the ConfigHub gateway serves.
+runner pins the released Sveltos v1.15.0, whose own addon controller
+decompresses the gzipped layers the ConfigHub gateway serves, so it runs that
+controller as released and refuses an image override. The committed
+recording ran Sveltos v1.13.0 with the `v1.13.0-ch` addon controller build,
+which carried the gzip fix before it shipped in v1.14.0, and its receipt
+names that image.
+
+The runner preloads exactly the images the pinned manifest names into every
+cluster, so a release that adds a controller cannot be pulled from Docker
+Hub halfway through a lane. The manifest's `register-mgmt-cluster` Job
+registers the management cluster as the unlabelled SveltosCluster
+`mgmt/mgmt`, as the v1.13.0 manifest did too. Nothing in this chapter
+selects it: the bootstrap profiles select the runner's own `role: management`
+registration, and each workload profile names its SveltosCluster through
+clusterRefs. The [lock](source-lock.yaml) records both of these.
 
 ## One variant per cluster
 
@@ -329,7 +342,6 @@ Spaces are created:
 ```bash
 HELM_EXPT_ALLOW_LIVE_SVELTOS_ENV_ROLLOUT=1 \
 CUB_CONTEXT=my-policy \
-SVELTOS_ADDON_CONTROLLER_IMAGE=docker.io/projectsveltos/addon-controller:v1.13.0-ch \
 npm run sveltos-env-rollout-proof:run
 
 # Then refresh the summary and the observed matrix columns.

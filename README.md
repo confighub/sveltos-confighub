@@ -23,13 +23,19 @@ cd sveltos-confighub
 npm run verify
 ```
 
-The runs in this repository pin **Sveltos v1.13.0**
-([manifest](examples/sveltos/env-rollout/source-lock.yaml)). Reading a
-release from the ConfigHub gateway additionally needs an addon controller
-that decompresses gzipped layers, which is
-`projectsveltos/addon-controller:v1.13.0-ch` until that fix ships in a
-release. The [gateway probe](docs/planning/remote-url-oci-probe.md) measured
-both, and every receipt records the image its run used.
+Reading a release from the ConfigHub gateway needs an addon controller that
+decompresses gzipped layers. Every committed recording that reads the
+gateway ran **Sveltos v1.13.0** with
+`projectsveltos/addon-controller:v1.13.0-ch`, a
+build carrying that fix before it shipped, and the
+[gateway probe](docs/planning/remote-url-oci-probe.md) measured that pair.
+The fix shipped in Sveltos v1.14.0, so chapter three now pins the released
+**Sveltos v1.15.0** ([lock](examples/sveltos/env-rollout/source-lock.yaml))
+and runs its stock `projectsveltos/addon-controller:v1.15.0` with no
+override; its live re-record will be the first recording on a released
+controller. The other chapters still pin v1.13.0 and name the v1.13.0-ch
+build until they re-record, and every receipt records the image its run
+used.
 
 This is the fleet companion to
 [kubara-confighub](https://github.com/confighub/kubara-confighub), which
@@ -259,12 +265,12 @@ then `cub auth login`. Confirm the approval wiring before building a fleet:
 CUB_CONTEXT=my-policy npm run sveltos-gate:probe
 ```
 
-Then record chapter three:
+Then record chapter three. It runs the released Sveltos v1.15.0 as
+published, so it takes no controller image override and refuses one:
 
 ```bash
 HELM_EXPT_ALLOW_LIVE_SVELTOS_ENV_ROLLOUT=1 \
 CUB_CONTEXT=my-policy \
-SVELTOS_ADDON_CONTROLLER_IMAGE=docker.io/projectsveltos/addon-controller:v1.13.0-ch \
 npm run sveltos-env-rollout-proof:run
 ```
 

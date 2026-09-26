@@ -112,10 +112,12 @@ gate waits longer, on a Sveltos status reporter
 ([#33](https://github.com/confighub/sveltos-confighub/issues/33)) and on
 ConfigHub recognising the provider (confighubai/confighub#5049), so the
 runner's checkpoint evidence stays the observed-health layer until then.
-The rest is not a run but a release: the gateway serves gzipped layers, so
-these recordings used an addon controller build that decompresses them,
-and each receipt names the image it used. When that fix ships in a Sveltos
-release, the chapters re-record against it.
+The gateway serves gzipped layers, so every chapter recording so far used an
+addon controller build that decompresses them, and each receipt names the
+image it used. That fix has since shipped in Sveltos v1.14.0. Chapter three now pins
+the released v1.15.0, so its re-record runs a released controller as
+published; the other chapters still pin v1.13.0 and name the v1.13.0-ch
+build until they re-record.
 
 Every drafted runner starts with a gate preflight: it creates a throwaway
 record, waits for the approval gate to attach, and refuses in seconds if it

@@ -225,19 +225,63 @@ export function runScopedComponents(componentLabel, runId) {
 // image however many clusters it builds. Kyverno's images come from ghcr.io
 // and are not throttled, so they are left alone. The agent image is pinned
 // by digest because Sveltos deploys it into workload clusters by digest.
+// Only v1.13.0's agent digest is known here. For a version without one the
+// agent is not preloaded: Sveltos deploys it into each workload cluster by
+// digest, digest pins stay out of the archive anyway (see below), and the
+// workload nodes pull it directly, which is what a receipt records rather
+// than a digest nobody measured.
 const sveltosAgentDigests = {
   "v1.13.0": "docker.io/projectsveltos/sveltos-agent@sha256:3f1fb4a8159b5acc6d77d117b8623bbacce0213e32d92ebdc7938d3fd97a3dca",
 };
 
-export function preloadSveltosImages({ clusters, version, addonControllerImage }) {
+export function sveltosAgentPreloaded(version) {
+  return Boolean(sveltosAgentDigests[version]);
+}
+
+// The image lines of a manifest, each image once, in the order they appear.
+export function manifestImages(text) {
   const images = [
-    ...[
-      "access-manager", "classifier", "event-manager", "healthcheck-manager",
-      "mcp-server", "shard-controller", "sveltoscluster-manager", "techsupport",
-    ].map((name) => `docker.io/projectsveltos/${name}:${version}`),
+    ...String(text).matchAll(/^[ \t]*image:[ \t]*["']?([^\s"']+)["']?[ \t]*$/gm),
+  ].map((match) => match[1]);
+  return [...new Set(images)];
+}
+
+// Which images a lane preloads. Given the pinned manifest's own image lines,
+// the list is exactly those, with the pinned addon controller replaced by the
+// image the lane runs, so a release that adds a controller cannot slip past
+// the preload and be pulled from Docker Hub mid-lane. Without them, the list
+// is the one every chapter pinned to v1.13.0 has always preloaded.
+export function sveltosPreloadList({ version, addonControllerImage, images }) {
+  const agent = sveltosAgentDigests[version] ? [sveltosAgentDigests[version]] : [];
+  if (!Array.isArray(images)) {
+    return [
+      ...[
+        "access-manager", "classifier", "event-manager", "healthcheck-manager",
+        "mcp-server", "shard-controller", "sveltoscluster-manager", "techsupport",
+      ].map((name) => `docker.io/projectsveltos/${name}:${version}`),
+      addonControllerImage,
+      ...agent,
+    ];
+  }
+  const pinnedAddonController = `docker.io/projectsveltos/addon-controller:${version}`;
+  return [...new Set([
+    ...images.map((image) =>
+      (image === pinnedAddonController ? addonControllerImage : image)),
+    ...agent,
+  ])];
+}
+
+export function preloadSveltosImages({
+  clusters,
+  version,
+  addonControllerImage,
+  images: pinnedManifestImages,
+}) {
+  const images = sveltosPreloadList({
+    version,
     addonControllerImage,
-    ...(sveltosAgentDigests[version] ? [sveltosAgentDigests[version]] : []),
-  ];
+    images: pinnedManifestImages,
+  });
   const host = (tool, args, timeout) =>
     spawnSync(tool, args, { encoding: "utf8", timeout });
   const unique = [...new Set(images)];
