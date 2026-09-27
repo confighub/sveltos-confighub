@@ -1,0 +1,97 @@
+
+##### 0. The fleet today: Kyverno and its policies, live, by label  [06:59:06]
+clusterprofile.config.projectsveltos.io/kyverno created
+configmap/kyverno-policies created
+clusterprofile.config.projectsveltos.io/kyverno-policies created
+  staging-eu: cbe89587-ebc9-4ec7-b3a9-031b6ddd404e Audit
+  prod-eu:    179e8646-7f60-4e1b-9572-a9d6fa4eb622 Audit
+  a :latest pod on staging-eu: pod/probe-1790492372
+
+##### 1. Export, including the ConfigMap the profile names  [06:59:32]
+Live on your management cluster: kyverno-policies. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+
+Fix these before apply:
+  - kyverno-policies names ConfigMap default/kyverno-policies in policyRefs, which is not in the input; save it with kubectl get configmap -n default kyverno-policies -o yaml > kyverno-policies.yaml and pass that file too
+Onboarding plan: 1 profile over 2 clusters, one variant per cluster per profile (2 variants).
+Nothing has changed. This is what ConfigHub would hold.
+
+kyverno-policies  (selects env In [staging, prod])
+  base     ob6-kyverno-policies-base  reaches no cluster: clusterRefs is empty
+  policy   ConfigMap default/kyverno-policies  held in ConfigHub as unit configmap-default-kyverno-policies; each variant gets its own copy
+  stage staging
+    staging-eu   variant ob6-kyverno-policies-staging-eu  ->  Target ob6-targets/staging-eu
+                 differs from the base in metadata.name, spec.clusterRefs, spec.policyRefs
+                 reads ConfigMap default/kyverno-policies-staging-eu
+  stage prod
+    prod-eu      variant ob6-kyverno-policies-prod-eu  ->  Target ob6-targets/prod-eu
+                 differs from the base in metadata.name, spec.clusterRefs, spec.policyRefs
+                 reads ConfigMap default/kyverno-policies-prod-eu
+
+Management cluster mgmt/mgmt
+  record   ob6-management  one bootstrap profile per variant (2), fetching its release from the gateway
+
+In ConfigHub
+  3 Targets in ob6-targets, one per cluster, on a server-hosted worker
+  1 component, each one base, 2 variants, 1 management record
+  5 Spaces and 2 Links, one tying each variant to its base (check your organization's quotas for both first)
+  first rollout: kyverno-policies in 2 stages; one approval per stage, one release per variant
+
+Live on your management cluster: kyverno-policies. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+
+Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kyverno-policies
+  namespace: default
+data:
+  disallow-latest-tag.yaml: |
+    apiVersion: kyverno.io/v1
+
+##### 2. apply.sh  [06:59:32]
+
+== 0/6 Check before changing anything
+
+== 1/6 One named Target per cluster, in ob6-targets
+
+== 2/6 One component, one base and one rollout workflow per profile
+
+== 3/6 One variant per cluster, addressed to that cluster alone
+
+== 4/6 The management cluster's record: its bootstrap profiles
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-ob6-targets created
+clusterprofile.config.projectsveltos.io/confighub-ob6-kyverno-policies-staging-eu created
+clusterprofile.config.projectsveltos.io/confighub-ob6-kyverno-policies-prod-eu created
+
+Done. Sveltos fetches each variant's release within a minute. Watch it with:
+  kubectl get clustersummaries -A
+kyverno-policies              1      119s
+kyverno-policies-prod-eu      1      57s
+kyverno-policies-staging-eu   1      57s
+
+##### 3. takeover.sh  [07:01:05]
+== kyverno-policies
+clusterprofile.config.projectsveltos.io/kyverno-policies patched
+clusterprofile.config.projectsveltos.io "kyverno-policies" deleted
+ConfigMap default/kyverno-policies is no longer read; each variant reads its own copy. Delete it when you are ready: kubectl delete configmap -n default kyverno-policies
+
+Done. Each per-cluster profile reports Provisioned within a minute:
+  kubectl get clustersummaries -A
+  staging-eu: cbe89587-ebc9-4ec7-b3a9-031b6ddd404e Audit
+  prod-eu:    179e8646-7f60-4e1b-9572-a9d6fa4eb622 Audit
+  the same ClusterPolicy objects before and after: nothing reinstalled
+
+##### 4. A policy change, Audit to Enforce, reviewed once on the base  [07:02:36]
+  staging-eu: cbe89587-ebc9-4ec7-b3a9-031b6ddd404e Enforce
+  prod-eu:    179e8646-7f60-4e1b-9572-a9d6fa4eb622 Audit
+  a :latest pod on staging-eu:     rule require-image-tag failed at path /spec/containers/0/image/'
+  a :latest pod on prod-eu:    pod/probe-1790492607
+  staging-eu: cbe89587-ebc9-4ec7-b3a9-031b6ddd404e Enforce
+  prod-eu:    179e8646-7f60-4e1b-9572-a9d6fa4eb622 Enforce
+  a :latest pod on prod-eu:        rule require-image-tag failed at path /spec/containers/0/image/'
+
+##### POLICY-REHEARSAL-DONE  [07:04:26]

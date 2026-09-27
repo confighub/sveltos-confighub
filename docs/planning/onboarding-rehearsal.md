@@ -88,6 +88,18 @@ a live `podinfo` profile, `cub sveltos plan`, `cub sveltos apply`,
 `apply.sh`, then `takeover.sh`. The release stayed at revision 1 with the
 same pod.
 
+## Kyverno policies
+
+Also on 2026-09-27 ([log](onboarding-rehearsal-kyverno-2026-09-27.log)), on a
+management cluster and a staging and a prod cluster: a live `kyverno-policies`
+profile deploying a `disallow-latest-tag` ClusterPolicy from a ConfigMap was
+onboarded together with its ConfigMap (#53). Each variant received its own
+copy of the ConfigMap from ConfigHub, and the handover left both
+ClusterPolicy objects unchanged. The policy was then changed from Audit to
+Enforce on the base: after staging's release a `:latest` pod was refused on
+staging and admitted on prod; after prod's own approval and release, prod
+refused it too.
+
 ## Not measured
 
 The takeover with Kustomize profiles; Cluster API clusters as input;

@@ -46,6 +46,9 @@ func RenderPlan(plan *Plan, next bool) string {
 		}
 		out = append(out, fmt.Sprintf("%s  (%s)", p.Name, strings.Join(how, "; ")))
 		out = append(out, fmt.Sprintf("  base     %s  reaches no cluster: clusterRefs is empty", p.BaseSpace))
+		for _, pm := range p.Policies {
+			out = append(out, fmt.Sprintf("  policy   ConfigMap %s/%s  held in ConfigHub as unit %s; each variant gets its own copy", pm.Namespace, pm.Name, pm.Unit))
+		}
 		for _, stage := range p.Stages {
 			out = append(out, "  stage "+stage)
 			for _, v := range p.Variants {
@@ -55,6 +58,9 @@ func RenderPlan(plan *Plan, next bool) string {
 				out = append(out,
 					fmt.Sprintf("    %-12s variant %s  ->  Target %s/%s", v.Cluster, v.Space, plan.TargetsSpace, v.Target),
 					fmt.Sprintf("    %-12s differs from the base in %s", "", strings.Join(v.Departures, ", ")))
+				for i, vp := range v.Policies {
+					out = append(out, fmt.Sprintf("    %-12s reads ConfigMap %s/%s", "", p.Policies[i].Namespace, vp.Name))
+				}
 			}
 		}
 	}
@@ -165,10 +171,10 @@ func ApplyScript(plan *Plan) string {
 		"# everything the base holds today. Later revisions are changes made in",
 		"# ConfigHub, which a re-run leaves alone.",
 		"depart() {",
-		fmt.Sprintf(`  if [ "$(cub unit get --space "$1" %s -o jq=.Unit.HeadRevisionNum)" -le 2 ]; then`, unitSlug),
-		fmt.Sprintf(`    cub function set --space "$1" --unit %s --change-desc "$3" --quiet -- set-yq "$2"`, unitSlug),
+		`  if [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ]; then`,
+		`    cub function set --space "$1" --unit "$2" --change-desc "$4" --quiet -- set-yq "$3"`,
 		"  else",
-		`    echo "$1 already has its departures"`,
+		`    echo "$1/$2 already has its departures"`,
 		"  fi",
 		"}",
 		"publish() {",
@@ -197,7 +203,11 @@ func ApplyScript(plan *Plan) string {
 		L = append(L,
 			line("cub", "component", "create", p.Component, "--allow-exists", "--quiet"),
 			line("cub", "space", "create", p.BaseSpace, "--component", p.Component, "--allow-exists", "--quiet"),
-			line("cub", "unit", "create", "--space", p.BaseSpace, unitSlug, p.Name+"/base.yaml", "--change-desc", fmt.Sprintf("Onboard %s from its ClusterProfile: the shared base", p.Name), "--allow-exists", "--quiet"),
+			line("cub", "unit", "create", "--space", p.BaseSpace, unitSlug, p.Name+"/base.yaml", "--change-desc", fmt.Sprintf("Onboard %s from its ClusterProfile: the shared base", p.Name), "--allow-exists", "--quiet"))
+		for _, pm := range p.Policies {
+			L = append(L, line("cub", "unit", "create", "--space", p.BaseSpace, pm.Unit, p.Name+"/"+pm.Unit+".yaml", "--change-desc", fmt.Sprintf("Onboard the policies %s reads from ConfigMap %s/%s", p.Name, pm.Namespace, pm.Name), "--allow-exists", "--quiet"))
+		}
+		L = append(L,
 			line("cub", "changeworkflow", "create", "--space", p.BaseSpace, workflowSlug, "--filename", p.Name+"/change-workflow.yaml", "--allow-exists", "--quiet"))
 	}
 	L = append(L, "", `step "3/6 One variant per cluster, addressed to that cluster alone"`)
@@ -205,7 +215,10 @@ func ApplyScript(plan *Plan) string {
 		for _, v := range p.Variants {
 			L = append(L,
 				line("cub", "variant", "create", v.Cluster, p.BaseSpace, "--stage", v.Stage, "--space-pattern", "template:"+v.Space, "--target", plan.TargetsSpace+"/"+v.Target, "--allow-exists", "--quiet"),
-				line("depart", v.Space, v.DepartExpression, fmt.Sprintf("Depart from the base for %s: %s", v.Cluster, strings.Join(v.Departures, ", "))))
+				line("depart", v.Space, unitSlug, v.DepartExpression, fmt.Sprintf("Depart from the base for %s: %s", v.Cluster, strings.Join(v.Departures, ", "))))
+			for _, vp := range v.Policies {
+				L = append(L, line("depart", v.Space, vp.Unit, vp.DepartExpression, fmt.Sprintf("%s's own copy of the policies: %s", v.Cluster, vp.Name)))
+			}
 		}
 	}
 	if m := plan.Management; m != nil {
@@ -309,6 +322,9 @@ func TakeoverScript(plan *Plan) string {
 			"  sleep 20",
 			fmt.Sprintf("  k delete clusterprofile %s --wait=true", p.Name),
 			"fi")
+		for _, pm := range p.Policies {
+			L = append(L, "echo "+q(fmt.Sprintf("ConfigMap %s/%s is no longer read; each variant reads its own copy. Delete it when you are ready: kubectl delete configmap -n %s %s", pm.Namespace, pm.Name, pm.Namespace, pm.Name)))
+		}
 	}
 	L = append(L, "", "echo",
 		`echo "Done. Each per-cluster profile reports Provisioned within a minute:"`,

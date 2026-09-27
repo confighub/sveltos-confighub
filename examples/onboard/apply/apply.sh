@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Onboard ingress-nginx, kyverno into ConfigHub: one variant per cluster per profile.
+# Onboard ingress-nginx, kyverno, kyverno-policies into ConfigHub: one variant per cluster per profile.
 # Written by `cub sveltos apply`. Read it, then run it:
 #
 #   MGMT_CONTEXT=<kubectl context of your management cluster> bash apply.sh
@@ -23,10 +23,10 @@ rolled_out() { [ "$(cub changeorder get --space "${1%/*}" "${1#*/}" -o jq=.Chang
 # everything the base holds today. Later revisions are changes made in
 # ConfigHub, which a re-run leaves alone.
 depart() {
-  if [ "$(cub unit get --space "$1" clusterprofile -o jq=.Unit.HeadRevisionNum)" -le 2 ]; then
-    cub function set --space "$1" --unit clusterprofile --change-desc "$3" --quiet -- set-yq "$2"
+  if [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ]; then
+    cub function set --space "$1" --unit "$2" --change-desc "$4" --quiet -- set-yq "$3"
   else
-    echo "$1 already has its departures"
+    echo "$1/$2 already has its departures"
   fi
 }
 publish() {
@@ -60,18 +60,32 @@ cub component create sveltos-kyverno --allow-exists --quiet
 cub space create sveltos-kyverno-base --component sveltos-kyverno --allow-exists --quiet
 cub unit create --space sveltos-kyverno-base clusterprofile kyverno/base.yaml --change-desc 'Onboard kyverno from its ClusterProfile: the shared base' --allow-exists --quiet
 cub changeworkflow create --space sveltos-kyverno-base rollout --filename kyverno/change-workflow.yaml --allow-exists --quiet
+cub component create sveltos-kyverno-policies --allow-exists --quiet
+cub space create sveltos-kyverno-policies-base --component sveltos-kyverno-policies --allow-exists --quiet
+cub unit create --space sveltos-kyverno-policies-base clusterprofile kyverno-policies/base.yaml --change-desc 'Onboard kyverno-policies from its ClusterProfile: the shared base' --allow-exists --quiet
+cub unit create --space sveltos-kyverno-policies-base configmap-default-kyverno-policies kyverno-policies/configmap-default-kyverno-policies.yaml --change-desc 'Onboard the policies kyverno-policies reads from ConfigMap default/kyverno-policies' --allow-exists --quiet
+cub changeworkflow create --space sveltos-kyverno-policies-base rollout --filename kyverno-policies/change-workflow.yaml --allow-exists --quiet
 
 step "3/6 One variant per cluster, addressed to that cluster alone"
 cub variant create prod-eu sveltos-ingress-nginx-base --stage prod --space-pattern template:sveltos-ingress-nginx-prod-eu --target sveltos-targets/prod-eu --allow-exists --quiet
-depart sveltos-ingress-nginx-prod-eu '.metadata.name = "ingress-nginx-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}]' 'Depart from the base for prod-eu: metadata.name, spec.clusterRefs'
+depart sveltos-ingress-nginx-prod-eu clusterprofile '.metadata.name = "ingress-nginx-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}]' 'Depart from the base for prod-eu: metadata.name, spec.clusterRefs'
 cub variant create prod-us sveltos-ingress-nginx-base --stage prod --space-pattern template:sveltos-ingress-nginx-prod-us --target sveltos-targets/prod-us --allow-exists --quiet
-depart sveltos-ingress-nginx-prod-us '.metadata.name = "ingress-nginx-prod-us" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-us"}]' 'Depart from the base for prod-us: metadata.name, spec.clusterRefs'
+depart sveltos-ingress-nginx-prod-us clusterprofile '.metadata.name = "ingress-nginx-prod-us" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-us"}]' 'Depart from the base for prod-us: metadata.name, spec.clusterRefs'
 cub variant create staging-eu sveltos-kyverno-base --stage staging --space-pattern template:sveltos-kyverno-staging-eu --target sveltos-targets/staging-eu --allow-exists --quiet
-depart sveltos-kyverno-staging-eu '.metadata.name = "kyverno-staging-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"staging-eu"}]' 'Depart from the base for staging-eu: metadata.name, spec.clusterRefs'
+depart sveltos-kyverno-staging-eu clusterprofile '.metadata.name = "kyverno-staging-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"staging-eu"}]' 'Depart from the base for staging-eu: metadata.name, spec.clusterRefs'
 cub variant create prod-eu sveltos-kyverno-base --stage prod --space-pattern template:sveltos-kyverno-prod-eu --target sveltos-targets/prod-eu --allow-exists --quiet
-depart sveltos-kyverno-prod-eu '.metadata.name = "kyverno-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}]' 'Depart from the base for prod-eu: metadata.name, spec.clusterRefs'
+depart sveltos-kyverno-prod-eu clusterprofile '.metadata.name = "kyverno-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}]' 'Depart from the base for prod-eu: metadata.name, spec.clusterRefs'
 cub variant create prod-us sveltos-kyverno-base --stage prod --space-pattern template:sveltos-kyverno-prod-us --target sveltos-targets/prod-us --allow-exists --quiet
-depart sveltos-kyverno-prod-us '.metadata.name = "kyverno-prod-us" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-us"}]' 'Depart from the base for prod-us: metadata.name, spec.clusterRefs'
+depart sveltos-kyverno-prod-us clusterprofile '.metadata.name = "kyverno-prod-us" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-us"}]' 'Depart from the base for prod-us: metadata.name, spec.clusterRefs'
+cub variant create staging-eu sveltos-kyverno-policies-base --stage staging --space-pattern template:sveltos-kyverno-policies-staging-eu --target sveltos-targets/staging-eu --allow-exists --quiet
+depart sveltos-kyverno-policies-staging-eu clusterprofile '.metadata.name = "kyverno-policies-staging-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"staging-eu"}] | .spec.dependsOn = ["kyverno-staging-eu"] | (.spec.policyRefs[] | select(.kind == "ConfigMap" and .namespace == "default" and .name == "kyverno-policies") | .name) = "kyverno-policies-staging-eu"' 'Depart from the base for staging-eu: metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs'
+depart sveltos-kyverno-policies-staging-eu configmap-default-kyverno-policies '.metadata.name = "kyverno-policies-staging-eu"' 'staging-eu'\''s own copy of the policies: kyverno-policies-staging-eu'
+cub variant create prod-eu sveltos-kyverno-policies-base --stage prod --space-pattern template:sveltos-kyverno-policies-prod-eu --target sveltos-targets/prod-eu --allow-exists --quiet
+depart sveltos-kyverno-policies-prod-eu clusterprofile '.metadata.name = "kyverno-policies-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}] | .spec.dependsOn = ["kyverno-prod-eu"] | (.spec.policyRefs[] | select(.kind == "ConfigMap" and .namespace == "default" and .name == "kyverno-policies") | .name) = "kyverno-policies-prod-eu"' 'Depart from the base for prod-eu: metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs'
+depart sveltos-kyverno-policies-prod-eu configmap-default-kyverno-policies '.metadata.name = "kyverno-policies-prod-eu"' 'prod-eu'\''s own copy of the policies: kyverno-policies-prod-eu'
+cub variant create prod-us sveltos-kyverno-policies-base --stage prod --space-pattern template:sveltos-kyverno-policies-prod-us --target sveltos-targets/prod-us --allow-exists --quiet
+depart sveltos-kyverno-policies-prod-us clusterprofile '.metadata.name = "kyverno-policies-prod-us" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-us"}] | .spec.dependsOn = ["kyverno-prod-us"] | (.spec.policyRefs[] | select(.kind == "ConfigMap" and .namespace == "default" and .name == "kyverno-policies") | .name) = "kyverno-policies-prod-us"' 'Depart from the base for prod-us: metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs'
+depart sveltos-kyverno-policies-prod-us configmap-default-kyverno-policies '.metadata.name = "kyverno-policies-prod-us"' 'prod-us'\''s own copy of the policies: kyverno-policies-prod-us'
 
 step "4/6 The management cluster's record: its bootstrap profiles"
 cub component create sveltos-management --allow-exists --quiet
@@ -80,6 +94,8 @@ cub unit create --space sveltos-management bootstrap-ingress-nginx management/in
 cub unit update --space sveltos-management bootstrap-ingress-nginx management/ingress-nginx.yaml --change-desc 'The bootstrap profiles for every ingress-nginx variant this plan holds' --quiet
 cub unit create --space sveltos-management bootstrap-kyverno management/kyverno.yaml --target sveltos-targets/mgmt --change-desc 'The bootstrap profiles that point Sveltos at each kyverno variant'\''s releases' --allow-exists --quiet
 cub unit update --space sveltos-management bootstrap-kyverno management/kyverno.yaml --change-desc 'The bootstrap profiles for every kyverno variant this plan holds' --quiet
+cub unit create --space sveltos-management bootstrap-kyverno-policies management/kyverno-policies.yaml --target sveltos-targets/mgmt --change-desc 'The bootstrap profiles that point Sveltos at each kyverno-policies variant'\''s releases' --allow-exists --quiet
+cub unit update --space sveltos-management bootstrap-kyverno-policies management/kyverno-policies.yaml --change-desc 'The bootstrap profiles for every kyverno-policies variant this plan holds' --quiet
 
 step "5/6 Release each variant, stage by stage: promote, approve, publish"
 cub changeorder create --space sveltos-ingress-nginx-base onboard-c3558924 --change-workflow sveltos-ingress-nginx-base/rollout --description 'First release of sveltos-ingress-nginx-prod-eu, sveltos-ingress-nginx-prod-us' --allow-exists --quiet
@@ -102,6 +118,18 @@ else
   cub variant approve --change-order sveltos-kyverno-base/onboard-25e1c3f8 --stage prod --quiet
   publish sveltos-kyverno-prod-eu sveltos-kyverno-base/onboard-25e1c3f8
   publish sveltos-kyverno-prod-us sveltos-kyverno-base/onboard-25e1c3f8
+fi
+cub changeorder create --space sveltos-kyverno-policies-base onboard-1b86298b --change-workflow sveltos-kyverno-policies-base/rollout --description 'First release of sveltos-kyverno-policies-staging-eu, sveltos-kyverno-policies-prod-eu, sveltos-kyverno-policies-prod-us' --allow-exists --quiet
+if rolled_out sveltos-kyverno-policies-base/onboard-1b86298b; then
+  echo 'kyverno-policies: every variant in this plan is released'
+else
+  cub variant promote --change-order sveltos-kyverno-policies-base/onboard-1b86298b --target-stage staging --quiet
+  cub variant approve --change-order sveltos-kyverno-policies-base/onboard-1b86298b --stage staging --quiet
+  publish sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-base/onboard-1b86298b
+  cub variant promote --change-order sveltos-kyverno-policies-base/onboard-1b86298b --target-stage prod --quiet
+  cub variant approve --change-order sveltos-kyverno-policies-base/onboard-1b86298b --stage prod --quiet
+  publish sveltos-kyverno-policies-prod-eu sveltos-kyverno-policies-base/onboard-1b86298b
+  publish sveltos-kyverno-policies-prod-us sveltos-kyverno-policies-base/onboard-1b86298b
 fi
 
 step "6/6 Point Sveltos at ConfigHub (your management cluster)"

@@ -81,6 +81,13 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 		files = append(files,
 			outFile{p.Name + "/base.yaml", base, 0o644},
 			outFile{p.Name + "/change-workflow.yaml", []byte(p.WorkflowText), 0o644})
+		for _, pm := range p.Policies {
+			data, err := EncodeYAML(pm.Base)
+			if err != nil {
+				return "", err
+			}
+			files = append(files, outFile{p.Name + "/" + pm.Unit + ".yaml", data, 0o644})
+		}
 	}
 	if m := plan.Management; m != nil {
 		for _, b := range m.ByProfile {
@@ -121,6 +128,14 @@ func VariantValue(p Profile, v Variant) (map[string]any, error) {
 	obj(out["metadata"])["name"] = v.ProfileName
 	spec := obj(out["spec"])
 	spec["clusterRefs"] = []any{map[string]any{"apiVersion": v.ClusterRef.APIVersion, "kind": v.ClusterRef.Kind, "namespace": v.ClusterRef.Namespace, "name": v.ClusterRef.Name}}
+	for i, vp := range v.Policies {
+		for _, r := range list(spec["policyRefs"]) {
+			ref := obj(r)
+			if str(ref["kind"]) == "ConfigMap" && str(ref["namespace"]) == p.Policies[i].Namespace && str(ref["name"]) == p.Policies[i].Name {
+				ref["name"] = vp.Name
+			}
+		}
+	}
 	if len(v.DependsOn) > 0 {
 		deps := make([]any, len(v.DependsOn))
 		for i, d := range v.DependsOn {

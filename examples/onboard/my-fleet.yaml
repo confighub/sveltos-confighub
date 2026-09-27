@@ -88,3 +88,50 @@ spec:
       releaseName: ingress-nginx
       releaseNamespace: ingress-nginx
       helmChartAction: Install
+---
+# Kyverno policies, deployed to every cluster that runs Kyverno. The profile
+# names the ConfigMap that holds them; onboarding brings the ConfigMap into
+# ConfigHub too, so a policy change is reviewed and staged like any other.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kyverno-policies
+  namespace: default
+data:
+  disallow-latest-tag.yaml: |
+    apiVersion: kyverno.io/v1
+    kind: ClusterPolicy
+    metadata:
+      name: disallow-latest-tag
+    spec:
+      background: true
+      rules:
+        - name: require-image-tag
+          match:
+            any:
+              - resources:
+                  kinds: [Pod]
+          validate:
+            failureAction: Audit
+            message: "An image tag is required and must not be latest."
+            pattern:
+              spec:
+                containers:
+                  - image: "!*:latest"
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno-policies
+spec:
+  clusterSelector:
+    matchExpressions:
+      - key: env
+        operator: In
+        values: [staging, prod]
+  dependsOn: [kyverno]
+  syncMode: ContinuousWithDriftDetection
+  policyRefs:
+    - kind: ConfigMap
+      name: kyverno-policies
+      namespace: default

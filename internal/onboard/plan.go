@@ -79,6 +79,26 @@ type Variant struct {
 	DepartExpression string
 	ClusterRef       ClusterRef
 	DependsOn        []string
+	// Policies are this variant's own copies of the profile's policy
+	// ConfigMaps, each renamed for the cluster.
+	Policies []VariantPolicy
+}
+
+// VariantPolicy is one variant's copy of a policy ConfigMap.
+type VariantPolicy struct {
+	Unit             string
+	Name             string
+	DepartExpression string
+}
+
+// PolicyMap is a ConfigMap a profile names in policyRefs, held in ConfigHub
+// beside the profile so the policy text itself goes through review.
+type PolicyMap struct {
+	Namespace string
+	Name      string
+	Unit      string
+	Base      *yaml.Node
+	BaseValue map[string]any
 }
 
 // Profile is one onboarded ClusterProfile: its base and its variants.
@@ -96,6 +116,7 @@ type Profile struct {
 	Variants     []Variant
 	ReleaseOrder string
 	WorkflowText string
+	Policies     []PolicyMap
 }
 
 // Skipped is a profile left as it is, with the reason.
@@ -504,8 +525,12 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	var allProfiles []profileDoc
 	profileAt := map[string]int{}
 	var namespaced []string
+	configMaps := map[string]Doc{}
 	for _, d := range docs {
 		switch {
+		case str(d.Value["kind"]) == "ConfigMap" && str(d.Value["apiVersion"]) == "v1":
+			meta := obj(d.Value["metadata"])
+			configMaps[str(meta["namespace"])+"/"+str(meta["name"])] = d
 		case isClusterKind(d.Value):
 			c := clusterOf(d.Value)
 			if i, ok := clusterAt[c.Key]; ok {
@@ -643,6 +668,11 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 		if err := base.Decode(&baseValue); err != nil {
 			return nil, err
 		}
+		policies, secrets, problems := policyMapsOf(name, spec, configMaps)
+		plan.Problems = append(plan.Problems, problems...)
+		if len(secrets) > 0 {
+			plan.Notes = append(plan.Notes, fmt.Sprintf("%s names %s in policyRefs; Secrets stay where they are, because their content does not belong in a review diff.", name, strings.Join(secrets, ", ")))
+		}
 		var dependsOn []string
 		for _, d := range list(spec["dependsOn"]) {
 			dependsOn = append(dependsOn, fmt.Sprint(d))
@@ -701,7 +731,17 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 				}
 				v.Departures = append(v.Departures, "spec.dependsOn")
 			}
-			v.DepartExpression = departExpression(v)
+			for _, pm := range policies {
+				v.Policies = append(v.Policies, VariantPolicy{
+					Unit:             pm.Unit,
+					Name:             pm.Name + "-" + target,
+					DepartExpression: fmt.Sprintf(".metadata.name = %s", jsonString(pm.Name+"-"+target)),
+				})
+			}
+			if len(policies) > 0 {
+				v.Departures = append(v.Departures, "spec.policyRefs")
+			}
+			v.DepartExpression = departExpression(v, policies)
 			variants = append(variants, v)
 		}
 		sort.SliceStable(variants, func(i, j int) bool {
@@ -740,6 +780,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			Variants:     variants,
 			ReleaseOrder: releaseOrder(variants),
 			WorkflowText: workflowText(stages),
+			Policies:     policies,
 		})
 	}
 
@@ -827,18 +868,87 @@ func indexOf(list []string, value string) int {
 }
 
 // A variant's departures, as one set-yq expression that touches only them.
-func departExpression(v Variant) string {
+// A policyRefs entry is renamed where it stands, so a later change to the
+// base's other policyRefs still reaches the variant.
+func departExpression(v Variant, policies []PolicyMap) string {
 	ref, _ := json.Marshal(v.ClusterRef)
-	name, _ := json.Marshal(v.ProfileName)
 	edits := []string{
-		".metadata.name = " + string(name),
+		".metadata.name = " + jsonString(v.ProfileName),
 		".spec.clusterRefs = [" + string(ref) + "]",
 	}
 	if len(v.DependsOn) > 0 {
 		deps, _ := json.Marshal(v.DependsOn)
 		edits = append(edits, ".spec.dependsOn = "+string(deps))
 	}
+	for i, pm := range policies {
+		edits = append(edits, fmt.Sprintf(`(.spec.policyRefs[] | select(.kind == "ConfigMap" and .namespace == %s and .name == %s) | .name) = %s`,
+			jsonString(pm.Namespace), jsonString(pm.Name), jsonString(v.Policies[i].Name)))
+	}
 	return strings.Join(edits, " | ")
+}
+
+func jsonString(s string) string {
+	out, _ := json.Marshal(s)
+	return string(out)
+}
+
+// The ConfigMaps a profile names in policyRefs. Each must be in the input, so
+// its content can be held in ConfigHub; a Secret is named and left where it is.
+func policyMapsOf(profile string, spec map[string]any, configMaps map[string]Doc) ([]PolicyMap, []string, []string) {
+	var maps []PolicyMap
+	var secrets, problems []string
+	seen := map[string]bool{}
+	for _, r := range list(spec["policyRefs"]) {
+		ref := obj(r)
+		kind, ns, name := str(ref["kind"]), str(ref["namespace"]), str(ref["name"])
+		if name == "" {
+			continue // a remoteURL entry, fetched from elsewhere
+		}
+		switch kind {
+		case "Secret":
+			secrets = append(secrets, fmt.Sprintf("Secret %s/%s", ns, name))
+			continue
+		case "ConfigMap":
+		default:
+			continue
+		}
+		if ns == "" {
+			problems = append(problems, fmt.Sprintf("%s names ConfigMap %s in policyRefs without a namespace, so each cluster reads its own copy from its cluster's namespace; this version onboards ConfigMaps named with a namespace", profile, name))
+			continue
+		}
+		key := ns + "/" + name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		d, ok := configMaps[key]
+		if !ok {
+			problems = append(problems, fmt.Sprintf("%s names ConfigMap %s in policyRefs, which is not in the input; save it with kubectl get configmap -n %s %s -o yaml > %s.yaml and pass that file too", profile, key, ns, name, name))
+			continue
+		}
+		base := configMapBase(d)
+		var value map[string]any
+		_ = base.Decode(&value)
+		maps = append(maps, PolicyMap{Namespace: ns, Name: name, Unit: "configmap-" + Slug(ns+"-"+name), Base: base, BaseValue: value})
+	}
+	return maps, secrets, problems
+}
+
+// A policy ConfigMap as ConfigHub holds it: its name, namespace, labels and
+// content, and none of what the API server wrote back.
+func configMapBase(d Doc) *yaml.Node {
+	meta := obj(d.Value["metadata"])
+	metadata := mapping(scalar("name"), scalar(str(meta["name"])), scalar("namespace"), scalar(str(meta["namespace"])))
+	if labels := mapGet(mapGet(d.Node, "metadata"), "labels"); labels != nil && len(labels.Content) > 0 {
+		metadata.Content = append(metadata.Content, scalar("labels"), deepCopy(labels))
+	}
+	out := mapping(scalar("apiVersion"), scalar("v1"), scalar("kind"), scalar("ConfigMap"), scalar("metadata"), metadata)
+	for _, key := range []string{"data", "binaryData"} {
+		if n := mapGet(d.Node, key); n != nil {
+			out.Content = append(out.Content, scalar(key), deepCopy(n))
+		}
+	}
+	return out
 }
 
 // The first release goes through a change order named for the set of variants

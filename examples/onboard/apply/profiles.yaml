@@ -38,3 +38,20 @@ spec:
       values: |
         admissionController:
           replicas: 3
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno-policies
+spec:
+  clusterSelector:
+    matchExpressions:
+      - key: env
+        operator: In
+        values: [staging, prod]
+  dependsOn: [kyverno]
+  syncMode: ContinuousWithDriftDetection
+  policyRefs:
+    - kind: ConfigMap
+      name: kyverno-policies
+      namespace: default

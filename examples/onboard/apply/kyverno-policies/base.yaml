@@ -1,0 +1,12 @@
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno-policies-base
+spec:
+  clusterRefs: []
+  dependsOn: [kyverno]
+  syncMode: ContinuousWithDriftDetection
+  policyRefs:
+    - kind: ConfigMap
+      name: kyverno-policies
+      namespace: default
