@@ -87,7 +87,7 @@ func renderComponent(name string, members []memberDoc, configMaps map[string]Doc
 		if u.Chart != nil && u.Chart.IncludeHooks {
 			var notAtInstall []string
 			for _, h := range keptHooks(u.Objects) {
-				if !h.atInstall() {
+				if !h.AtInstall() {
 					notAtInstall = append(notAtInstall, h.String())
 				}
 			}
@@ -97,7 +97,7 @@ func renderComponent(name string, members []memberDoc, configMaps map[string]Doc
 		}
 		var install, other []string
 		for _, h := range u.Hooks {
-			if h.atInstall() {
+			if h.AtInstall() {
 				install = append(install, h.String())
 			} else {
 				other = append(other, h.String())

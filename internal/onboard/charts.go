@@ -1,113 +1,29 @@
 package onboard
 
 import (
-	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"path"
 	"regexp"
 	"strings"
 
+	"github.com/confighub/sveltos-confighub/chartrender"
 	"gopkg.in/yaml.v3"
 )
 
-// Chart is one Helm chart a profile installs, and how it is rendered.
-type Chart struct {
-	Release   string
-	Namespace string
-	// Ref is what cub helm template is given: a chart name resolved against
-	// Repo, or an oci:// reference.
-	Ref          string
-	Repo         string
-	Version      string
-	Values       string
-	SkipCRDs     bool
-	IncludeHooks bool
-}
+// Chart, Rendering, Renderer and Hook are chartrender's, which holds the rules
+// that make a rendering stand for what runs, for anything that flattens charts
+// into ConfigHub.
+type (
+	Chart     = chartrender.Chart
+	Rendering = chartrender.Rendering
+	Renderer  = chartrender.Renderer
+	Hook      = chartrender.Hook
+)
 
-// Key identifies a rendering: the same chart, version, namespace and values
-// always render the same objects.
-func (c Chart) Key() string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{c.Release, c.Namespace, c.Ref, c.Repo, c.Version, c.Values, fmt.Sprint(c.SkipCRDs), fmt.Sprint(c.IncludeHooks)}, "\x00")))
-	return fmt.Sprintf("%s-%s-%s", Slug(c.Release), Slug(c.Version), hex.EncodeToString(sum[:])[:8])
-}
-
-// Command is the cub helm template command line that renders the chart, with
-// the values read from valuesFile.
-func (c Chart) Command(valuesFile string) []string {
-	args := []string{"cub", "helm", "template", c.Release, c.Ref}
-	if c.Repo != "" {
-		args = append(args, "--repo", c.Repo)
-	}
-	if c.Version != "" {
-		args = append(args, "--version", c.Version)
-	}
-	args = append(args, "--namespace", c.Namespace, "--create-namespace")
-	if c.SkipCRDs {
-		args = append(args, "--skip-crds")
-	}
-	if c.IncludeHooks {
-		args = append(args, "--include-hooks")
-	}
-	if c.Values != "" && valuesFile != "" {
-		args = append(args, "-f", valuesFile)
-	}
-	return args
-}
-
-// Rendering is what rendering a chart printed: the objects, and the hook
-// manifests it left out.
-type Rendering struct {
-	Stdout []byte
-	Stderr []byte
-}
-
-// Renderer renders a chart the way cub helm install would.
-type Renderer func(Chart) (Rendering, error)
-
-// CubHelm renders with the cub helm plugin's template command, which needs no
-// ConfigHub connection: ConfigHub's own Helm renderer, so a chart onboarded
-// here holds the objects cub helm install would have written.
-func CubHelm(c Chart) (Rendering, error) {
-	cub, err := exec.LookPath("cub")
-	if err != nil {
-		return Rendering{}, errors.New("rendering charts needs cub on the PATH")
-	}
-	valuesFile := ""
-	if c.Values != "" {
-		f, err := os.CreateTemp("", "sveltos-values-*.yaml")
-		if err != nil {
-			return Rendering{}, err
-		}
-		defer os.Remove(f.Name())
-		if _, err := io.WriteString(f, c.Values); err != nil {
-			f.Close()
-			return Rendering{}, err
-		}
-		f.Close()
-		valuesFile = f.Name()
-	}
-	args := c.Command(valuesFile)
-	cmd := exec.Command(cub, args[1:]...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if strings.Contains(text, "unknown command") {
-			return Rendering{}, errors.New("rendering charts needs the cub helm plugin: cub plugin install confighub/cub-helm")
-		}
-		if i := strings.LastIndex(text, "\n"); i >= 0 {
-			text = text[i+1:]
-		}
-		return Rendering{}, fmt.Errorf("%s: %s", strings.Join(args[:5], " "), text)
-	}
-	return Rendering{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, nil
-}
+// CubHelm renders with cub helm template, ConfigHub's own Helm renderer, so a
+// chart onboarded here holds the objects cub helm install would have written.
+var CubHelm = chartrender.CubHelm
 
 // Object is one Kubernetes object a unit holds.
 type Object struct {
@@ -159,22 +75,6 @@ type Unit struct {
 	raw []byte
 }
 
-// Hook is a Helm hook manifest: an object Helm creates at a point in a
-// release's life, which plain delivery does not have.
-type Hook struct {
-	Kind   string
-	Name   string
-	Events string
-}
-
-func (h Hook) String() string { return h.Kind + " " + h.Name }
-
-// atInstall is a hook Helm runs to install the chart: without it, a cluster
-// that installs the chart from its plain objects lacks what the hook makes.
-func (h Hook) atInstall() bool {
-	return strings.Contains(h.Events, "pre-install") || strings.Contains(h.Events, "post-install")
-}
-
 // Text is the unit's content: a chart's rendering as printed, or a policy
 // ConfigMap's objects as YAML documents.
 func (u Unit) Text() ([]byte, error) {
@@ -215,7 +115,7 @@ func (u Unit) Summary() string {
 func jobsAmong(hooks []Hook) string {
 	var jobs []string
 	for _, h := range hooks {
-		if h.Kind == "Job" && !h.atInstall() {
+		if h.Kind == "Job" && !h.AtInstall() {
 			jobs = append(jobs, h.Name)
 		}
 	}
@@ -224,8 +124,6 @@ func jobsAmong(hooks []Hook) string {
 	}
 	return ", among them Jobs " + strings.Join(jobs, ", ")
 }
-
-var droppedHook = regexp.MustCompile(`Dropped hook manifest: (\S+) (\S+) \(helm\.sh/hook: ([^)]*)\)`)
 
 // objectsOf reads the objects of a YAML stream, in the order they come. Sveltos
 // applies a release's objects in whatever order they are in: measured, a
@@ -246,14 +144,6 @@ func objectsOf(data []byte) ([]Object, error) {
 		out = append(out, o)
 	}
 	return out, nil
-}
-
-func hooksOf(stderr []byte) []Hook {
-	var out []Hook
-	for _, m := range droppedHook.FindAllStringSubmatch(string(stderr), -1) {
-		out = append(out, Hook{Kind: m[1], Name: m[2], Events: m[3]})
-	}
-	return out
 }
 
 // renderCache renders each chart once per plan, twice the first time: a chart
@@ -281,57 +171,23 @@ func (rc *renderCache) get(c Chart) renderResult {
 }
 
 func (rc *renderCache) do(c Chart) renderResult {
-	first, err := rc.render(c)
+	r, err := chartrender.Render(rc.render, c)
 	if err != nil {
 		return renderResult{err: err}
 	}
-	second, err := rc.render(c)
-	if err != nil {
-		return renderResult{err: err}
-	}
-	if !bytes.Equal(first.Stdout, second.Stdout) {
-		return renderResult{err: fmt.Errorf("renders differently each time it is rendered (random values or lookup), so it cannot be held as one set of objects; set those values explicitly")}
-	}
-	first.Stdout = dropStrayLines(first.Stdout)
-	objects, err := objectsOf(first.Stdout)
+	objects, err := objectsOf(r.Objects)
 	if err != nil {
 		return renderResult{err: fmt.Errorf("reading its rendering: %w", err)}
 	}
 	if len(objects) == 0 {
 		return renderResult{err: errors.New("renders no objects")}
 	}
-	return renderResult{objects: objects, hooks: hooksOf(first.Stderr), raw: first.Stdout}
+	return renderResult{objects: objects, hooks: r.Hooks, raw: r.Objects}
 }
 
 // Sveltos reads a chart from a Flux source when its repositoryURL is
 // gitrepository://, ocirepository:// or bucket://, and ignores chartVersion.
 var fluxSource = regexp.MustCompile(`(?i)^(gitrepository|ocirepository|bucket)://`)
-
-// An exact chart version: a range or a partial version resolves to whatever
-// is newest when it is rendered, which need not be what is running.
-var exactVersion = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
-
-// strayLine is a line cub helm template prints at the top of some documents,
-// after their comments: a key that is no part of the chart. ConfigHub drops
-// it, with the comments above it, when a unit is created, but keeps it when a
-// unit is updated, so a later upgrade's review would show it, and a cluster
-// could be sent it. Dropped here, and by the command apply.sh records.
-const strayLine = `$comment$head$: ""`
-
-// renderFilter is the same, for the render command apply.sh records.
-const renderFilter = `grep -vxF '` + strayLine + `'`
-
-func dropStrayLines(data []byte) []byte {
-	lines := bytes.SplitAfter(data, []byte("\n"))
-	out := make([]byte, 0, len(data))
-	for _, l := range lines {
-		if string(bytes.TrimRight(l, "\n")) == strayLine {
-			continue
-		}
-		out = append(out, l...)
-	}
-	return out
-}
 
 // chartsOf reads a profile's helmCharts, and says what cannot be rendered once
 // for every cluster the profile reaches.
@@ -357,7 +213,7 @@ func chartsOf(profile string, spec map[string]any, includeHooks func(string) boo
 		case fluxSource.MatchString(str(hc["repositoryURL"])):
 			problems = append(problems, fmt.Sprintf("%s reads chart %s from a Flux source, %s, whose content moves when its source does, with no version of its own; this version renders charts from Helm and OCI repositories at an exact version", profile, release, str(hc["repositoryURL"])))
 			continue
-		case !exactVersion.MatchString(str(hc["chartVersion"])):
+		case !chartrender.ExactVersion(str(hc["chartVersion"])):
 			problems = append(problems, fmt.Sprintf("%s installs chart %s at %q, which is not one exact version, so what ConfigHub renders may not be what Sveltos installed; pin chartVersion to the exact version running, then onboard", profile, release, str(hc["chartVersion"])))
 			continue
 		}

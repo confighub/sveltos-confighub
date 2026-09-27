@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confighub/sveltos-confighub/chartrender"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1045,7 +1046,7 @@ func TestKeptHooks(t *testing.T) {
 	if len(plan.Problems) > 0 || string(text) != string(rendering.Stdout) {
 		t.Errorf("a chart whose hooks are kept is held exactly as cub helm template printed it, TTL and all:\n%s\n%v", text, plan.Problems)
 	}
-	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml | "+renderFilter+"\n") {
+	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml | "+chartrender.Filter+"\n") {
 		t.Errorf("apply.sh records the plain render, so the next version is rendered the same way:\n%s", script)
 	}
 	dp, _ := EncodeYAML(plan.Management.ByProfile[0].Profiles[0])
@@ -1239,10 +1240,10 @@ func TestStrayLinesAreDropped(t *testing.T) {
 			}
 			text, _ := u.Text()
 			rendering, _ := recorded(*u.Chart)
-			if strings.Contains(string(text), strayLine) {
+			if strings.Contains(string(text), chartrender.StrayLine) {
 				t.Errorf("%s: the base holds the stray line cub helm template prints", u.Slug)
 			}
-			want := strings.Count(string(rendering.Stdout), "\n"+strayLine+"\n")
+			want := strings.Count(string(rendering.Stdout), "\n"+chartrender.StrayLine+"\n")
 			if got := strings.Count(string(rendering.Stdout), "\n") - strings.Count(string(text), "\n"); got != want {
 				t.Errorf("%s: %d lines dropped, want the %d stray ones only", u.Slug, got, want)
 			}

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/confighub/sveltos-confighub/chartrender"
 	"gopkg.in/yaml.v3"
 )
 
@@ -623,7 +624,7 @@ func renderCommand(p Profile, u Unit) string {
 	if u.Chart.Values != "" {
 		values = valuesFile(p, u)
 	}
-	return line(u.Chart.Command(values)...) + " | " + renderFilter
+	return line(u.Chart.Command(values)...) + " | " + chartrender.Filter
 }
 
 // valuesFile is where apply writes a chart's values.
