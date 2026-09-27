@@ -1,0 +1,128 @@
+
+##### 0. Meridian's eu-central slice today: Kyverno by class, one Sveltos profile per class  [08:53:59]
+NAMESPACE        NAME               READY   VERSION   AGE   SHARD   LABELS
+mgmt             mgmt               true    v1.35.0   18s           projectsveltos.io/k8s-version=v1.35.0
+projectsveltos   eu-central-prod1   true    v1.35.0   3s            class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+projectsveltos   eu-central-prod2   true    v1.35.0   3s            class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+projectsveltos   eu-central-test1   true    v1.35.0   4s            class=test,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+projectsveltos   eu-central-uat1    true    v1.35.0   4s            class=uat,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+clusterprofile.config.projectsveltos.io/kyverno-test created
+clusterprofile.config.projectsveltos.io/kyverno-uat created
+clusterprofile.config.projectsveltos.io/kyverno-prod created
+  eu-central-test1  kyverno-3.8.1@rev1     admission controller replicas 1
+  eu-central-uat1   kyverno-3.8.1@rev1     admission controller replicas 2
+  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
+  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
+
+##### 1. Onboard: three profiles become one component with a class base per class  [08:54:36]
+Onboarding plan: 1 component made from 3 profiles over 4 clusters, one variant per cluster per component (4 variants).
+Nothing has changed. This is what ConfigHub would hold.
+
+kyverno  (selects one class per class: prod, test, uat)
+  base     mer-kyverno-base  reaches no cluster: clusterRefs is empty
+  class    prod         mer-kyverno-class-prod  from profile kyverno-prod; the same as the base
+  class    test         mer-kyverno-class-test  from profile kyverno-test; differs from the base in spec.helmCharts[0].values
+  class    uat          mer-kyverno-class-uat  from profile kyverno-uat; differs from the base in spec.helmCharts[0].values
+  stage test
+    eu-central-test1 variant mer-kyverno-eu-central-test1 (class test)  ->  Target mer-targets/eu-central-test1
+                     differs from the base in metadata.name, spec.clusterRefs
+  stage uat
+    eu-central-uat1  variant mer-kyverno-eu-central-uat1 (class uat)  ->  Target mer-targets/eu-central-uat1
+                     differs from the base in metadata.name, spec.clusterRefs
+  stage prod
+    eu-central-prod1 variant mer-kyverno-eu-central-prod1 (class prod)  ->  Target mer-targets/eu-central-prod1
+                     differs from the base in metadata.name, spec.clusterRefs
+    eu-central-prod2 variant mer-kyverno-eu-central-prod2 (class prod)  ->  Target mer-targets/eu-central-prod2
+                     differs from the base in metadata.name, spec.clusterRefs
+
+Management cluster mgmt/mgmt
+  record   mer-management  one bootstrap profile per variant (4), fetching its release from the gateway
+
+In ConfigHub
+  5 Targets in mer-targets, one per cluster, on a server-hosted worker
+  1 component, each one base, 3 class bases, 4 variants, 1 management record
+  10 Spaces and 7 Links, one tying each variant to its base (check your organization's quotas for both first)
+  first rollout: kyverno in 3 stages after its class bases; one approval per stage, one release per variant
+
+Live on your management cluster: kyverno-prod, kyverno-test, kyverno-uat. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+
+Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
+
+== 0/6 Check before changing anything
+
+== 1/6 One named Target per cluster, in mer-targets
+
+== 2/6 One component, one base and one rollout workflow per profile
+
+== 3/6 One variant per cluster, addressed to that cluster alone
+
+== 4/6 The management cluster's record: its bootstrap profiles
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-mer-targets created
+clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-test1 created
+clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-uat1 created
+clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-prod1 created
+clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-prod2 created
+
+Done. Sveltos fetches each variant's release within a minute. Watch it with:
+  kubectl get clustersummaries -A
+== kyverno-prod
+clusterprofile.config.projectsveltos.io/kyverno-prod patched
+clusterprofile.config.projectsveltos.io "kyverno-prod" deleted
+== kyverno-test
+clusterprofile.config.projectsveltos.io/kyverno-test patched
+clusterprofile.config.projectsveltos.io "kyverno-test" deleted
+== kyverno-uat
+clusterprofile.config.projectsveltos.io/kyverno-uat patched
+clusterprofile.config.projectsveltos.io "kyverno-uat" deleted
+
+Done. Each per-cluster profile reports Provisioned within a minute:
+  kubectl get clustersummaries -A
+  eu-central-test1  kyverno-3.8.1@rev1     admission controller replicas 1
+  eu-central-uat1   kyverno-3.8.1@rev1     admission controller replicas 2
+  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
+  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
+  every cluster kept its release revision and its class's replicas: nothing reinstalled
+  Meridian's queries work on the result:
+
+##### 2. One change at the root, Kyverno 3.8.1 to 3.8.2, class bases first, then test, uat, prod  [08:59:13]
+  class base test   chartVersion: 3.8.2  replicas: 1 
+  class base uat    chartVersion: 3.8.2  replicas: 2 
+  class base prod   chartVersion: 3.8.2  replicas: 3 
+  EXPECT REFUSAL, promote into uat before test released:
+    Failed: unable to promote to stage 'uat', Variant 'eu-central-test1' has not taken change order 'kyverno-3-8-2'
+  after test:
+  eu-central-test1  kyverno-3.8.2@rev2     admission controller replicas 1
+  eu-central-uat1   kyverno-3.8.1@rev1     admission controller replicas 2
+  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
+  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
+  after uat:
+  eu-central-test1  kyverno-3.8.2@rev2     admission controller replicas 1
+  eu-central-uat1   kyverno-3.8.2@rev2     admission controller replicas 2
+  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
+  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
+  after prod:
+  eu-central-test1  kyverno-3.8.2@rev2     admission controller replicas 1
+  eu-central-uat1   kyverno-3.8.2@rev2     admission controller replicas 2
+  eu-central-prod1  kyverno-3.8.2@rev2     admission controller replicas 3
+  eu-central-prod2  kyverno-3.8.2@rev2     admission controller replicas 3
+{
+  "Stage": "Completed",
+  "State": "Released"
+}
+
+##### MERIDIAN-SLICE-DONE  [09:02:01]
+
+# Run after the recording, with the corrected query (the recorded run filtered on a Component
+# label these Spaces did not carry; cub sveltos now also sets it):
+    base       mer-kyverno-base
+    base       mer-kyverno-class-prod
+    base       mer-kyverno-class-test
+    base       mer-kyverno-class-uat
+    deployment mer-kyverno-eu-central-test1
+    deployment mer-kyverno-eu-central-uat1
+    deployment mer-kyverno-eu-central-prod1
+    deployment mer-kyverno-eu-central-prod2

@@ -1,13 +1,12 @@
-// Chapter seven's fleet on kind: a management cluster running stock Sveltos
-// v1.15.0 (which registers itself as mgmt/mgmt) and three workload clusters
-// registered as SveltosClusters. gpu-a is labelled for the GPU operator; gpu-b
-// is an H100 cluster that is not yet; cpu-c has no GPUs. kind nodes have no
-// GPUs at all, which the chapter says.
+// The Meridian slice on kind: a management cluster running stock Sveltos
+// v1.15.0 (which registers itself as mgmt/mgmt) and Meridian's four shared
+// eu-central clusters that Kyverno is placed on, registered as SveltosClusters
+// with Meridian's region, class and department labels.
 //
-//   node examples/gpu-operator/kind-fleet.mjs            build the fleet
-//   node examples/gpu-operator/kind-fleet.mjs --delete   remove it
+//   node examples/meridian-slice/kind-fleet.mjs            build the fleet
+//   node examples/meridian-slice/kind-fleet.mjs --delete   remove it
 //
-// Kubeconfigs go to $GPU_CHAPTER_DIR (default: $TMPDIR/sveltos-gpu-chapter).
+// Kubeconfigs go to $MERIDIAN_SLICE_DIR (default: $TMPDIR/sveltos-meridian-slice).
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -16,16 +15,16 @@ import { tmpdir } from "node:os";
 import { parseDocs } from "../../scripts/lib/proof-common.mjs";
 import { manifestImages, preloadSveltosImages, writeDocuments } from "../../scripts/lib/per-cluster-fleet.mjs";
 
-const W = process.env.GPU_CHAPTER_DIR ?? join(tmpdir(), "sveltos-gpu-chapter");
+const W = process.env.MERIDIAN_SLICE_DIR ?? join(tmpdir(), "sveltos-meridian-slice");
 const VERSION = "v1.15.0";
 const MANIFEST_URL = `https://raw.githubusercontent.com/projectsveltos/sveltos/${VERSION}/manifest/manifest.yaml`;
 const MANIFEST_SHA = "ad80fa92a73b167e30df7a98cc0295acd3716b476dd0cc25859df3f45b69b4ce";
-const MGMT = "ch7-mgmt";
-const WORKLOADS = [
-  { kind: "ch7-gpu-a", name: "gpu-a", labels: { env: "staging", accelerator: "h100", "addons.gpu-operator": "enabled" } },
-  { kind: "ch7-gpu-b", name: "gpu-b", labels: { env: "prod", accelerator: "h100" } },
-  { kind: "ch7-cpu-c", name: "cpu-c", labels: { env: "prod" } },
-];
+const MGMT = "mer-mgmt";
+const WORKLOADS = ["test1", "uat1", "prod1", "prod2"].map((n) => ({
+  kind: `mer-${n}`,
+  name: `eu-central-${n}`,
+  labels: { region: "eu-central", class: n.replace(/[0-9]+$/, ""), department: "shared" },
+}));
 
 function run(cmd, args, { timeout = 900_000, input } = {}) {
   const r = spawnSync(cmd, args, { encoding: "utf8", timeout, input, maxBuffer: 1 << 28 });

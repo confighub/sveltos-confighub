@@ -391,6 +391,141 @@ func TestKyvernoPolicies(t *testing.T) {
 	}
 }
 
+func gpuFamily(extraMeta string) string {
+	return mgmt + cluster("gpu-a", "projectsveltos", "env", "staging", "accelerator", "h100") +
+		cluster("gpu-b", "projectsveltos", "env", "prod", "accelerator", "h100") +
+		cluster("rtx-a", "projectsveltos", "env", "prod", "accelerator", "rtx-pro-6000") + `apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata: {name: gpu-operator-h100` + extraMeta + `}
+spec:
+  clusterSelector: {matchLabels: {accelerator: h100}}
+  helmCharts:
+    - {repositoryURL: https://helm.ngc.nvidia.com/nvidia, chartName: nvidia/gpu-operator, chartVersion: v26.7.0, releaseName: gpu-operator, releaseNamespace: gpu-operator, values: "driver:\n  version: 580.173.02\nmig:\n  strategy: single\n"}
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata: {name: gpu-operator-rtx-pro-6000` + extraMeta + `}
+spec:
+  clusterSelector:
+    matchExpressions: [{key: accelerator, operator: In, values: [rtx-pro-6000]}]
+  helmCharts:
+    - {repositoryURL: https://helm.ngc.nvidia.com/nvidia, chartName: nvidia/gpu-operator, chartVersion: v26.7.0, releaseName: gpu-operator, releaseNamespace: gpu-operator, values: "driver:\n  version: 580.173.02\nmig:\n  strategy: none\n"}
+`
+}
+
+func TestClassBasesFromAccelerators(t *testing.T) {
+	plan := mustPlan(t, parse(t, gpuFamily("")), Options{StageLabel: "env", Stages: []string{"staging", "prod"}, ClassLabel: "accelerator"})
+	if len(plan.Problems) > 0 {
+		t.Fatalf("problems: %v", plan.Problems)
+	}
+	if len(plan.Profiles) != 1 || plan.Profiles[0].Name != "gpu-operator" {
+		t.Fatalf("two accelerator profiles of one chart should be one component named for what they share: %+v", plan.Profiles)
+	}
+	p := plan.Profiles[0]
+	if len(p.Classes) != 2 || p.Classes[0].Value != "h100" || len(p.Classes[0].Departures) != 0 {
+		t.Fatalf("the first class is the base itself, with no departures: %+v", p.Classes)
+	}
+	rtx := p.Classes[1]
+	if rtx.Space != "sveltos-gpu-operator-class-rtx-pro-6000" || strings.Join(rtx.Departures, ",") != "spec.helmCharts[0].values" ||
+		!strings.Contains(rtx.DepartExpression, `.spec.helmCharts[0].values = "driver:\n  version: 580.173.02\nmig:\n  strategy: none\n"`) {
+		t.Errorf("the rtx class should depart in its values, exactly: %+v", rtx)
+	}
+	up := map[string]string{}
+	for _, v := range p.Variants {
+		up[v.Cluster] = v.Upstream
+	}
+	if up["gpu-a"] != "sveltos-gpu-operator-class-h100" || up["rtx-a"] != "sveltos-gpu-operator-class-rtx-pro-6000" {
+		t.Errorf("each cluster's variant should come from its class base: %v", up)
+	}
+	if !strings.Contains(p.WorkflowText, "- Name: bases") || strings.Contains(p.WorkflowText, "Name: bases\n    WhereSpace: \"Labels.Stage = 'bases'\"\n    ReleasePrerequisites") {
+		t.Errorf("the workflow should carry changes into the class bases first, with nothing to release there:\n%s", p.WorkflowText)
+	}
+	script := ApplyScript(plan)
+	for _, want := range []string{
+		"cub variant create class-rtx-pro-6000 sveltos-gpu-operator-base --stage bases --space-pattern template:sveltos-gpu-operator-class-rtx-pro-6000 --allow-exists --quiet",
+		"depart sveltos-gpu-operator-class-rtx-pro-6000 clusterprofile",
+		"cub variant create rtx-a sveltos-gpu-operator-class-rtx-pro-6000 --stage prod",
+		"--space-label Role=deployment --space-label Cluster=rtx-a",
+		"--component sveltos-gpu-operator --label Component=sveltos-gpu-operator --label Role=base",
+		"--target-stage bases --quiet",
+		"stages_are sveltos-gpu-operator-base rollout bases,staging,prod",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("apply.sh should contain %q", want)
+		}
+	}
+	if strings.Contains(script, "depart sveltos-gpu-operator-class-h100 ") {
+		t.Errorf("a class that is the base itself has nothing to depart in")
+	}
+	if strings.Index(script, "--target-stage bases") > strings.Index(script, "--target-stage staging") {
+		t.Errorf("a change should reach the class bases before any cluster")
+	}
+	if !strings.Contains(RenderPlan(plan, true), "one class per accelerator: h100, rtx-pro-6000") {
+		t.Errorf("the plan should say which classes it made")
+	}
+
+	live := mustPlan(t, parse(t, gpuFamily(`, uid: "1"`)), Options{StageLabel: "env", Stages: []string{"staging", "prod"}, ClassLabel: "accelerator"})
+	takeover := TakeoverScript(live)
+	if !strings.Contains(takeover, "k delete clusterprofile gpu-operator-h100 ") || !strings.Contains(takeover, "k delete clusterprofile gpu-operator-rtx-pro-6000 ") {
+		t.Errorf("the takeover should hand over every live profile the component was made from")
+	}
+}
+
+func TestClassBasesFromOneProfile(t *testing.T) {
+	meridian := mgmt + cluster("eu-central-test-1", "projectsveltos", "class", "test") + cluster("eu-central-uat-1", "projectsveltos", "class", "uat") +
+		cluster("eu-central-prod-1", "projectsveltos", "class", "prod") + cluster("eu-central-prod-2", "projectsveltos", "class", "prod") +
+		"apiVersion: config.projectsveltos.io/v1beta1\nkind: ClusterProfile\nmetadata: {name: kyverno}\nspec:\n  clusterSelector: {matchExpressions: [{key: class, operator: In, values: [test, uat, prod]}]}\n  helmCharts: [{chartName: kyverno/kyverno, releaseName: kyverno, releaseNamespace: kyverno}]\n"
+	plan := mustPlan(t, parse(t, meridian), Options{StageLabel: "class", Stages: []string{"test", "uat", "prod"}, ClassLabel: "class"})
+	p := plan.Profiles[0]
+	var values []string
+	for _, c := range p.Classes {
+		values = append(values, c.Value)
+		if len(c.Departures) != 0 {
+			t.Errorf("class bases made from one profile start as the base")
+		}
+	}
+	if strings.Join(values, ",") != "prod,test,uat" {
+		t.Errorf("one class base per class the profile reaches: %v", values)
+	}
+	for _, v := range p.Variants {
+		if v.Upstream != "sveltos-kyverno-class-"+v.Class {
+			t.Errorf("%s should come from its class base, not %s", v.Space, v.Upstream)
+		}
+	}
+	if !strings.Contains(RenderPlan(plan, true), "4 Spaces") && !strings.Contains(RenderPlan(plan, true), "10 Spaces") {
+		t.Errorf("the Space count should include the class bases: %s", RenderPlan(plan, true))
+	}
+
+	missing := mustPlan(t, parse(t, mgmt+cluster("a", "projectsveltos", "env", "prod")+"apiVersion: config.projectsveltos.io/v1beta1\nkind: ClusterProfile\nmetadata: {name: p}\nspec: {clusterSelector: {matchLabels: {env: prod}}}\n"), Options{ClassLabel: "class"})
+	if !strings.Contains(strings.Join(missing.Problems, " "), "has no class label, so it belongs to no class") {
+		t.Errorf("a cluster without the class label should be named: %v", missing.Problems)
+	}
+	reserved := mustPlan(t, parse(t, meridian), Options{StageLabel: "class", Stages: []string{"bases", "prod"}, ClassLabel: "class"})
+	if !strings.Contains(strings.Join(reserved.Problems, " "), `stage name "bases" is taken`) {
+		t.Errorf("a stage called bases should be refused when there are class bases")
+	}
+}
+
+func TestDiffEdits(t *testing.T) {
+	var from, to map[string]any
+	_ = yaml.Unmarshal([]byte("spec: {a: 1, keep: x, gone: y, list: [1, 2], same: [1], 'odd.key': 1}"), &from)
+	_ = yaml.Unmarshal([]byte("spec: {a: 2, keep: x, list: [1, 2, 3], same: [1], 'odd.key': 2}"), &to)
+	edits, paths := diffEdits(from, to, "")
+	want := []string{`del(.spec.gone)`, `.spec.list = [1,2,3]`, `.spec["odd.key"] = 2`, `.spec.a = 2`}
+	got := map[string]bool{}
+	for _, e := range edits {
+		got[e] = true
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("missing edit %q in %v", w, edits)
+		}
+	}
+	if len(edits) != len(want) || len(paths) != len(want) {
+		t.Errorf("only the differences should be edited: %v %v", edits, paths)
+	}
+}
+
 func TestJoiningCluster(t *testing.T) {
 	base := mustPlan(t, exampleDocs(t), exampleOpts)
 	docs := append(exampleDocs(t), parse(t, cluster("staging-us", "projectsveltos", "env", "staging")+cluster("prod-eu", "projectsveltos", "env", "prod", "region", "eu"))...)

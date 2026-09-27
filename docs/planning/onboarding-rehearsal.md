@@ -67,6 +67,13 @@ run above:
   profile managed its release took the release over by itself within a
   minute of that profile being deleted with `LeavePolicies`.
 - `cub unit get -o json` answers `HeadRevisionNum`; a fresh clone is at 2.
+- A variant of a variant works as a class base (2026-09-27). A workflow stage
+  with no release prerequisite carries a change into the class bases. The
+  change order still reaches `Completed` and `Released`, although the class
+  bases never publish. A class base's departure in one key of a map, and a
+  root change to another key of the same map, both survived the promotion.
+  This is narrower than the older runner note, which says changes to
+  different keys of one map lose to the departure.
 
 ## The takeover with plain resources
 
@@ -109,6 +116,15 @@ operator pod. A newly labelled cluster received nothing until its variant was
 released through the prod stage, which a re-run added to the workflow. A
 mislabelled cluster received nothing. The operator and driver upgrade reached
 staging before prod. Kind has no GPUs, so no driver ran.
+
+## Class bases: a slice of Meridian
+
+Also on 2026-09-27 ([examples/meridian-slice](../../examples/meridian-slice/README.md)):
+three per-class Kyverno profiles on four Meridian-named kind clusters became
+one component with `--class-label class`, a root base, three class bases and
+four deployments. The takeover kept every release and each class's replicas.
+A Kyverno 3.8.1 to 3.8.2 upgrade on the root went through the class bases,
+then test, uat and prod in order, and each class kept its replicas.
 
 ## Not measured
 

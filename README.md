@@ -289,6 +289,14 @@ driver on staging before prod, using NVIDIA's own AI Cluster Runtime recipe.
 It is recorded on kind as a run log rather than a receipt, and kind has no
 GPUs, so it proves the governance and delivery, not a driver coming up.
 
+**[A slice of Meridian](examples/meridian-slice/README.md)**, ConfigHub's
+demo fleet, delivered for real by Sveltos: four of its eu-central clusters
+and its Kyverno component in Meridian's three levels (a root base, a class
+base per class, a deployment per cluster), made by `cub sveltos
+--class-label` from one Sveltos profile per class. One chart upgrade on the
+root reached the class bases, then test, uat and prod in order, and each
+class kept its own replicas. Recorded on kind as a run log.
+
 ## How to run it
 
 Already running Sveltos? [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md)

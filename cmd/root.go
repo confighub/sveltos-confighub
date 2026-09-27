@@ -28,6 +28,7 @@ type planFlags struct {
 	stages     string
 	management string
 	profiles   string
+	classLabel string
 }
 
 func (f *planFlags) register(c *cobra.Command) {
@@ -36,6 +37,7 @@ func (f *planFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.stages, "stages", "", "the stages in order, comma-separated (with --stage-label)")
 	c.Flags().StringVar(&f.management, "management", "", "the management cluster as <namespace>/<name>, if it is not mgmt/mgmt")
 	c.Flags().StringVar(&f.profiles, "profiles", "", "onboard only these profiles, comma-separated")
+	c.Flags().StringVar(&f.classLabel, "class-label", "", "add a class base per value of this cluster label between each base and its clusters")
 }
 
 func split(s string) []string {
@@ -55,6 +57,7 @@ func (f *planFlags) options() onboard.Options {
 		Stages:     split(f.stages),
 		Management: f.management,
 		Profiles:   split(f.profiles),
+		ClassLabel: f.classLabel,
 	}
 }
 

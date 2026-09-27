@@ -104,6 +104,39 @@ Sveltos reads the gateway as the Targets' server worker. That credential does
 not expire, it can pull only the releases of those Targets, and the script
 moves it from `cub` into the Secret without writing it to disk or showing it.
 
+## Classes: a base per environment, or per accelerator
+
+With `--class-label <label>`, onboarding adds a level between each base and
+its clusters, the way ConfigHub's Meridian demo fleet is laid out: a root
+base, one class base per value of the label, and each cluster's variant
+cloned from its class base.
+
+```bash
+cub sveltos plan my-fleet.yaml --class-label class --stage-label class --stages test,uat,prod
+```
+
+- **You keep one profile per class already** (`kyverno-test`, `kyverno-uat`,
+  `kyverno-prod`, each selecting its class and setting that class's values).
+  The plan recognises them as one component, because they install the same
+  charts and differ only in the class they select. Each becomes a class base
+  holding exactly what it differs in, and `takeover.sh` hands all of them
+  over. The same works for accelerators: `gpu-operator-h100` and
+  `gpu-operator-rtx-pro-6000` with `--class-label accelerator`.
+- **One profile covers several classes.** It gets a class base per class,
+  the same as the base at first, so a change for one class has a place to go.
+
+A change for every class is made once, on the root base. The workflow's
+first stage, `bases`, carries it into every class base; the class bases are
+never released, so nothing waits on that stage. It then moves stage by
+stage to the clusters, and each class keeps what it differs in.
+
+One rule follows. A class owns the fields it departs in: when a root change
+and a class departure touch the same field, ConfigHub keeps the class's value
+and drops the change for that class without saying so. For a Helm chart the
+departure is usually its values, which are one string, so a change to values
+is made on each class base, and a chart upgrade, which is a different field,
+is made once on the root.
+
 ## What you will see
 
 ConfigHub's Rollouts view shows each release moving through its stages. In

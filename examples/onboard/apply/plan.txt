@@ -1,4 +1,4 @@
-Onboarding plan: 3 profiles over 3 clusters, one variant per cluster per profile (8 variants).
+Onboarding plan: 3 profiles over 3 clusters, one variant per cluster per component (8 variants).
 Nothing has changed. This is what ConfigHub would hold.
 
 ingress-nginx  (selects env=prod)

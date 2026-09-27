@@ -59,11 +59,15 @@ waits for a go-ahead ([#48](https://github.com/confighub/sveltos-confighub/issue
 
 ## Two things this chapter teaches
 
-**Different accelerators need different bases, not departures.** An H100
-cluster and an RTX Pro 6000 cluster run different AICR recipes. Give each
-recipe its own profile, which onboarding turns into its own base, rather than
-one base with per-cluster values departures. Chart values live in one string
-field, and a departure there is overwritten by the next change to the base.
+**Different accelerators are classes.** An H100 cluster and an RTX Pro 6000
+cluster run different AICR recipes. Keep one profile per recipe, each
+selecting its accelerator, and onboard with `--class-label accelerator`: they
+become one component with a class base per accelerator, each holding its own
+values, and a chart upgrade made once on the root reaches both. Per-cluster
+values departures would hold the same differences, but chart values are one
+string field, and when a base change and a departure touch the same field,
+ConfigHub keeps the departure and drops the change without saying so: every
+values change would have to be made cluster by cluster.
 
 **Reviewing a values change is harder than it should be.** ConfigHub's
 Rollouts view highlights the chart version change, but it shows the 136 lines
