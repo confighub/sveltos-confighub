@@ -241,6 +241,12 @@ it. A recorded ConfigHub run showed exactly that: a variant whose departure
 sat on a map the base also wrote received none of the base's changes while
 its upstream pointer advanced to the base head.
 
+ConfigHub's merge has changed since that run. Measured on 2026-09-27, when
+the base changes a setting a variant overrides, the base's value replaces
+the override, and changes to different settings both survive, even inside
+one values string. Either way the collision is silent, so the guard below
+still applies.
+
 So the runner refuses a departure that collides with the field the change
 writes, before it builds anything, and it checks after every promotion that
 the variant came out carrying both the inherited change and its own

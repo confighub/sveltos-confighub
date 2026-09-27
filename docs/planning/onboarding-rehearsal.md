@@ -72,8 +72,17 @@ run above:
   change order still reaches `Completed` and `Released`, although the class
   bases never publish. A class base's departure in one key of a map, and a
   root change to another key of the same map, both survived the promotion.
-  This is narrower than the older runner note, which says changes to
-  different keys of one map lose to the departure.
+- Inside a Helm values string, measured the same day on throwaway Spaces
+  (`valprobe-*`):
+  - A root change to one setting and a class override of another both
+    survived, so ConfigHub merges inside the string.
+  - A root change to the setting the class overrides replaced the override,
+    with no conflict reported.
+  - `cub unit set-protection` on `spec.helmCharts.0.values` was recorded and
+    listed as "preserved during merges", yet the next promotion overwrote it.
+    ConfigHub tracks the chart-list entry by a content hash, not by position.
+  - The older runner note, and the first version of the class-base docs,
+    said the override wins. That is not what ConfigHub does now.
 
 ## The takeover with plain resources
 

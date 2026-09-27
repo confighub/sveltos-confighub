@@ -130,12 +130,16 @@ first stage, `bases`, carries it into every class base; the class bases are
 never released, so nothing waits on that stage. It then moves stage by
 stage to the clusters, and each class keeps what it differs in.
 
-One rule follows. A class owns the fields it departs in: when a root change
-and a class departure touch the same field, ConfigHub keeps the class's value
-and drops the change for that class without saying so. For a Helm chart the
-departure is usually its values, which are one string, so a change to values
-is made on each class base, and a chart upgrade, which is a different field,
-is made once on the root.
+When the base changes a setting that a class or a cluster overrides, the
+base's value replaces the override, and the promotion reports nothing.
+Changes to different settings both survive, even inside the same Helm values
+string. Protecting the override with `cub unit set-protection` did not hold
+for Helm values, because ConfigHub identifies the entries of a chart list by
+their content (measured 2026-09-27).
+
+So a setting a class overrides is changed on the class bases, never on the
+root: a root change to it would replace every class's value. A chart upgrade,
+and any setting no class overrides, is changed once on the root.
 
 ## What you will see
 
@@ -249,6 +253,10 @@ cub variant approve --change-order sveltos-kyverno-base/more-replicas --stage pr
 cub release publish sveltos-kyverno-prod-eu --revision ChangeOrder:sveltos-kyverno-base/more-replicas
 cub release publish sveltos-kyverno-prod-us --revision ChangeOrder:sveltos-kyverno-base/more-replicas
 ```
+
+Never edit the base's `metadata.name` or `clusterRefs`: those are the fields
+each variant overrides to address its own cluster, and a base change to them
+would replace every variant's address.
 
 ConfigHub refuses to promote into prod until staging has released the
 change, and refuses each release until the change is approved in its stage;

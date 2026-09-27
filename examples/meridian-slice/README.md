@@ -48,12 +48,17 @@ running [run.sh](run.sh) against a fleet from
 
 ## The rule the three levels come with
 
-A class owns the fields it departs in. When a root change and a class
-departure touch the same field, ConfigHub keeps the class's value and drops
-the change for that class without saying so. Here each class departs in its
-Helm values, which are one string. So a values change is made on the class
-bases, and a chart upgrade, which is a different field, is made once on the
-root, as above.
+When the base changes a setting that a class or a cluster overrides, the
+base's value replaces the override, and the promotion reports nothing.
+Changes to different settings both survive, even inside the same Helm values
+string. Protecting the override with `cub unit set-protection` did not hold
+for Helm values, because ConfigHub identifies the entries of a chart list by
+their content (measured 2026-09-27).
+
+Here each class overrides its replicas, so replicas are changed on the class
+bases, never on the root: a root change to them would replace every class's
+value. The chart upgrade above changed a different field, so it could be made
+once on the root.
 
 ## What this slice is not
 
