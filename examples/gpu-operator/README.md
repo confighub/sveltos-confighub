@@ -14,6 +14,21 @@ objects the chart renders to, the ClusterPolicy among them, so the driver
 version a reviewer approves is a field, `spec.driver.version`, not a line
 inside a values string.
 
+```mermaid
+flowchart LR
+  subgraph today["today"]
+    direction TB
+    l["label addons.gpu-operator=enabled"] -->|"ships at once"| any["any cluster labelled,<br/>cpu-c included"]
+  end
+  subgraph after["after onboarding"]
+    direction TB
+    l2["label"] --> plan["the plan proposes<br/>a variant"]
+    plan --> ok["reviewed and approved"]
+    ok --> gets["the operator ships to<br/>that cluster alone"]
+  end
+  today -->|"cub sveltos plan,<br/>apply, handover"| after
+```
+
 ## The input
 
 [gpu-fleet.yaml](gpu-fleet.yaml) is the fleet as its owner describes it
@@ -46,6 +61,15 @@ built from this repository, by running [run.sh](run.sh) against a fleet from
 | gpu-b is labelled | A minute after the label, nothing had shipped. Onboarding again from `onboard/profiles.yaml` added gpu-b's variant in the prod stage. Its release brought the operator and driver 580.126.20 to a cluster that had nothing. The chart lists its ClusterPolicy before the ClusterPolicy CRD; with `continueOnError: true` the CRDs land first and the ClusterPolicy on the retry. |
 | cpu-c is labelled by mistake | A minute later, nothing had shipped to cpu-c. The plan shows the variant a reviewer would refuse. The label was removed, and nothing was applied. |
 | Upgrade, staging first | The v26.7.0 rendering, with the driver moved to 580.173.02, replaced the base's unit. ConfigHub's diff lists it object by object: 20 paths of the ClusterPolicy (every operand's version, `spec.driver.version` among them, and one new field), 4 of the operator's Deployment (its image among them), 12 of RBAC rules, 120 of CRD schema, and 3 new CRDs. Prod was refused while staging had the change unreleased. gpu-a then ran v26.7.0 with 580.173.02, then gpu-b, and the change order ended `Completed`, `Released`. |
+
+The upgrade, as it moved:
+
+```mermaid
+flowchart LR
+  base["ch7-gpu-operator-base<br/>v26.7.0, driver 580.173.02"] --> a["staging: gpu-a<br/>promote, approve, publish"]
+  a -->|"prod refused until<br/>staging released"| b["prod: gpu-b<br/>promote, approve, publish"]
+  base -.-x c["cpu-c: no variant,<br/>nothing ships"]
+```
 
 ## What kind cannot show
 

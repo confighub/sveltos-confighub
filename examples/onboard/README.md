@@ -19,6 +19,20 @@ before running anything against your own:
   size, and `internal/onboard/testdata/renders` keeps what `cub helm template`
   printed for them.
 
+The fleet has four workload clusters: staging-eu, prod-eu, prod-us, and
+dev-1, which no profile selects. Each profile becomes a base, with one
+variant per cluster it selects:
+
+```mermaid
+flowchart LR
+  k["kyverno<br/>env In staging, prod"] --> k1["variant staging-eu"] & k2["variant prod-eu"] & k3["variant prod-us"]
+  kp["kyverno-policies<br/>env In staging, prod<br/>dependsOn kyverno"] --> kp1["variant staging-eu"] & kp2["variant prod-eu"] & kp3["variant prod-us"]
+  n["ingress-nginx<br/>env=prod"] --> n1["variant prod-eu"] & n2["variant prod-us"]
+```
+
+Eight variants in all, and a delivery profile for each. A fifth cluster,
+staging-us, joins later in the run.
+
 `go test ./...` checks that these files are what the plugin writes today;
 `go test ./internal/onboard -update` regenerates them, and `-record` renders
 the charts again with `cub helm`. The guide is

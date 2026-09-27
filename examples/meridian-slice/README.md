@@ -46,6 +46,11 @@ uat and prod each depart from it in two ways: the admission controller's
 carry Meridian's `Role` and `Cluster` labels, so Meridian's queries
 (`Labels.Role = 'base'`, `Labels.Role = 'deployment'`) find them.
 
+After the recorded change, Kyverno 3.8.2 and 4 replicas made once on the
+root, the tree held this, and each cluster ran what its variant held:
+
+![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds. Promote with --squash](../../docs/images/sveltos/sveltos-meridian-three-levels.svg)
+
 ## What was recorded
 
 Recorded on kind on 2026-09-27 with stock Sveltos v1.15.0 and Kyverno, by
@@ -70,8 +75,8 @@ change as one diff, with `--squash`, as `apply.sh` and `run.sh` do. Without
 it, ConfigHub replays the root's function on each cluster's unit, past the
 class's protection: an earlier recording of this slice ended with every
 cluster at the root's 4 replicas, while the class bases still said 2 and 3.
-The [rehearsal record](../../docs/planning/onboarding-rehearsal.md) has the
-three-Space reproduction.
+A three-Space reproduction is filed with ConfigHub
+(confighubai/confighub#5529).
 
 A class that removes an object the root has cannot protect the removal; the
 plan says so when that happens, and here the root is chosen so it does not.

@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="424" viewBox="0 0 1000 424" role="img" aria-label="One change at the root base, Kyverno 3.8.2 and 4 replicas, reaches three class bases in the bases stage. The test class takes 4 replicas; uat and prod keep their protected 2 and 3 and add a PodDisruptionBudget. Their clusters then take what their class holds, stage by stage. Promote with --squash: without it, the root's function is replayed on each cluster past its class's protection.">
+  <style>
+    .bg { fill: #f6f7f5 }
+    .box { fill: #ffffff; stroke: #1b2420; stroke-width: 1.25 }
+    .boxa { fill: #ffffff; stroke: #0d6b5f; stroke-width: 1.75 }
+    .note { fill: #ffffff; stroke: #d5ddd7 }
+    .bar { fill: #8a4b1f }
+    .h { fill: #1b2420; font: 600 15px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .t { fill: #1b2420; font: 600 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-anchor: middle }
+    .s { fill: #5d6b64; font: 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-anchor: middle }
+    .sl { fill: #5d6b64; font: 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .ac { fill: #0d6b5f; font: 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-anchor: middle }
+    .acb { fill: #0d6b5f; font: 600 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-anchor: middle }
+    .stage { fill: #5d6b64; font: 600 10px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: .06em }
+    .wt { fill: #8a4b1f; font: 600 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .p { fill: #1b2420; font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .ln { fill: none; stroke: #1b2420; stroke-width: 1.5 }
+    .mk { fill: #1b2420 }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #101613 }
+      .box, .note { fill: #18211d; stroke: #e4eae6 }
+      .note { stroke: #2c3a34 }
+      .boxa { fill: #18211d; stroke: #5fc9b4 }
+      .bar { fill: #d69a63 }
+      .h, .t, .p { fill: #e4eae6 }
+      .s, .sl, .stage { fill: #97a69e }
+      .ac, .acb { fill: #5fc9b4 }
+      .wt { fill: #d69a63 }
+      .ln { stroke: #e4eae6 }
+      .mk { fill: #e4eae6 }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+  <rect class="bg" width="1000" height="424"/>
+
+  <text class="h" x="20" y="34">One change at the root, three levels</text>
+  <text class="sl" x="20" y="52">Kyverno 3.8.2 and 4 replicas, made once on the root base, in one change order. Recorded on four eu-central clusters.</text>
+
+  <!-- root -->
+  <rect class="boxa" x="400" y="70" width="200" height="48" rx="7"/>
+  <text class="t" x="500" y="90">root base</text>
+  <text class="ac" x="500" y="106">3.8.2 · replicas 4</text>
+
+  <!-- root to class bases: the bases stage -->
+  <path class="ln" d="M500 118V138H220V156" marker-end="url(#a)"/>
+  <path class="ln" d="M500 118V156" marker-end="url(#a)"/>
+  <path class="ln" d="M500 138H780V156" marker-end="url(#a)"/>
+  <text class="stage" x="612" y="133">BASES STAGE: NEVER RELEASED</text>
+
+  <!-- class bases -->
+  <rect class="box" x="130" y="160" width="180" height="62" rx="7"/>
+  <text class="t" x="220" y="181">class base test</text>
+  <text class="s" x="220" y="197">the same as the root</text>
+  <text class="s" x="220" y="212">takes replicas 4</text>
+
+  <rect class="box" x="410" y="160" width="180" height="62" rx="7"/>
+  <text class="t" x="500" y="181">class base uat</text>
+  <text class="acb" x="500" y="197">keeps replicas 2 · protected</text>
+  <text class="s" x="500" y="212">+ PodDisruptionBudget</text>
+
+  <rect class="box" x="690" y="160" width="180" height="62" rx="7"/>
+  <text class="t" x="780" y="181">class base prod</text>
+  <text class="acb" x="780" y="197">keeps replicas 3 · protected</text>
+  <text class="s" x="780" y="212">+ PodDisruptionBudget</text>
+
+  <!-- class bases to clusters: one stage each -->
+  <path class="ln" d="M220 222V250" marker-end="url(#a)"/>
+  <path class="ln" d="M500 222V250" marker-end="url(#a)"/>
+  <path class="ln" d="M780 222V236H710V250" marker-end="url(#a)"/>
+  <path class="ln" d="M780 236H880V250" marker-end="url(#a)"/>
+  <text class="stage" x="228" y="241">TEST STAGE</text>
+  <text class="stage" x="508" y="241">UAT STAGE</text>
+  <text class="stage" x="888" y="232">PROD STAGE</text>
+
+  <!-- clusters -->
+  <rect class="box" x="140" y="252" width="160" height="48" rx="7"/>
+  <text class="t" x="220" y="272">eu-central-test1</text>
+  <text class="s" x="220" y="288">3.8.2 · replicas 4</text>
+
+  <rect class="box" x="420" y="252" width="160" height="48" rx="7"/>
+  <text class="t" x="500" y="272">eu-central-uat1</text>
+  <text class="s" x="500" y="288">3.8.2 · replicas 2</text>
+
+  <rect class="box" x="635" y="252" width="150" height="48" rx="7"/>
+  <text class="t" x="710" y="272">eu-central-prod1</text>
+  <text class="s" x="710" y="288">3.8.2 · replicas 3</text>
+
+  <rect class="box" x="805" y="252" width="150" height="48" rx="7"/>
+  <text class="t" x="880" y="272">eu-central-prod2</text>
+  <text class="s" x="880" y="288">3.8.2 · replicas 3</text>
+
+  <!-- the lesson -->
+  <rect class="note" x="20" y="326" width="960" height="80" rx="8"/>
+  <rect class="bar" x="20" y="326" width="3" height="80"/>
+  <text class="wt" x="38" y="348">Promote with --squash</text>
+  <text class="p" x="38" y="368">Each cluster then takes its class's change as one diff. Without it, ConfigHub replays the root's set-yq on each cluster, past its</text>
+  <text class="p" x="38" y="386">class's protection: the first recording ended with uat1, prod1 and prod2 at 4 replicas while their class bases still said 2 and 3.</text>
+</svg>

@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="410" viewBox="0 0 1000 410" role="img" aria-label="Before, one label-selector ClusterProfile installs Kyverno with Helm on three clusters. After the handover, ConfigHub holds a base and one variant per cluster, and one delivery profile per variant delivers it to the same three clusters, with nothing reinstalled.">
+  <style>
+    .bg { fill: #f6f7f5 }
+    .zone { fill: #eef1ed; stroke: #d5ddd7 }
+    .box { fill: #ffffff; stroke: #1b2420; stroke-width: 1.25 }
+    .boxa { fill: #ffffff; stroke: #0d6b5f; stroke-width: 1.75 }
+    .rule { stroke: #d5ddd7 }
+    .h { fill: #1b2420; font: 600 15px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .t { fill: #1b2420; font: 600 13px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .t12 { fill: #1b2420; font: 600 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .s { fill: #5d6b64; font: 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .p { fill: #1b2420; font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .cap { fill: #5d6b64; font: 600 10px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; letter-spacing: .06em }
+    .ac { fill: #0d6b5f; font: 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .ln { fill: none; stroke: #1b2420; stroke-width: 1.5 }
+    .lna { fill: none; stroke: #0d6b5f; stroke-width: 1.75 }
+    .el { fill: none; stroke: #1b2420; stroke-width: 1; opacity: .4 }
+    .mk { fill: #1b2420 }
+    .mka { fill: #0d6b5f }
+    .badge { fill: #ffffff; stroke: #0d6b5f; stroke-width: 1.5 }
+    .bn { fill: #0d6b5f; font: 600 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-anchor: middle }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #101613 }
+      .zone { fill: #141c18; stroke: #2c3a34 }
+      .box { fill: #18211d; stroke: #e4eae6 }
+      .boxa { fill: #18211d; stroke: #5fc9b4 }
+      .rule { stroke: #2c3a34 }
+      .h, .t, .t12, .p { fill: #e4eae6 }
+      .s, .cap { fill: #97a69e }
+      .ac, .bn { fill: #5fc9b4 }
+      .ln, .el { stroke: #e4eae6 }
+      .lna { stroke: #5fc9b4 }
+      .mk { fill: #e4eae6 }
+      .mka { fill: #5fc9b4 }
+      .badge { fill: #18211d; stroke: #5fc9b4 }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk" d="M0 0L10 5L0 10z"/></marker>
+    <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mka" d="M0 0L10 5L0 10z"/></marker>
+  </defs>
+  <rect class="bg" width="1000" height="410"/>
+  <line class="rule" x1="428" y1="40" x2="428" y2="300"/>
+
+  <!-- Before -->
+  <g transform="translate(20,0)">
+    <text class="h" x="0" y="34">Before</text>
+    <text class="s" x="0" y="52">one profile, placed by label</text>
+
+    <rect class="box" x="0" y="146" width="200" height="88" rx="7"/>
+    <text class="t" x="14" y="168">kyverno</text>
+    <text class="s" x="14" y="184">ClusterProfile</text>
+    <text class="s" x="14" y="200">selects env In [staging, prod]</text>
+    <text class="s" x="14" y="216">helmCharts: kyverno 3.8.1</text>
+
+    <path class="ln" d="M200 190H222V160H244" marker-end="url(#a)"/>
+    <path class="ln" d="M222 190V210H244" marker-end="url(#a)"/>
+    <path class="ln" d="M222 190V260H244" marker-end="url(#a)"/>
+
+    <rect class="box" x="250" y="140" width="150" height="40" rx="7"/>
+    <rect class="box" x="250" y="190" width="150" height="40" rx="7"/>
+    <rect class="box" x="250" y="240" width="150" height="40" rx="7"/>
+    <text class="t" x="262" y="157">staging-eu</text>
+    <text class="s" x="262" y="172">Helm release, revision 1</text>
+    <text class="t" x="262" y="207">prod-eu</text>
+    <text class="s" x="262" y="222">Helm release, revision 1</text>
+    <text class="t" x="262" y="257">prod-us</text>
+    <text class="s" x="262" y="272">Helm release, revision 1</text>
+
+    <circle class="badge" cx="200" cy="146" r="9"/>
+    <text class="bn" x="200" y="150">1</text>
+
+    <text class="s" x="0" y="312">A label decides what runs, and nothing records who decided.</text>
+  </g>
+
+  <!-- After -->
+  <g transform="translate(446,0)">
+    <text class="h" x="0" y="34">After the handover</text>
+    <text class="s" x="0" y="52">the same clusters and objects; each cluster has its own variant and delivery profile</text>
+
+    <rect class="zone" x="0" y="66" width="165" height="230" rx="9"/>
+    <text class="cap" x="10" y="84">CONFIGHUB</text>
+    <rect class="box" x="10" y="92" width="145" height="38" rx="7"/>
+    <text class="t" x="20" y="108">base</text>
+    <text class="s" x="20" y="123">kyverno: 71 objects</text>
+    <path class="el" d="M18 130V160H26M18 160V210H26M18 210V260H26"/>
+    <rect class="box" x="26" y="140" width="129" height="40" rx="7"/>
+    <rect class="box" x="26" y="190" width="129" height="40" rx="7"/>
+    <rect class="box" x="26" y="240" width="129" height="40" rx="7"/>
+    <text class="t" x="36" y="157">staging-eu</text>
+    <text class="s" x="36" y="172">variant</text>
+    <text class="t" x="36" y="207">prod-eu</text>
+    <text class="s" x="36" y="222">variant</text>
+    <text class="t" x="36" y="257">prod-us</text>
+    <text class="s" x="36" y="272">variant</text>
+
+    <path class="lna" d="M155 160H194" marker-end="url(#ag)"/>
+    <path class="lna" d="M155 210H194" marker-end="url(#ag)"/>
+    <path class="lna" d="M155 260H194" marker-end="url(#ag)"/>
+
+    <rect class="zone" x="182" y="66" width="185" height="230" rx="9"/>
+    <text class="cap" x="192" y="84">MANAGEMENT CLUSTER</text>
+    <text class="s" x="192" y="104">one delivery profile per variant,</text>
+    <text class="s" x="192" y="118">reading its approved release</text>
+    <rect class="boxa" x="200" y="140" width="157" height="40" rx="7"/>
+    <rect class="boxa" x="200" y="190" width="157" height="40" rx="7"/>
+    <rect class="boxa" x="200" y="240" width="157" height="40" rx="7"/>
+    <text class="t12" x="210" y="157">kyverno-staging-eu</text>
+    <text class="s" x="210" y="172">clusterRefs: staging-eu</text>
+    <text class="t12" x="210" y="207">kyverno-prod-eu</text>
+    <text class="s" x="210" y="222">clusterRefs: prod-eu</text>
+    <text class="t12" x="210" y="257">kyverno-prod-us</text>
+    <text class="s" x="210" y="272">clusterRefs: prod-us</text>
+    <circle class="badge" cx="200" cy="140" r="9"/>
+    <text class="bn" x="200" y="144">2</text>
+
+    <path class="lna" d="M357 160H394" marker-end="url(#ag)"/>
+    <path class="lna" d="M357 210H394" marker-end="url(#ag)"/>
+    <path class="lna" d="M357 260H394" marker-end="url(#ag)"/>
+
+    <rect class="box" x="400" y="140" width="130" height="40" rx="7"/>
+    <rect class="box" x="400" y="190" width="130" height="40" rx="7"/>
+    <rect class="box" x="400" y="240" width="130" height="40" rx="7"/>
+    <text class="t" x="412" y="157">staging-eu</text>
+    <text class="ac" x="412" y="172">nothing reinstalled</text>
+    <text class="t" x="412" y="207">prod-eu</text>
+    <text class="ac" x="412" y="222">nothing reinstalled</text>
+    <text class="t" x="412" y="257">prod-us</text>
+    <text class="ac" x="412" y="272">nothing reinstalled</text>
+    <circle class="badge" cx="530" cy="140" r="9"/>
+    <text class="bn" x="530" y="144">3</text>
+  </g>
+
+  <!-- The handover, in order -->
+  <g transform="translate(20,0)">
+    <circle class="badge" cx="9" cy="338" r="9"/><text class="bn" x="9" y="342">1</text>
+    <text class="p" x="26" y="342">The live profile is set to stopMatchingBehavior: LeavePolicies and deleted, dependents first, so Sveltos withdraws nothing.</text>
+    <circle class="badge" cx="9" cy="362" r="9"/><text class="bn" x="9" y="366">2</text>
+    <text class="p" x="26" y="366">Only then are the delivery profiles applied. Each names one cluster, and adopts what is already there.</text>
+    <circle class="badge" cx="9" cy="386" r="9"/><text class="bn" x="9" y="390">3</text>
+    <text class="p" x="26" y="390">Helm's release record is removed from each cluster, leaving the objects, so a helm uninstall cannot take them away.</text>
+  </g>
+</svg>

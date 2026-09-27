@@ -13,6 +13,14 @@ delivers each cluster's release to that cluster and repairs drift.
 `cub sveltos` is how you get there; after onboarding, every change is made
 with ConfigHub's own commands.
 
+![Before and after the handover: one label-selector profile installing Kyverno on three clusters becomes a ConfigHub base with one variant per cluster, delivered by one Sveltos delivery profile per variant to the same clusters, with nothing reinstalled](../images/sveltos/sveltos-handover-before-after.svg)
+
+A change is made once, on the base, and reaches each variant through the
+stages. Each delivery profile names one cluster (`clusterRefs`) and reads one
+variant's latest approved release from ConfigHub's OCI gateway. If your
+profiles are live, the handover moves them over in the numbered order, with
+nothing reinstalled.
+
 You need the `cub` CLI logged in to your ConfigHub organization
 (`cub auth login`), `kubectl` access to your management cluster, which must
 run Sveltos v1.14.0 or newer, and two plugins:
@@ -49,6 +57,19 @@ renderer, so a chart onboarded here holds the objects `cub helm` would.
   an approval recorded in each stage before its release. **Workflow**: the
   stages and what each waits for.
 
+## The journey
+
+```mermaid
+flowchart LR
+  ex["1. export<br/>kubectl get clusterprofiles,<br/>sveltosclusters"] --> plan["2. cub sveltos plan<br/>prints what ConfigHub<br/>would hold"]
+  plan --> apply["3. cub sveltos apply<br/>writes the files<br/>and the scripts"]
+  apply --> as["apply.sh<br/>ConfigHub, then your<br/>management cluster"]
+  as --> ho["handover.sh<br/>only if your profiles<br/>are live"]
+```
+
+The first three steps change nothing anywhere: `plan` needs no account and no
+cluster, and `apply` only writes files. You read `apply.sh` before you run it.
+
 ## 1. Export what Sveltos knows
 
 On your management cluster:
@@ -81,6 +102,12 @@ kyverno  (selects env In [staging, prod])
   stage prod
     prod-eu      variant sveltos-kyverno-prod-eu  ->  Target sveltos-targets/prod-eu
     prod-us      variant sveltos-kyverno-prod-us  ->  Target sveltos-targets/prod-us
+```
+
+```mermaid
+flowchart LR
+  hc["helmCharts entry<br/>kyverno 3.8.1 and its values"] -->|"cub helm template"| u1["unit kyverno<br/>71 objects, 22 of them CRDs"]
+  pr["policyRefs ConfigMap<br/>default/kyverno-policies"] -->|"the objects it holds"| u2["unit kyverno-policies<br/>1 ClusterPolicy"]
 ```
 
 Each chart becomes one unit holding its rendered objects, exactly as
@@ -136,6 +163,8 @@ read the gzipped layers ConfigHub's gateway serves), then:
    its cluster, within a minute of it being published, and puts back
    anything changed by hand.
 
+![A delivery profile as apply writes it, annotated: one per variant, addressed to one cluster by clusterRefs, drift put back, continueOnError always on, and one policyRefs entry reading the variant's latest approved release from ConfigHub's OCI gateway with the Targets' worker credential](../images/sveltos/sveltos-delivery-profile.svg)
+
 The whole script is safe to re-run. It picks up where ConfigHub says each
 step stands, and it never writes over a change made in ConfigHub since.
 
@@ -161,6 +190,21 @@ dependent is gone. Then it applies the delivery profiles, which adopt what
 is there. No object ever has two profiles managing it. Do not delete a live
 profile without `LeavePolicies`: by default Sveltos withdraws what it
 deployed.
+
+```mermaid
+sequenceDiagram
+  participant H as handover.sh
+  participant L as live profile
+  participant S as Sveltos
+  participant D as delivery profiles
+  participant C as your clusters
+  H->>L: stopMatchingBehavior: LeavePolicies
+  H->>L: delete, dependents first
+  S-->>C: leaves every object in place
+  H->>D: apply, one per variant
+  D->>S: fetch each variant's release from ConfigHub
+  S->>C: adopt the same objects: nothing reinstalled
+```
 
 Measured on kind: every long-running pod and the Kyverno policy kept its
 identity, and each Helm release stayed at the revision it had. In an earlier
@@ -214,6 +258,8 @@ cub sveltos plan my-fleet.yaml --class-label class --stage-label class --stages 
 - **One profile covers several classes.** It gets a class base per class,
   the same as the base at first, so a change for one class has a place to go.
 
+![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds. Promote with --squash](../images/sveltos/sveltos-meridian-three-levels.svg)
+
 Each field a class departs in is protected, so a later change to the same
 field at the root does not replace it. A change for every class is made
 once, on the root base: the workflow's first stage, `bases`, carries it into
@@ -231,6 +277,15 @@ removes cannot be protected, and the plan says so.
 
 After onboarding, ConfigHub holds what runs, and a change is made to it with
 ConfigHub's own commands, then taken through the stages by a change order.
+
+```mermaid
+flowchart LR
+  edit["edit the base<br/>a function, or a<br/>chart upgrade"] --> co["change order"]
+  co --> st["staging<br/>promote --squash,<br/>approve, publish"]
+  st -->|"refused until staging<br/>has released"| pd["prod<br/>promote --squash,<br/>approve, publish"]
+  st -.->|"Sveltos, within a minute"| cs["staging clusters"]
+  pd -.->|"Sveltos, within a minute"| cp["prod clusters"]
+```
 
 **A field**, for every cluster, on the base:
 
@@ -289,7 +344,8 @@ as one diff. Without it, a promotion replays the functions a change was made
 with, one revision at a time, and a function run at the root then reaches a
 class's clusters even though the class base protected that field. Measured on
 kind: a root change to 4 replicas, made with `set-yq`, left the uat class base
-at its protected 2, and then set the uat cluster to 4.
+at its protected 2, and then set the uat cluster to 4
+(confighubai/confighub#5529).
 
 ConfigHub refuses to promote into prod until staging has released the
 change, and refuses each release until the change is approved in its stage;
@@ -314,6 +370,13 @@ kubectl get sveltosclusters -A -o yaml > clusters.yaml
 cub sveltos plan onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod --include-hooks ingress-nginx
 cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod --include-hooks ingress-nginx --out onboard
 MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/apply.sh
+```
+
+```mermaid
+flowchart LR
+  lab["label the new cluster:<br/>nothing ships yet"] --> pl["plan and apply<br/>from onboard/profiles.yaml"]
+  pl --> v["its variant, cloned from<br/>the base as it stands today"]
+  v --> rel["approved and released<br/>through its stage"]
 ```
 
 The plan shows the new cluster's variants. The script leaves every existing

@@ -37,6 +37,8 @@ kubectl get clusterprofiles,sveltosclusters -A -o yaml > my-fleet.yaml
 cub sveltos plan my-fleet.yaml --stage-label env --stages staging,prod
 ```
 
+![Before and after the handover: one label-selector profile installing Kyverno on three clusters becomes a ConfigHub base with one variant per cluster, delivered by one Sveltos delivery profile per variant to the same clusters, with nothing reinstalled](docs/images/sveltos/sveltos-handover-before-after.svg)
+
 [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md) takes it
 from there: one more command writes the steps as a script to read and run,
 live profiles hand over to one delivery profile per cluster without

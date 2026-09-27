@@ -79,8 +79,8 @@ after Kyverno's (`dependsOn`), and it has no classes:
    recorded `set-yq` on its clusters, which went to 4. A three-Space
    reproduction (`replay-root`, `replay-class`, `replay-cluster`, kept) shows
    the cluster keeping its class's value when promoted with `--squash`, which
-   takes each change as one diff, and taking the root's without it. Every
-   promotion now uses `--squash`.
+   takes each change as one diff, and taking the root's without it
+   (confighubai/confighub#5529). Every promotion now uses `--squash`.
 
 ### ConfigHub behaviour measured on the way
 
