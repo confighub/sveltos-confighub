@@ -29,6 +29,9 @@ depart() {
     echo "$1/$2 already has its departures"
   fi
 }
+# A cluster that joins in a stage the workflow does not have yet adds that
+# stage. Only the stages are patched, so approval settings made since stay.
+stages_are() { [ "$(cub changeworkflow get --space "$1" "$2" -o 'jq=[.ChangeWorkflow.Stages[].Name] | join(",")')" = "$3" ]; }
 publish() {
   local out
   out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0
@@ -56,15 +59,18 @@ cub component create sveltos-ingress-nginx --allow-exists --quiet
 cub space create sveltos-ingress-nginx-base --component sveltos-ingress-nginx --allow-exists --quiet
 cub unit create --space sveltos-ingress-nginx-base clusterprofile ingress-nginx/base.yaml --change-desc 'Onboard ingress-nginx from its ClusterProfile: the shared base' --allow-exists --quiet
 cub changeworkflow create --space sveltos-ingress-nginx-base rollout --filename ingress-nginx/change-workflow.yaml --allow-exists --quiet
+stages_are sveltos-ingress-nginx-base rollout prod || echo '{"Stages":[{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-ingress-nginx-base rollout --from-stdin --quiet
 cub component create sveltos-kyverno --allow-exists --quiet
 cub space create sveltos-kyverno-base --component sveltos-kyverno --allow-exists --quiet
 cub unit create --space sveltos-kyverno-base clusterprofile kyverno/base.yaml --change-desc 'Onboard kyverno from its ClusterProfile: the shared base' --allow-exists --quiet
 cub changeworkflow create --space sveltos-kyverno-base rollout --filename kyverno/change-workflow.yaml --allow-exists --quiet
+stages_are sveltos-kyverno-base rollout staging,prod || echo '{"Stages":[{"Name":"staging","WhereSpace":"Labels.Stage = '\''staging'\''","ReleasePrerequisites":["approval"]},{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","Prerequisites":["Released"],"ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-kyverno-base rollout --from-stdin --quiet
 cub component create sveltos-kyverno-policies --allow-exists --quiet
 cub space create sveltos-kyverno-policies-base --component sveltos-kyverno-policies --allow-exists --quiet
 cub unit create --space sveltos-kyverno-policies-base clusterprofile kyverno-policies/base.yaml --change-desc 'Onboard kyverno-policies from its ClusterProfile: the shared base' --allow-exists --quiet
 cub unit create --space sveltos-kyverno-policies-base configmap-default-kyverno-policies kyverno-policies/configmap-default-kyverno-policies.yaml --change-desc 'Onboard the policies kyverno-policies reads from ConfigMap default/kyverno-policies' --allow-exists --quiet
 cub changeworkflow create --space sveltos-kyverno-policies-base rollout --filename kyverno-policies/change-workflow.yaml --allow-exists --quiet
+stages_are sveltos-kyverno-policies-base rollout staging,prod || echo '{"Stages":[{"Name":"staging","WhereSpace":"Labels.Stage = '\''staging'\''","ReleasePrerequisites":["approval"]},{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","Prerequisites":["Released"],"ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-kyverno-policies-base rollout --from-stdin --quiet
 
 step "3/6 One variant per cluster, addressed to that cluster alone"
 cub variant create prod-eu sveltos-ingress-nginx-base --stage prod --space-pattern template:sveltos-ingress-nginx-prod-eu --target sveltos-targets/prod-eu --allow-exists --quiet
