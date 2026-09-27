@@ -49,13 +49,28 @@ test are left out; whether that loses something, an upgrade hook that
 migrates CRDs say, is a judgement per chart. `ErrNotRepeatable` has no route
 here: `unsafe-to-flatten`, and the source stays authoritative.
 
+## Comparing with what Helm installed
+
+`Compare` compares a release's manifest, the objects Helm installed and
+recorded, with the objects stored to replace it. It returns what is the
+same, each difference by object and field path, and notes for what Helm
+keeps out of its manifest: hooks, the release's Namespace, and a chart's
+`crds/` directory. A key set to null counts as absent, as Kubernetes reads
+it. `ReleaseManifest` reads the manifest out of a Helm release Secret's
+`data.release`.
+
+`cub sveltos compare` uses both before a handover, and so can anything that
+takes a release over from Helm. It catches what the rules above cannot: a
+chart that rendered differently on the cluster, through `.Capabilities` or
+`lookup`.
+
 ## What it does not decide
 
 - **The cluster's Kubernetes version and APIs.** `cub helm template` renders
   `.Capabilities` for a default cluster. A chart that branches on them can
-  render other objects than the cluster runs.
+  render other objects than the cluster runs; `Compare` finds them.
 - **A deterministic `lookup`.** It renders the same twice, but not what it
-  found on the cluster.
+  found on the cluster; `Compare` finds that too.
 - **`helm.sh/resource-policy: keep`.** Helm keeps such an object when it
   leaves the chart; plain delivery removes it.
 - **How the objects are delivered.** That belongs to the delivery runtime.

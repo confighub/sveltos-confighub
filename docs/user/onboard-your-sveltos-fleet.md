@@ -195,6 +195,36 @@ the delivery profiles would change the clusters to match an older plan. So
 it stops, before touching anything, and asks you to export, plan and apply
 again. A run that stopped half-way can simply be run again.
 
+Then, for each live chart on each cluster, it compares what ConfigHub
+released for that cluster's variant with the manifest Helm recorded when
+Sveltos installed the chart there. It reads Helm's record through the
+cluster's kubeconfig Secret on the management cluster, the way Sveltos
+reaches the cluster. The two match when the chart rendered the same for
+ConfigHub as it did on the cluster. They differ when the chart branches on
+the cluster's Kubernetes version or APIs, or reads the cluster with
+`lookup`. Then the handover would change the cluster, so the script stops
+and names each difference, for example:
+
+```text
+eu-central-prod1 kyverno: ConfigHub releases something other than what Helm installed, so the handover would change the cluster:
+  - Deployment kyverno/kyverno-admission-controller: spec.replicas is 3 on the cluster, 1 stored
+```
+
+Find out why first. To hand over anyway, and let the delivery profiles make
+those changes, run it with `ACCEPT_DIFFERENCES=yes`.
+
+- **A cluster at an address only the management cluster can reach**, as with
+  kind or many Cluster API setups: put a kubeconfig that reaches it from where
+  you run the script at `<dir>/<cluster>.kubeconfig`, and set
+  `CLUSTER_KUBECONFIGS=<dir>`. The script does not skip a cluster it cannot
+  reach.
+- **A cluster in pull mode**, which the management cluster cannot read, is
+  named as not compared.
+
+Measured on kind, against a chart Sveltos installed through Helm:
+- the same values compared the same;
+- a changed replica count was named, and so was a changed chart version.
+
 Until then your live profiles keep managing everything. `handover.sh` sets
 each live profile to `stopMatchingBehavior: LeavePolicies`, so deleting it
 leaves everything in place, and deletes it; a profile another live profile
@@ -437,9 +467,10 @@ again on your machine.
 - Profiles another object owns, such as those a ClusterPromotion makes; the
   plan skips them, since the owner would make them again. Govern the owner.
 - Charts that render differently by the cluster's Kubernetes version or APIs
-  (`.Capabilities`). `cub helm template` renders them for a default cluster,
-  and `handover.sh` does not yet compare the rendering with what Helm
-  installed on each cluster.
+  (`.Capabilities`), or through `lookup`. `cub helm template` renders them for
+  a default cluster without reading it, so the plan cannot know.
+  `handover.sh` finds where the result differs from what Helm installed, and
+  stops.
 - Profiles that select no cluster today, and clusters no profile selects;
   the plan lists them.
 

@@ -111,6 +111,10 @@ func newRoot() *cobra.Command {
          management cluster, one delivery profile per variant then sends that
          variant's releases to its one cluster.
 
+  compare  compares what ConfigHub released for a variant with what Helm
+         installed on its cluster. handover.sh runs it before anything
+         changes.
+
 Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboard-your-sveltos-fleet.md`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -183,6 +187,52 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 	af.register(apply)
 	apply.Flags().StringVar(&out, "out", "", "directory for the files and the script")
 
+	var lc onboard.LiveCheck
+	var cluster, release string
+	compare := &cobra.Command{
+		Use:   "compare --cluster <kind>/<namespace>/<name> --release <namespace>/<name> --space <variant space> --unit <unit>",
+		Short: "Compare what ConfigHub released for a variant with what Helm installed on its cluster; handover.sh runs it",
+		Args:  cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			cp := strings.SplitN(cluster, "/", 3)
+			rp := strings.SplitN(release, "/", 2)
+			if len(cp) != 3 || len(rp) != 2 || lc.Space == "" || lc.Unit == "" {
+				return fmt.Errorf("compare needs --cluster <kind>/<namespace>/<name>, --release <namespace>/<name>, --space and --unit")
+			}
+			lc.ClusterKind, lc.ClusterNamespace, lc.Cluster = cp[0], cp[1], cp[2]
+			lc.ReleaseNamespace, lc.Release = rp[0], rp[1]
+			r, err := onboard.CompareLive(onboard.Run, lc)
+			if err != nil {
+				return fmt.Errorf("%s %s: %w", lc.Cluster, lc.Release, err)
+			}
+			w := c.OutOrStdout()
+			switch {
+			case r.Skipped != "":
+				fmt.Fprintf(w, "%s %s: not compared: %s\n", lc.Cluster, lc.Release, r.Skipped)
+			case len(r.Comparison.Differences) == 0:
+				fmt.Fprintf(w, "%s %s: ConfigHub releases what Helm installed, %d objects the same\n", lc.Cluster, lc.Release, r.Comparison.Same)
+			default:
+				fmt.Fprintf(w, "%s %s: ConfigHub releases something other than what Helm installed, so the handover would change the cluster:\n", lc.Cluster, lc.Release)
+				for _, d := range r.Comparison.Differences {
+					fmt.Fprintf(w, "  - %s\n", d)
+				}
+			}
+			for _, n := range r.Comparison.Notes {
+				fmt.Fprintf(w, "  (%s)\n", n)
+			}
+			if len(r.Comparison.Differences) > 0 {
+				return errProblems{}
+			}
+			return nil
+		},
+	}
+	compare.Flags().StringVar(&lc.Context, "context", "", "kubectl context of the management cluster")
+	compare.Flags().StringVar(&lc.KubeconfigDir, "kubeconfig-dir", "", "a directory of <cluster>.kubeconfig files, for clusters Sveltos reaches at an address only the management cluster can")
+	compare.Flags().StringVar(&cluster, "cluster", "", "the cluster, as <kind>/<namespace>/<name>")
+	compare.Flags().StringVar(&release, "release", "", "the Helm release, as <namespace>/<name>")
+	compare.Flags().StringVar(&lc.Space, "space", "", "the variant's Space")
+	compare.Flags().StringVar(&lc.Unit, "unit", "", "the chart's unit")
+
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the plugin version",
@@ -191,7 +241,7 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 		},
 	}
 
-	root.AddCommand(plan, apply, versionCmd)
+	root.AddCommand(plan, apply, compare, versionCmd)
 	return root
 }
 
