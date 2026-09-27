@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" role="img" aria-label="A delivery profile, as cub sveltos writes it: a Sveltos ClusterProfile named for its profile and cluster, addressed to one cluster by clusterRefs, with drift detection, continueOnError on, and one policyRefs entry reading its variant's latest release from ConfigHub's OCI gateway with the Targets' worker credential.">
+  <style>
+    .bg { fill: #f6f7f5 }
+    .code { fill: #ffffff; stroke: #d5ddd7 }
+    .hl { fill: #0d6b5f; opacity: .09 }
+    .m { fill: #1b2420; font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace; white-space: pre }
+    .h { fill: #1b2420; font: 600 15px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .sl { fill: #5d6b64; font: 11px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .ct { fill: #0d6b5f; font: 600 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .p { fill: #1b2420; font: 12px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif }
+    .lead { fill: none; stroke: #0d6b5f; stroke-width: 1; stroke-dasharray: 3 3 }
+    .dot { fill: #0d6b5f }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #101613 }
+      .code { fill: #0c1310; stroke: #2c3a34 }
+      .hl { fill: #5fc9b4; opacity: .12 }
+      .m, .h, .p { fill: #e4eae6 }
+      .sl { fill: #97a69e }
+      .ct { fill: #5fc9b4 }
+      .lead { stroke: #5fc9b4 }
+      .dot { fill: #5fc9b4 }
+    }
+  </style>
+  <rect class="bg" width="1000" height="440"/>
+  <text class="h" x="20" y="30">What Sveltos is given: one delivery profile per variant</text>
+  <text class="sl" x="20" y="48">management/kyverno.yaml, as apply writes it for the example fleet</text>
+
+  <rect class="code" x="20" y="60" width="610" height="366" rx="8"/>
+  <rect class="hl" x="24" y="122" width="602" height="17"/>
+  <rect class="hl" x="24" y="156" width="602" height="85"/>
+  <rect class="hl" x="24" y="241" width="602" height="17"/>
+  <rect class="hl" x="24" y="258" width="602" height="17"/>
+  <rect class="hl" x="24" y="326" width="602" height="17"/>
+  <rect class="hl" x="24" y="360" width="602" height="51"/>
+  <text class="m" x="36" y="84">apiVersion: config.projectsveltos.io/v1beta1</text>
+  <text class="m" x="36" y="101">kind: ClusterProfile</text>
+  <text class="m" x="36" y="118">metadata:</text>
+  <text class="m" x="36" y="135">  name: kyverno-staging-eu</text>
+  <text class="m" x="36" y="152">spec:</text>
+  <text class="m" x="36" y="169">  clusterRefs:</text>
+  <text class="m" x="36" y="186">    - apiVersion: lib.projectsveltos.io/v1beta1</text>
+  <text class="m" x="36" y="203">      kind: SveltosCluster</text>
+  <text class="m" x="36" y="220">      namespace: projectsveltos</text>
+  <text class="m" x="36" y="237">      name: staging-eu</text>
+  <text class="m" x="36" y="254">  syncMode: ContinuousWithDriftDetection</text>
+  <text class="m" x="36" y="271">  continueOnError: true</text>
+  <text class="m" x="36" y="288">  policyRefs:</text>
+  <text class="m" x="36" y="305">    - deploymentType: Remote</text>
+  <text class="m" x="36" y="322">      remoteURL:</text>
+  <text class="m" x="36" y="339">        url: oci://oci.hub.confighub.com/space/sveltos-kyverno-staging-eu:latest</text>
+  <text class="m" x="36" y="356">        interval: 1m0s</text>
+  <text class="m" x="36" y="373">        secretRef:</text>
+  <text class="m" x="36" y="390">          name: confighub-sveltos-targets</text>
+  <text class="m" x="36" y="407">          namespace: projectsveltos</text>
+  <circle class="dot" cx="626" cy="130.5" r="2.5"/><path class="lead" d="M626 130.5L664 86"/>
+  <text class="ct" x="668" y="90">One per variant</text>
+  <text class="p" x="668" y="106">named for its profile and its cluster.</text>
+  <circle class="dot" cx="626" cy="198.5" r="2.5"/><path class="lead" d="M626 198.5L664 142"/>
+  <text class="ct" x="668" y="146">Addressed to one cluster, by name</text>
+  <text class="p" x="668" y="162">No label selects it, so labelling a cluster</text>
+  <text class="p" x="668" y="177">ships nothing until its variant is approved.</text>
+  <circle class="dot" cx="626" cy="249.5" r="2.5"/><path class="lead" d="M626 249.5L664 196"/>
+  <text class="ct" x="668" y="200">Drift is put back</text>
+  <text class="p" x="668" y="216">A change made by hand on the cluster is undone.</text>
+  <circle class="dot" cx="626" cy="266.5" r="2.5"/><path class="lead" d="M626 266.5L664 240"/>
+  <text class="ct" x="668" y="244">Always on</text>
+  <text class="p" x="668" y="260">A custom resource listed before its CRD waits</text>
+  <text class="p" x="668" y="275">for the next pass instead of stopping the cluster.</text>
+  <circle class="dot" cx="626" cy="334.5" r="2.5"/><path class="lead" d="M626 334.5L664 310"/>
+  <text class="ct" x="668" y="314">This variant's latest approved release</text>
+  <text class="p" x="668" y="330">from ConfigHub's OCI gateway, checked every</text>
+  <text class="p" x="668" y="345">minute. Nothing else reaches the cluster.</text>
+  <circle class="dot" cx="626" cy="385.5" r="2.5"/><path class="lead" d="M626 385.5L664 376"/>
+  <text class="ct" x="668" y="380">The Targets' worker credential</text>
+  <text class="p" x="668" y="396">It can pull only these Targets' releases,</text>
+  <text class="p" x="668" y="411">and it does not expire.</text>
+</svg>

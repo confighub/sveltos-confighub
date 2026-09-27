@@ -1,50 +1,49 @@
 
-##### 0. Meridian's eu-central slice today: Kyverno by class, one Sveltos profile per class  [08:53:59]
+##### 0. Meridian's eu-central slice today: Kyverno by class, one Sveltos profile per class  [18:17:02]
 NAMESPACE        NAME               READY   VERSION   AGE   SHARD   LABELS
-mgmt             mgmt               true    v1.35.0   18s           projectsveltos.io/k8s-version=v1.35.0
-projectsveltos   eu-central-prod1   true    v1.35.0   3s            class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
-projectsveltos   eu-central-prod2   true    v1.35.0   3s            class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
-projectsveltos   eu-central-test1   true    v1.35.0   4s            class=test,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
-projectsveltos   eu-central-uat1    true    v1.35.0   4s            class=uat,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+mgmt             mgmt               true    v1.35.0   35m           projectsveltos.io/k8s-version=v1.35.0,sveltos-agent=present
+projectsveltos   eu-central-prod1   true    v1.35.0   34m           class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos
+projectsveltos   eu-central-prod2   true    v1.35.0   34m           class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos
+projectsveltos   eu-central-test1   true    v1.35.0   35m           class=test,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos
+projectsveltos   eu-central-uat1    true    v1.35.0   34m           class=uat,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos-
 clusterprofile.config.projectsveltos.io/kyverno-test created
 clusterprofile.config.projectsveltos.io/kyverno-uat created
 clusterprofile.config.projectsveltos.io/kyverno-prod created
-  eu-central-test1  kyverno-3.8.1@rev1     admission controller replicas 1
-  eu-central-uat1   kyverno-3.8.1@rev1     admission controller replicas 2
-  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
-  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
+  eu-central-test1  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 1  PodDisruptionBudget no
+  eu-central-uat1   reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 2  PodDisruptionBudget yes
+  eu-central-prod1  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
+  eu-central-prod2  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
 
-##### 1. Onboard: three profiles become one component with a class base per class  [08:54:36]
+##### 1. Onboard: three profiles become one component, with a class base per class  [18:17:38]
 Onboarding plan: 1 component made from 3 profiles over 4 clusters, one variant per cluster per component (4 variants).
 Nothing has changed. This is what ConfigHub would hold.
 
-kyverno  (selects one class per class: prod, test, uat)
-  base     mer-kyverno-base  reaches no cluster: clusterRefs is empty
-  class    prod         mer-kyverno-class-prod  from profile kyverno-prod; the same as the base
-  class    test         mer-kyverno-class-test  from profile kyverno-test; differs from the base in spec.helmCharts[0].values
-  class    uat          mer-kyverno-class-uat  from profile kyverno-uat; differs from the base in spec.helmCharts[0].values
+kyverno  (selects one profile per class: prod, test, uat)
+  base     mer-kyverno-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno  chart kyverno 3.8.1 from https://kyverno.github.io/kyverno: 70 objects (22 CRDs)
+  class    prod         mer-kyverno-class-prod  from profile kyverno-prod; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
+  class    test         mer-kyverno-class-test  from profile kyverno-test; the same as the base
+  class    uat          mer-kyverno-class-uat  from profile kyverno-uat; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
   stage test
     eu-central-test1 variant mer-kyverno-eu-central-test1 (class test)  ->  Target mer-targets/eu-central-test1
-                     differs from the base in metadata.name, spec.clusterRefs
   stage uat
     eu-central-uat1  variant mer-kyverno-eu-central-uat1 (class uat)  ->  Target mer-targets/eu-central-uat1
-                     differs from the base in metadata.name, spec.clusterRefs
   stage prod
     eu-central-prod1 variant mer-kyverno-eu-central-prod1 (class prod)  ->  Target mer-targets/eu-central-prod1
-                     differs from the base in metadata.name, spec.clusterRefs
     eu-central-prod2 variant mer-kyverno-eu-central-prod2 (class prod)  ->  Target mer-targets/eu-central-prod2
-                     differs from the base in metadata.name, spec.clusterRefs
 
 Management cluster mgmt/mgmt
-  record   mer-management  one bootstrap profile per variant (4), fetching its release from the gateway
+  record   mer-management  one delivery profile per variant (4): each sends its variant's releases to its one cluster
 
 In ConfigHub
   5 Targets in mer-targets, one per cluster, on a server-hosted worker
   1 component, each one base, 3 class bases, 4 variants, 1 management record
-  10 Spaces and 7 Links, one tying each variant to its base (check your organization's quotas for both first)
+  10 Spaces and 7 Links, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
   first rollout: kyverno in 3 stages after its class bases; one approval per stage, one release per variant
 
-Live on your management cluster: kyverno-prod, kyverno-test, kyverno-uat. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+Note: kyverno-test's chart kyverno has 11 Helm hooks for upgrade, delete or test, among them Jobs kyverno-migrate-resources, kyverno-rm-webhooks, kyverno-scale-to-zero. They are left out, as cub helm leaves them out, because only Helm runs them.
+
+Live on your management cluster: kyverno-prod, kyverno-test, kyverno-uat. Each delivery profile deploys the same objects to the same cluster. apply also writes handover.sh, which steps each live profile aside without removing anything, so the delivery profiles carry on alone; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
 
 Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
 
@@ -52,23 +51,20 @@ Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/app
 
 == 1/6 One named Target per cluster, in mer-targets
 
-== 2/6 One component, one base and one rollout workflow per profile
+== 2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow
 
-== 3/6 One variant per cluster, addressed to that cluster alone
+== 3/6 One variant per cluster, each holding what its base holds
 
-== 4/6 The management cluster's record: its bootstrap profiles
+== 4/6 The management cluster's record: one delivery profile per variant
 
 == 5/6 Release each variant, stage by stage: promote, approve, publish
 
 == 6/6 Point Sveltos at ConfigHub (your management cluster)
 secret/confighub-mer-targets created
-clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-test1 created
-clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-uat1 created
-clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-prod1 created
-clusterprofile.config.projectsveltos.io/confighub-mer-kyverno-eu-central-prod2 created
 
-Done. Sveltos fetches each variant's release within a minute. Watch it with:
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
   kubectl get clustersummaries -A
+The delivery profiles of kyverno wait for handover.sh, which steps your live profiles aside first, so no object has two profiles managing it.
 == kyverno-prod
 clusterprofile.config.projectsveltos.io/kyverno-prod patched
 clusterprofile.config.projectsveltos.io "kyverno-prod" deleted
@@ -78,46 +74,26 @@ clusterprofile.config.projectsveltos.io "kyverno-test" deleted
 == kyverno-uat
 clusterprofile.config.projectsveltos.io/kyverno-uat patched
 clusterprofile.config.projectsveltos.io "kyverno-uat" deleted
+== the delivery profiles
+clusterprofile.config.projectsveltos.io/kyverno-eu-central-test1 created
+clusterprofile.config.projectsveltos.io/kyverno-eu-central-uat1 created
+clusterprofile.config.projectsveltos.io/kyverno-eu-central-prod1 created
+clusterprofile.config.projectsveltos.io/kyverno-eu-central-prod2 created
+Helm still records release kyverno on eu-central-test1, eu-central-uat1, eu-central-prod1, eu-central-prod2, though ConfigHub manages its objects now, so a helm uninstall there would remove them. Remove the record, which leaves the objects, on each of those clusters: kubectl -n kyverno delete secret -l owner=helm,name=kyverno
 
-Done. Each per-cluster profile reports Provisioned within a minute:
+Done. Each delivery profile reports Provisioned within a minute:
   kubectl get clustersummaries -A
-  eu-central-test1  kyverno-3.8.1@rev1     admission controller replicas 1
-  eu-central-uat1   kyverno-3.8.1@rev1     admission controller replicas 2
-  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
-  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
-  every cluster kept its release revision and its class's replicas: nothing reinstalled
+  eu-central-test1  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 1  PodDisruptionBudget no
+  eu-central-uat1   reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 2  PodDisruptionBudget yes
+  eu-central-prod1  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
+  eu-central-prod2  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
+  every pod is the one that ran before onboarding: nothing was reinstalled
+  removing Helm's record of the release, as handover.sh says, leaving its objects:
+    eu-central-test1 secret/sh.helm.release.v1.kyverno.v1
+    eu-central-uat1 secret/sh.helm.release.v1.kyverno.v1
+    eu-central-prod1 secret/sh.helm.release.v1.kyverno.v1
+    eu-central-prod2 secret/sh.helm.release.v1.kyverno.v1
   Meridian's queries work on the result:
-
-##### 2. One change at the root, Kyverno 3.8.1 to 3.8.2, class bases first, then test, uat, prod  [08:59:13]
-  class base test   chartVersion: 3.8.2  replicas: 1 
-  class base uat    chartVersion: 3.8.2  replicas: 2 
-  class base prod   chartVersion: 3.8.2  replicas: 3 
-  EXPECT REFUSAL, promote into uat before test released:
-    Failed: unable to promote to stage 'uat', Variant 'eu-central-test1' has not taken change order 'kyverno-3-8-2'
-  after test:
-  eu-central-test1  kyverno-3.8.2@rev2     admission controller replicas 1
-  eu-central-uat1   kyverno-3.8.1@rev1     admission controller replicas 2
-  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
-  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
-  after uat:
-  eu-central-test1  kyverno-3.8.2@rev2     admission controller replicas 1
-  eu-central-uat1   kyverno-3.8.2@rev2     admission controller replicas 2
-  eu-central-prod1  kyverno-3.8.1@rev1     admission controller replicas 3
-  eu-central-prod2  kyverno-3.8.1@rev1     admission controller replicas 3
-  after prod:
-  eu-central-test1  kyverno-3.8.2@rev2     admission controller replicas 1
-  eu-central-uat1   kyverno-3.8.2@rev2     admission controller replicas 2
-  eu-central-prod1  kyverno-3.8.2@rev2     admission controller replicas 3
-  eu-central-prod2  kyverno-3.8.2@rev2     admission controller replicas 3
-{
-  "Stage": "Completed",
-  "State": "Released"
-}
-
-##### MERIDIAN-SLICE-DONE  [09:02:01]
-
-# Run after the recording, with the corrected query (the recorded run filtered on a Component
-# label these Spaces did not carry; cub sveltos now also sets it):
     base       mer-kyverno-base
     base       mer-kyverno-class-prod
     base       mer-kyverno-class-test
@@ -126,3 +102,33 @@ Done. Each per-cluster profile reports Provisioned within a minute:
     deployment mer-kyverno-eu-central-uat1
     deployment mer-kyverno-eu-central-prod1
     deployment mer-kyverno-eu-central-prod2
+
+##### 2. One change for every class, at the root: Kyverno 3.8.2, and 4 replicas  [18:27:14]
+  the root was # kyverno is rendered with: cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --create-namespace -f kyverno/kyverno.values.yaml
+  class base test  reg.kyverno.io/kyverno/kyverno:v1.18.2  replicas 4
+  class base uat   reg.kyverno.io/kyverno/kyverno:v1.18.2  replicas 2
+  class base prod  reg.kyverno.io/kyverno/kyverno:v1.18.2  replicas 3
+  EXPECT REFUSAL, promote into uat before test released:
+    Failed: unable to promote to stage 'uat', Variant 'eu-central-test1' has not taken change order 'kyverno-3-8-2'
+  after test:
+  eu-central-test1  reg.kyverno.io/kyverno/kyverno:v1.18.2   replicas 4  PodDisruptionBudget no
+  eu-central-uat1   reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 2  PodDisruptionBudget yes
+  eu-central-prod1  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
+  eu-central-prod2  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
+  after uat:
+  eu-central-test1  reg.kyverno.io/kyverno/kyverno:v1.18.2   replicas 4  PodDisruptionBudget no
+  eu-central-uat1   reg.kyverno.io/kyverno/kyverno:v1.18.2   replicas 2  PodDisruptionBudget yes
+  eu-central-prod1  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
+  eu-central-prod2  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
+  after prod:
+  eu-central-test1  reg.kyverno.io/kyverno/kyverno:v1.18.2   replicas 4  PodDisruptionBudget no
+  eu-central-uat1   reg.kyverno.io/kyverno/kyverno:v1.18.2   replicas 2  PodDisruptionBudget yes
+  eu-central-prod1  reg.kyverno.io/kyverno/kyverno:v1.18.2   replicas 3  PodDisruptionBudget yes
+  eu-central-prod2  reg.kyverno.io/kyverno/kyverno:v1.18.2   replicas 3  PodDisruptionBudget yes
+  test took the root's 4 replicas; uat and prod kept their classes' 2 and 3
+{
+  "Stage": "Completed",
+  "State": "Released"
+}
+
+##### MERIDIAN-SLICE-DONE  [18:35:22]

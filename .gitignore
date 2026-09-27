@@ -6,3 +6,8 @@ package-lock.json
 /onboard/
 /my-fleet.yaml
 /clusters.yaml
+
+# Rendered charts `cub sveltos apply` writes into the example; Kyverno alone is
+# over 5 MB. internal/onboard/testdata/renders records what cub helm printed.
+/examples/onboard/apply/kyverno/kyverno.yaml
+/examples/onboard/apply/ingress-nginx/ingress-nginx.yaml

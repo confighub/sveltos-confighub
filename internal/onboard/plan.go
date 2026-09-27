@@ -1,6 +1,7 @@
 // Package onboard turns a Sveltos fleet, described in Sveltos's own terms, into
-// the fleet ConfigHub governs: one base per ClusterProfile and one variant per
-// cluster the profile selects, each addressed to that one cluster.
+// the fleet ConfigHub governs: one base per ClusterProfile holding the objects
+// its charts and policies render to, and one variant per cluster the profile
+// selects. Sveltos delivers each variant's releases to its one cluster.
 package onboard
 
 import (
@@ -16,7 +17,6 @@ import (
 )
 
 const (
-	unitSlug      = "clusterprofile"
 	workflowSlug  = "rollout"
 	workerSlug    = "server-worker"
 	defaultStage  = "fleet"
@@ -52,6 +52,16 @@ type Options struct {
 	// per value of this cluster label, each a variant of the base, and each
 	// cluster's variant a variant of its class base.
 	ClassLabel string
+	// IncludeHooks names the chart releases whose Helm hook manifests are kept
+	// as plain objects; "all" keeps every chart's. Otherwise hooks are left
+	// out, as cub helm leaves them out.
+	IncludeHooks []string
+	// Render renders a chart; CubHelm when nil.
+	Render Renderer
+}
+
+func (o Options) includeHooks(release string) bool {
+	return contains(o.IncludeHooks, "all") || contains(o.IncludeHooks, release)
 }
 
 // Cluster is a SveltosCluster, or a Cluster API Cluster Sveltos addresses directly.
@@ -71,71 +81,56 @@ type ClusterRef struct {
 	Name       string `json:"name" yaml:"name"`
 }
 
-// Variant is one cluster's copy of a profile's base, or of its class base.
+// Variant is one cluster's copy of a profile's base, or of its class base. It
+// holds the same objects as its upstream; Sveltos addresses it to its cluster.
 type Variant struct {
-	Upstream         string
-	Class            string
-	Cluster          string
-	ClusterKey       string
-	Stage            string
-	Target           string
-	Space            string
-	ProfileName      string
-	Departures       []string
-	DepartExpression string
-	ClusterRef       ClusterRef
-	DependsOn        []string
-	// Policies are this variant's own copies of the profile's policy
-	// ConfigMaps, each renamed for the cluster.
-	Policies []VariantPolicy
+	Upstream   string
+	Class      string
+	Cluster    string
+	ClusterKey string
+	Stage      string
+	Target     string
+	Space      string
+	// ProfileName is the delivery profile on the management cluster that
+	// sends this variant's releases to its cluster.
+	ProfileName string
+	Member      string
+	ClusterRef  ClusterRef
+	DependsOn   []string
 }
 
-// VariantPolicy is one variant's copy of a policy ConfigMap.
-type VariantPolicy struct {
-	Unit             string
-	Name             string
-	DepartExpression string
-}
-
-// PolicyMap is a ConfigMap a profile names in policyRefs, held in ConfigHub
-// beside the profile so the policy text itself goes through review.
-type PolicyMap struct {
-	Namespace string
-	Name      string
-	Unit      string
-	Base      *yaml.Node
-	BaseValue map[string]any
-}
-
-// Profile is one onboarded ClusterProfile: its base and its variants.
+// Profile is one onboarded component: its base, its classes and its variants.
 type Profile struct {
-	Name         string
-	Live         bool
-	Selector     string
-	ClusterRefs  int
-	Component    string
-	BaseSpace    string
-	Base         *yaml.Node
-	BaseValue    map[string]any
+	Name        string
+	Live        bool
+	Selector    string
+	ClusterRefs int
+	Component   string
+	BaseSpace   string
+	// Units are what the base holds: each chart rendered to its objects, and
+	// the objects of each policy ConfigMap.
+	Units        []Unit
+	PolicyMaps   []Doc
 	Source       *yaml.Node
 	Stages       []string
 	Variants     []Variant
 	ReleaseOrder string
 	WorkflowText string
-	Policies     []PolicyMap
-	ClassLabel   string
-	Classes      []Class
-	Members      []Member
+	// Policies are the ConfigMaps whose objects the base holds, which the
+	// delivery profiles no longer read.
+	Policies   []string
+	ClassLabel string
+	Classes    []Class
+	Members    []Member
 }
 
 // Class is one class base: a variant of the root base that a class of
 // clusters shares, holding what that class differs in.
 type Class struct {
-	Value            string
-	Space            string
-	Member           string
-	Departures       []string
-	DepartExpression string
+	Value      string
+	Space      string
+	Member     string
+	Departures []Departure
 }
 
 // Member is one input ClusterProfile a component was made from.
@@ -143,6 +138,13 @@ type Member struct {
 	Name   string
 	Live   bool
 	Source *yaml.Node
+	// UID and Generation are the live profile's as exported, so handover.sh
+	// can tell whether it has changed since.
+	UID        string
+	Generation string
+	// ManagedBy names what applies the profile, such as a Flux Kustomization,
+	// which would apply it again after the handover deleted it.
+	ManagedBy string
 }
 
 // Skipped is a profile left as it is, with the reason.
@@ -151,11 +153,11 @@ type Skipped struct {
 	Reason string
 }
 
-// BootstrapSet is the management cluster's bootstrap profiles for one profile.
-type BootstrapSet struct {
+// DeliverySet is the management cluster's delivery profiles for one component.
+type DeliverySet struct {
 	Profile  string
 	Unit     string
-	Profiles []BootstrapProfile
+	Profiles []*yaml.Node
 }
 
 // Management is the management cluster's record.
@@ -165,7 +167,7 @@ type Management struct {
 	Target    string
 	Component string
 	Space     string
-	ByProfile []BootstrapSet
+	ByProfile []DeliverySet
 }
 
 // Target is a named destination for one cluster.
@@ -477,30 +479,35 @@ func madeByEvents(v map[string]any) bool {
 	return false
 }
 
-// The base keeps the profile's spec without its addressing, and none of what
-// the API server or Sveltos wrote back, in the user's own key order.
-func baseOf(node *yaml.Node, value map[string]any) *yaml.Node {
-	name := str(obj(value["metadata"])["name"])
-	metadata := mapping(scalar("name"), scalar(name+"-base"))
-	if labels := mapGet(mapGet(node, "metadata"), "labels"); labels != nil && len(labels.Content) > 0 {
-		metadata.Content = append(metadata.Content, scalar("labels"), deepCopy(labels))
+// ownerOf names the object that owns a profile, such as a ClusterPromotion,
+// which makes it again if it is deleted.
+func ownerOf(v map[string]any) (kind, name string) {
+	for _, o := range list(obj(v["metadata"])["ownerReferences"]) {
+		return str(obj(o)["kind"]), str(obj(o)["name"])
 	}
-	spec := mapping(scalar("clusterRefs"), emptySeq())
-	if s := mapGet(node, "spec"); s != nil {
-		for i := 0; i+1 < len(s.Content); i += 2 {
-			switch s.Content[i].Value {
-			case "clusterSelector", "clusterRefs", "setRefs":
-				continue
-			}
-			spec.Content = append(spec.Content, deepCopy(s.Content[i]), deepCopy(s.Content[i+1]))
-		}
+	return "", ""
+}
+
+// managedBy names what applies a profile from elsewhere, by the marks Flux,
+// Argo CD and Helm leave on what they apply.
+func managedBy(v map[string]any) string {
+	meta := obj(v["metadata"])
+	labels, annotations := obj(meta["labels"]), obj(meta["annotations"])
+	switch {
+	case str(labels["kustomize.toolkit.fluxcd.io/name"]) != "":
+		return fmt.Sprintf("Flux Kustomization %s/%s", str(labels["kustomize.toolkit.fluxcd.io/namespace"]), str(labels["kustomize.toolkit.fluxcd.io/name"]))
+	case str(labels["helm.toolkit.fluxcd.io/name"]) != "":
+		return fmt.Sprintf("Flux HelmRelease %s/%s", str(labels["helm.toolkit.fluxcd.io/namespace"]), str(labels["helm.toolkit.fluxcd.io/name"]))
+	case str(annotations["argocd.argoproj.io/tracking-id"]) != "":
+		return fmt.Sprintf("Argo CD (tracking-id %s)", str(annotations["argocd.argoproj.io/tracking-id"]))
+	case str(labels["argocd.argoproj.io/instance"]) != "":
+		return fmt.Sprintf("Argo CD Application %s", str(labels["argocd.argoproj.io/instance"]))
+	case str(annotations["meta.helm.sh/release-name"]) != "":
+		return fmt.Sprintf("Helm release %s/%s", str(annotations["meta.helm.sh/release-namespace"]), str(annotations["meta.helm.sh/release-name"]))
+	case str(labels["app.kubernetes.io/instance"]) != "" && str(labels["app.kubernetes.io/managed-by"]) == "":
+		return fmt.Sprintf("Argo CD Application %s, by its label app.kubernetes.io/instance", str(labels["app.kubernetes.io/instance"]))
 	}
-	return mapping(
-		scalar("apiVersion"), scalar(apiVersionOf(value)),
-		scalar("kind"), scalar("ClusterProfile"),
-		scalar("metadata"), metadata,
-		scalar("spec"), spec,
-	)
+	return ""
 }
 
 // The profile as its owner described it, kept so the fleet can be planned again.
@@ -545,6 +552,11 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 		stageOrder = opts.Stages
 	}
 	plan := &Plan{Prefix: prefix, StageLabel: opts.StageLabel, StageOrder: stageOrder, TargetsSpace: prefix + "-targets"}
+	render := opts.Render
+	if render == nil {
+		render = CubHelm
+	}
+	rc := &renderCache{render: render, done: map[string]renderResult{}}
 
 	// A later input wins, so a fresh cluster list can be given after the file
 	// that first described the fleet.
@@ -717,6 +729,10 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 				plan.Skipped = append(plan.Skipped, Skipped{name, "was made by Sveltos's event framework, which changes its scope when something happens; govern the EventTrigger that makes it instead"})
 				continue
 			}
+			if kind, owner := ownerOf(p.value); owner != "" {
+				plan.Skipped = append(plan.Skipped, Skipped{name, fmt.Sprintf("is owned by %s %s, which would make it again after the handover deleted it; govern the %s instead", kind, owner, kind)})
+				continue
+			}
 			if selector, has := spec["clusterSelector"]; has && !selectorGiven(obj(selector)) {
 				plan.Skipped = append(plan.Skipped, Skipped{name, "has an empty clusterSelector; say which clusters it is for with labels or clusterRefs"})
 				continue
@@ -752,45 +768,31 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 		spec := obj(root.doc.value["spec"])
 		component := prefix + "-" + Slug(name)
 		baseSpace := component + "-base"
-		base := baseOf(root.doc.node, root.doc.value)
-		mapGet(mapGet(base, "metadata"), "name").Value = name + "-base"
-		var baseValue map[string]any
-		if err := base.Decode(&baseValue); err != nil {
-			return nil, err
+		mdocs := make([]memberDoc, len(members))
+		for i, m := range members {
+			mdocs[i] = memberDoc{name: m.name, class: m.class, node: m.doc.node, value: m.doc.value}
 		}
-		policies, secrets, problems := policyMapsOf(name, spec, configMaps)
-		plan.Problems = append(plan.Problems, problems...)
-		if len(secrets) > 0 {
-			plan.Notes = append(plan.Notes, fmt.Sprintf("%s names %s in policyRefs; Secrets stay where they are, because their content does not belong in a review diff.", name, strings.Join(secrets, ", ")))
+		keepHooks := func(m memberDoc, release string) bool {
+			return opts.includeHooks(release)
 		}
+		r := renderComponent(name, mdocs, configMaps, keepHooks, rc)
+		plan.Problems = append(plan.Problems, r.problems...)
+		plan.Notes = append(plan.Notes, r.notes...)
+		units, policies := r.units, r.policies
 		var dependsOn []string
 		for _, d := range list(spec["dependsOn"]) {
 			dependsOn = append(dependsOn, fmt.Sprint(d))
 		}
-		for _, m := range members[1:] {
-			ms := obj(m.doc.value["spec"])
-			if !reflectEqual(ms["dependsOn"], spec["dependsOn"]) || !reflectEqual(ms["policyRefs"], spec["policyRefs"]) {
-				plan.Problems = append(plan.Problems, fmt.Sprintf("%s and %s would be classes of one component but differ in dependsOn or policyRefs; onboard them without --class-label", root.name, m.name))
-			}
-		}
 
 		var classes []Class
 		classOf := map[string]*Class{}
-		addClass := func(value, member string, edits, paths []string) {
-			c := Class{Value: value, Space: component + "-class-" + Slug(value), Member: member, Departures: paths, DepartExpression: strings.Join(edits, " | ")}
-			classes = append(classes, c)
+		addClass := func(value, member string, departures []Departure) {
+			classes = append(classes, Class{Value: value, Space: component + "-class-" + Slug(value), Member: member, Departures: departures})
 		}
 		if opts.ClassLabel != "" {
 			if pinned {
 				for _, m := range members {
-					mb := baseOf(m.doc.node, m.doc.value)
-					mapGet(mapGet(mb, "metadata"), "name").Value = name + "-base"
-					var mv map[string]any
-					if err := mb.Decode(&mv); err != nil {
-						return nil, err
-					}
-					edits, paths := diffEdits(baseValue, mv, "")
-					addClass(m.class, m.name, edits, paths)
+					addClass(m.class, m.name, r.departures[m.class])
 				}
 			} else {
 				seen := map[string]bool{}
@@ -803,7 +805,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 				}
 				sort.Strings(values)
 				for _, v := range values {
-					addClass(v, root.name, nil, nil)
+					addClass(v, root.name, nil)
 				}
 			}
 			for i := range classes {
@@ -851,7 +853,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 					Target:      target,
 					Space:       component + "-" + target,
 					ProfileName: name + "-" + target,
-					Departures:  []string{"metadata.name", "spec.clusterRefs"},
+					Member:      m.name,
 					ClusterRef:  ref,
 				}
 				if len(dependsOn) > 0 {
@@ -883,19 +885,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 						}
 						v.DependsOn = append(v.DependsOn, depName+"-"+target)
 					}
-					v.Departures = append(v.Departures, "spec.dependsOn")
 				}
-				for _, pm := range policies {
-					v.Policies = append(v.Policies, VariantPolicy{
-						Unit:             pm.Unit,
-						Name:             pm.Name + "-" + target,
-						DepartExpression: fmt.Sprintf(".metadata.name = %s", jsonString(pm.Name+"-"+target)),
-					})
-				}
-				if len(policies) > 0 {
-					v.Departures = append(v.Departures, "spec.policyRefs")
-				}
-				v.DepartExpression = departExpression(v, policies)
 				variants = append(variants, v)
 			}
 		}
@@ -925,7 +915,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			for _, c := range classes {
 				values = append(values, c.Value)
 			}
-			selectorText += fmt.Sprintf("one class per %s: %s", opts.ClassLabel, strings.Join(values, ", "))
+			selectorText += fmt.Sprintf("one profile per %s: %s", opts.ClassLabel, strings.Join(values, ", "))
 		} else if sel, has := spec["clusterSelector"]; has {
 			selectorText = describeSelector(obj(sel))
 			if len(classes) > 0 {
@@ -939,7 +929,16 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			refs += len(m.res.byRef)
 			_, hasUID := obj(m.doc.value["metadata"])["uid"]
 			_, hasStatus := m.doc.value["status"]
-			memberList = append(memberList, Member{Name: m.name, Live: hasUID || hasStatus, Source: sourceOf(m.doc.node, m.doc.value)})
+			source := sourceOf(m.doc.node, m.doc.value)
+			meta := obj(m.doc.value["metadata"])
+			member := Member{Name: m.name, Live: hasUID || hasStatus, Source: source, UID: str(meta["uid"]), ManagedBy: managedBy(m.doc.value)}
+			if g, ok := meta["generation"]; ok && g != nil {
+				member.Generation = fmt.Sprint(g)
+			}
+			if member.Live && member.ManagedBy != "" {
+				plan.Notes = append(plan.Notes, fmt.Sprintf("%s is applied by %s, which would apply it again after handover.sh deleted it. Before handover.sh: set stopMatchingBehavior: LeavePolicies on it there and let that apply, then remove it there, which deletes it and leaves everything in place. handover.sh stops while it is still there.", m.name, member.ManagedBy))
+			}
+			memberList = append(memberList, member)
 			live = live || hasUID || hasStatus
 		}
 		plan.Profiles = append(plan.Profiles, Profile{
@@ -949,8 +948,8 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			ClusterRefs:  refs,
 			Component:    component,
 			BaseSpace:    baseSpace,
-			Base:         base,
-			BaseValue:    baseValue,
+			Units:        units,
+			PolicyMaps:   r.policyMaps,
 			Source:       memberList[0].Source,
 			Stages:       stages,
 			Variants:     variants,
@@ -984,13 +983,38 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			Space:     prefix + "-management",
 		}
 		for _, p := range plan.Profiles {
-			set := BootstrapSet{Profile: p.Name, Unit: "bootstrap-" + Slug(p.Name)}
+			set := DeliverySet{Profile: p.Name, Unit: "delivery-" + Slug(p.Name)}
+			sources := map[string]*yaml.Node{}
+			for _, mb := range p.Members {
+				sources[mb.Name] = mb.Source
+			}
+			keptHooks := false
+			for _, u := range p.Units {
+				if u.Chart != nil && u.Chart.IncludeHooks {
+					keptHooks = true
+				}
+			}
 			for _, v := range p.Variants {
-				set.Profiles = append(set.Profiles, bootstrapProfile(v, *management, gatewaySecretName(plan.TargetsSpace)))
+				set.Profiles = append(set.Profiles, deliveryProfile(v, sources[v.Member], gatewaySecretName(plan.TargetsSpace), keptHooks))
 			}
 			m.ByProfile = append(m.ByProfile, set)
 		}
 		plan.Management = m
+	}
+
+	// A delivery profile takes the name <profile>-<cluster>; a profile of that
+	// name the fleet already has would be replaced.
+	delivery := map[string]string{}
+	for _, p := range plan.Profiles {
+		for _, v := range p.Variants {
+			delivery[v.ProfileName] = v.Cluster
+		}
+	}
+	for _, p := range allProfiles {
+		name := str(obj(p.value["metadata"])["name"])
+		if c, clash := delivery[name]; clash && !deliveredByConfigHub(p.value) {
+			plan.Problems = append(plan.Problems, fmt.Sprintf("the delivery profile for %s would be named %s, which is already the name of one of your profiles; rename that profile first", c, name))
+		}
 	}
 
 	targets := map[string]string{}
@@ -1100,62 +1124,6 @@ func deliveryIdentity(spec map[string]any) string {
 
 var plainKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-func yqPath(parent, key string) string {
-	if plainKey.MatchString(key) {
-		return parent + "." + key
-	}
-	return parent + "[" + jsonString(key) + "]"
-}
-
-// The set-yq edits that turn one document into another, leaf by leaf, and the
-// paths they touch. Lists of different lengths are replaced whole.
-func diffEdits(from, to any, path string) (edits, paths []string) {
-	fm, fok := from.(map[string]any)
-	tm, tok := to.(map[string]any)
-	if fok && tok {
-		keys := map[string]bool{}
-		for k := range fm {
-			keys[k] = true
-		}
-		for k := range tm {
-			keys[k] = true
-		}
-		var sorted []string
-		for k := range keys {
-			sorted = append(sorted, k)
-		}
-		sort.Strings(sorted)
-		for _, k := range sorted {
-			child := yqPath(path, k)
-			tv, inTo := tm[k]
-			if !inTo {
-				edits = append(edits, "del("+child+")")
-				paths = append(paths, strings.TrimPrefix(child, "."))
-				continue
-			}
-			e, p := diffEdits(fm[k], tv, child)
-			edits = append(edits, e...)
-			paths = append(paths, p...)
-		}
-		return edits, paths
-	}
-	fl, flok := from.([]any)
-	tl, tlok := to.([]any)
-	if flok && tlok && len(fl) == len(tl) {
-		for i := range fl {
-			e, p := diffEdits(fl[i], tl[i], fmt.Sprintf("%s[%d]", path, i))
-			edits = append(edits, e...)
-			paths = append(paths, p...)
-		}
-		return edits, paths
-	}
-	if reflectEqual(from, to) {
-		return nil, nil
-	}
-	value, _ := json.Marshal(to)
-	return []string{path + " = " + string(value)}, []string{strings.TrimPrefix(path, ".")}
-}
-
 func reflectEqual(a, b any) bool {
 	ja, _ := json.Marshal(a)
 	jb, _ := json.Marshal(b)
@@ -1171,88 +1139,9 @@ func indexOf(list []string, value string) int {
 	return -1
 }
 
-// A variant's departures, as one set-yq expression that touches only them.
-// A policyRefs entry is renamed where it stands, so a later change to the
-// base's other policyRefs still reaches the variant.
-func departExpression(v Variant, policies []PolicyMap) string {
-	ref, _ := json.Marshal(v.ClusterRef)
-	edits := []string{
-		".metadata.name = " + jsonString(v.ProfileName),
-		".spec.clusterRefs = [" + string(ref) + "]",
-	}
-	if len(v.DependsOn) > 0 {
-		deps, _ := json.Marshal(v.DependsOn)
-		edits = append(edits, ".spec.dependsOn = "+string(deps))
-	}
-	for i, pm := range policies {
-		edits = append(edits, fmt.Sprintf(`(.spec.policyRefs[] | select(.kind == "ConfigMap" and .namespace == %s and .name == %s) | .name) = %s`,
-			jsonString(pm.Namespace), jsonString(pm.Name), jsonString(v.Policies[i].Name)))
-	}
-	return strings.Join(edits, " | ")
-}
-
 func jsonString(s string) string {
 	out, _ := json.Marshal(s)
 	return string(out)
-}
-
-// The ConfigMaps a profile names in policyRefs. Each must be in the input, so
-// its content can be held in ConfigHub; a Secret is named and left where it is.
-func policyMapsOf(profile string, spec map[string]any, configMaps map[string]Doc) ([]PolicyMap, []string, []string) {
-	var maps []PolicyMap
-	var secrets, problems []string
-	seen := map[string]bool{}
-	for _, r := range list(spec["policyRefs"]) {
-		ref := obj(r)
-		kind, ns, name := str(ref["kind"]), str(ref["namespace"]), str(ref["name"])
-		if name == "" {
-			continue // a remoteURL entry, fetched from elsewhere
-		}
-		switch kind {
-		case "Secret":
-			secrets = append(secrets, fmt.Sprintf("Secret %s/%s", ns, name))
-			continue
-		case "ConfigMap":
-		default:
-			continue
-		}
-		if ns == "" {
-			problems = append(problems, fmt.Sprintf("%s names ConfigMap %s in policyRefs without a namespace, so each cluster reads its own copy from its cluster's namespace; this version onboards ConfigMaps named with a namespace", profile, name))
-			continue
-		}
-		key := ns + "/" + name
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		d, ok := configMaps[key]
-		if !ok {
-			problems = append(problems, fmt.Sprintf("%s names ConfigMap %s in policyRefs, which is not in the input; save it with kubectl get configmap -n %s %s -o yaml > %s.yaml and pass that file too", profile, key, ns, name, name))
-			continue
-		}
-		base := configMapBase(d)
-		var value map[string]any
-		_ = base.Decode(&value)
-		maps = append(maps, PolicyMap{Namespace: ns, Name: name, Unit: "configmap-" + Slug(ns+"-"+name), Base: base, BaseValue: value})
-	}
-	return maps, secrets, problems
-}
-
-// A policy ConfigMap as ConfigHub holds it: its name, namespace, labels and
-// content, and none of what the API server wrote back.
-func configMapBase(d Doc) *yaml.Node {
-	meta := obj(d.Value["metadata"])
-	metadata := mapping(scalar("name"), scalar(str(meta["name"])), scalar("namespace"), scalar(str(meta["namespace"])))
-	if labels := mapGet(mapGet(d.Node, "metadata"), "labels"); labels != nil && len(labels.Content) > 0 {
-		metadata.Content = append(metadata.Content, scalar("labels"), deepCopy(labels))
-	}
-	out := mapping(scalar("apiVersion"), scalar("v1"), scalar("kind"), scalar("ConfigMap"), scalar("metadata"), metadata)
-	for _, key := range []string{"data", "binaryData"} {
-		if n := mapGet(d.Node, key); n != nil {
-			out.Content = append(out.Content, scalar(key), deepCopy(n))
-		}
-	}
-	return out
 }
 
 // The first release goes through a change order named for the set of variants
@@ -1298,51 +1187,6 @@ func familyName(members []profileDoc, classes []string) string {
 		}
 	}
 	return str(obj(members[0].value["metadata"])["name"])
-}
-
-// BootstrapProfile is one profile on the management cluster that fetches a
-// variant's latest release from the ConfigHub gateway.
-type BootstrapProfile struct {
-	APIVersion string `yaml:"apiVersion"`
-	Kind       string `yaml:"kind"`
-	Metadata   struct {
-		Name string `yaml:"name"`
-	} `yaml:"metadata"`
-	Spec struct {
-		ClusterRefs []ClusterRef `yaml:"clusterRefs"`
-		PolicyRefs  []PolicyRef  `yaml:"policyRefs"`
-	} `yaml:"spec"`
-}
-
-// PolicyRef is a remote policy reference to a gateway address.
-type PolicyRef struct {
-	DeploymentType string `yaml:"deploymentType"`
-	RemoteURL      struct {
-		URL       string `yaml:"url"`
-		Interval  string `yaml:"interval"`
-		SecretRef struct {
-			Name      string `yaml:"name"`
-			Namespace string `yaml:"namespace"`
-		} `yaml:"secretRef"`
-	} `yaml:"remoteURL"`
-}
-
-// Each variant's Space reaches its cluster through one profile on the
-// management cluster. Publishing a release moves the tag; Sveltos follows.
-func bootstrapProfile(v Variant, management Cluster, secretName string) BootstrapProfile {
-	var b BootstrapProfile
-	b.APIVersion = profileAPIVersion
-	b.Kind = "ClusterProfile"
-	b.Metadata.Name = "confighub-" + v.Space
-	b.Spec.ClusterRefs = []ClusterRef{{APIVersion: clusterRefAPI["SveltosCluster"], Kind: "SveltosCluster", Namespace: management.Namespace, Name: management.Name}}
-	var ref PolicyRef
-	ref.DeploymentType = "Remote"
-	ref.RemoteURL.URL = fmt.Sprintf("oci://%s/space/%s:%s", gatewayHost, v.Space, releaseTag)
-	ref.RemoteURL.Interval = fetchInterval
-	ref.RemoteURL.SecretRef.Name = secretName
-	ref.RemoteURL.SecretRef.Namespace = secretNamespace
-	b.Spec.PolicyRefs = []PolicyRef{ref}
-	return b
 }
 
 // Every stage's releases wait for one approval of the change as it stands

@@ -1,0 +1,2 @@
+admissionController:
+  replicas: 3

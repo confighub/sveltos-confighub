@@ -2,41 +2,32 @@ Onboarding plan: 3 profiles over 3 clusters, one variant per cluster per compone
 Nothing has changed. This is what ConfigHub would hold.
 
 ingress-nginx  (selects env=prod)
-  base     sveltos-ingress-nginx-base  reaches no cluster: clusterRefs is empty
+  base     sveltos-ingress-nginx-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   ingress-nginx  chart ingress-nginx 4.15.1 from https://kubernetes.github.io/ingress-nginx: 19 objects, its Helm hooks among them as plain objects
   stage prod
     prod-eu      variant sveltos-ingress-nginx-prod-eu  ->  Target sveltos-targets/prod-eu
-                 differs from the base in metadata.name, spec.clusterRefs
     prod-us      variant sveltos-ingress-nginx-prod-us  ->  Target sveltos-targets/prod-us
-                 differs from the base in metadata.name, spec.clusterRefs
 
 kyverno  (selects env In [staging, prod])
-  base     sveltos-kyverno-base  reaches no cluster: clusterRefs is empty
+  base     sveltos-kyverno-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno  chart kyverno 3.8.1 from https://kyverno.github.io/kyverno: 71 objects (22 CRDs)
   stage staging
     staging-eu   variant sveltos-kyverno-staging-eu  ->  Target sveltos-targets/staging-eu
-                 differs from the base in metadata.name, spec.clusterRefs
   stage prod
     prod-eu      variant sveltos-kyverno-prod-eu  ->  Target sveltos-targets/prod-eu
-                 differs from the base in metadata.name, spec.clusterRefs
     prod-us      variant sveltos-kyverno-prod-us  ->  Target sveltos-targets/prod-us
-                 differs from the base in metadata.name, spec.clusterRefs
 
 kyverno-policies  (selects env In [staging, prod])
-  base     sveltos-kyverno-policies-base  reaches no cluster: clusterRefs is empty
-  policy   ConfigMap default/kyverno-policies  held in ConfigHub as unit configmap-default-kyverno-policies; each variant gets its own copy
+  base     sveltos-kyverno-policies-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno-policies  ConfigMap default/kyverno-policies: 1 object
   stage staging
     staging-eu   variant sveltos-kyverno-policies-staging-eu  ->  Target sveltos-targets/staging-eu
-                 differs from the base in metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs
-                 reads ConfigMap default/kyverno-policies-staging-eu
   stage prod
     prod-eu      variant sveltos-kyverno-policies-prod-eu  ->  Target sveltos-targets/prod-eu
-                 differs from the base in metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs
-                 reads ConfigMap default/kyverno-policies-prod-eu
     prod-us      variant sveltos-kyverno-policies-prod-us  ->  Target sveltos-targets/prod-us
-                 differs from the base in metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs
-                 reads ConfigMap default/kyverno-policies-prod-us
 
 Management cluster mgmt/mgmt
-  record   sveltos-management  one bootstrap profile per variant (8), fetching its release from the gateway
+  record   sveltos-management  one delivery profile per variant (8): each sends its variant's releases to its one cluster
 
 Not onboarded
   cluster dev-1: no profile selects it
@@ -44,7 +35,9 @@ Not onboarded
 In ConfigHub
   4 Targets in sveltos-targets, one per cluster, on a server-hosted worker
   3 components, each one base, 8 variants, 1 management record
-  13 Spaces and 8 Links, one tying each variant to its base (check your organization's quotas for both first)
+  13 Spaces and 8 Links, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
   first rollout: ingress-nginx in 1 stage, kyverno in 2 stages, kyverno-policies in 2 stages; one approval per stage, one release per variant
+
+Note: kyverno's chart kyverno has 11 Helm hooks for upgrade, delete or test, among them Jobs kyverno-migrate-resources, kyverno-rm-webhooks, kyverno-scale-to-zero. They are left out, as cub helm leaves them out, because only Helm runs them.
 
 Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.

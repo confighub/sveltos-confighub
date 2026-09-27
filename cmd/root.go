@@ -23,12 +23,13 @@ var (
 func Version() string { return version }
 
 type planFlags struct {
-	prefix     string
-	stageLabel string
-	stages     string
-	management string
-	profiles   string
-	classLabel string
+	prefix       string
+	stageLabel   string
+	stages       string
+	management   string
+	profiles     string
+	classLabel   string
+	includeHooks string
 }
 
 func (f *planFlags) register(c *cobra.Command) {
@@ -38,6 +39,7 @@ func (f *planFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.management, "management", "", "the management cluster as <namespace>/<name>, if it is not mgmt/mgmt")
 	c.Flags().StringVar(&f.profiles, "profiles", "", "onboard only these profiles, comma-separated")
 	c.Flags().StringVar(&f.classLabel, "class-label", "", "add a class base per value of this cluster label between each base and its clusters")
+	c.Flags().StringVar(&f.includeHooks, "include-hooks", "", "keep these charts' Helm hook manifests as plain objects, comma-separated release names or all")
 }
 
 func split(s string) []string {
@@ -52,12 +54,13 @@ func split(s string) []string {
 
 func (f *planFlags) options() onboard.Options {
 	return onboard.Options{
-		Prefix:     f.prefix,
-		StageLabel: f.stageLabel,
-		Stages:     split(f.stages),
-		Management: f.management,
-		Profiles:   split(f.profiles),
-		ClassLabel: f.classLabel,
+		Prefix:       f.prefix,
+		StageLabel:   f.stageLabel,
+		Stages:       split(f.stages),
+		Management:   f.management,
+		Profiles:     split(f.profiles),
+		ClassLabel:   f.classLabel,
+		IncludeHooks: split(f.includeHooks),
 	}
 }
 
@@ -96,13 +99,17 @@ func newRoot() *cobra.Command {
 
   plan   reads ClusterProfiles and the SveltosClusters they select, either the
          YAML you wrote or 'kubectl get clusterprofiles,sveltosclusters -A -o yaml',
-         and shows the fleet ConfigHub would govern: one base per profile, and one
-         variant per cluster it selects, addressed to that one cluster. Offline:
-         no account, no cluster, nothing changes.
+         and shows the fleet ConfigHub would govern: one base per profile holding
+         the objects its Helm charts and policy ConfigMaps render to, and one
+         variant per cluster it selects. Each chart is rendered with cub helm
+         template, so plan needs the cub helm plugin and the chart repositories,
+         but no account and no cluster. Nothing changes.
 
-  apply  writes the plan as files beside one script of cub and kubectl steps,
-         apply.sh, and takeover.sh when the profiles are live. Nothing runs until
-         you run the script.
+  apply  writes the plan as files, the rendered objects among them, beside one
+         script of cub and kubectl steps, apply.sh, and handover.sh when the
+         profiles are live. Nothing runs until you run the script. On the
+         management cluster, one delivery profile per variant then sends that
+         variant's releases to its one cluster.
 
 Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboard-your-sveltos-fleet.md`,
 		SilenceUsage:  true,
@@ -168,7 +175,7 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 			fmt.Fprint(w, onboard.RenderPlan(p, false))
 			fmt.Fprintf(w, "\nWrote %s and the files it reads. Read it, then run it:\n  MGMT_CONTEXT=<kubectl context of your management cluster> bash %s\n", shown, shown)
 			if p.Live {
-				fmt.Fprintf(w, "\nThen hand the live profiles over, without reinstalling anything:\n  MGMT_CONTEXT=<same context> bash %s\n", filepath.Join(filepath.Dir(shown), "takeover.sh"))
+				fmt.Fprintf(w, "\nThen hand the live profiles over, without reinstalling anything:\n  MGMT_CONTEXT=<same context> bash %s\n", filepath.Join(filepath.Dir(shown), "handover.sh"))
 			}
 			return nil
 		},

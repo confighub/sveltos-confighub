@@ -1,0 +1,270 @@
+
+##### 0. The fleet today: Kyverno, its policies and ingress-nginx, live, by label  [16:58:01]
+NAMESPACE        NAME         READY   VERSION   AGE   SHARD   LABELS
+mgmt             mgmt         true    v1.35.0   12m           projectsveltos.io/k8s-version=v1.35.0,sveltos-agent=presen
+projectsveltos   prod-eu      true    v1.35.0   11m           env=prod,projectsveltos.io/k8s-version=v1.35.0,region=eu,s
+projectsveltos   prod-us      true    v1.35.0   11m           env=prod,projectsveltos.io/k8s-version=v1.35.0,region=us,s
+projectsveltos   staging-eu   true    v1.35.0   11m           env=staging,projectsveltos.io/k8s-version=v1.35.0,region=e
+clusterprofile.config.projectsveltos.io/kyverno created
+clusterprofile.config.projectsveltos.io/ingress-nginx created
+configmap/kyverno-policies created
+clusterprofile.config.projectsveltos.io/kyverno-policies created
+  staging-eu  kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx -
+  prod-eu     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx 1/1
+  prod-us     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx 1/1
+  staging-eu  helm list: kyverno@rev1
+  prod-eu     helm list: ingress-nginx@rev1 kyverno@rev1
+  prod-us     helm list: ingress-nginx@rev1 kyverno@rev1
+  23 pods and policies recorded by UID
+
+##### 1. Export what Sveltos knows, and the ConfigMap a profile names  [17:00:25]
+
+##### 2. See the plan  [17:00:25]
+Onboarding plan: 3 profiles over 3 clusters, one variant per cluster per component (8 variants).
+Nothing has changed. This is what ConfigHub would hold.
+
+ingress-nginx  (selects env=prod)
+  base     ob-ingress-nginx-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   ingress-nginx  chart ingress-nginx 4.15.1 from https://kubernetes.github.io/ingress-nginx: 19 objects, its Helm hooks among them as plain objects
+  stage prod
+    prod-eu      variant ob-ingress-nginx-prod-eu  ->  Target ob-targets/prod-eu
+    prod-us      variant ob-ingress-nginx-prod-us  ->  Target ob-targets/prod-us
+
+kyverno  (selects env In [staging, prod])
+  base     ob-kyverno-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno  chart kyverno 3.8.1 from https://kyverno.github.io/kyverno: 71 objects (22 CRDs)
+  stage staging
+    staging-eu   variant ob-kyverno-staging-eu  ->  Target ob-targets/staging-eu
+  stage prod
+    prod-eu      variant ob-kyverno-prod-eu  ->  Target ob-targets/prod-eu
+    prod-us      variant ob-kyverno-prod-us  ->  Target ob-targets/prod-us
+
+kyverno-policies  (selects env In [staging, prod])
+  base     ob-kyverno-policies-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno-policies  ConfigMap default/kyverno-policies: 1 object
+  stage staging
+    staging-eu   variant ob-kyverno-policies-staging-eu  ->  Target ob-targets/staging-eu
+  stage prod
+    prod-eu      variant ob-kyverno-policies-prod-eu  ->  Target ob-targets/prod-eu
+    prod-us      variant ob-kyverno-policies-prod-us  ->  Target ob-targets/prod-us
+
+Management cluster mgmt/mgmt
+  record   ob-management  one delivery profile per variant (8): each sends its variant's releases to its one cluster
+
+In ConfigHub
+  4 Targets in ob-targets, one per cluster, on a server-hosted worker
+  3 components, each one base, 8 variants, 1 management record
+  13 Spaces and 8 Links, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
+  first rollout: ingress-nginx in 1 stage, kyverno in 2 stages, kyverno-policies in 2 stages; one approval per stage, one release per variant
+
+Note: kyverno's chart kyverno has 11 Helm hooks for upgrade, delete or test, among them Jobs kyverno-migrate-resources, kyverno-rm-webhooks, kyverno-scale-to-zero. They are left out, as cub helm leaves them out, because only Helm runs them.
+
+Live on your management cluster: ingress-nginx, kyverno, kyverno-policies. Each delivery profile deploys the same objects to the same cluster. apply also writes handover.sh, which steps each live profile aside without removing anything, so the delivery profiles carry on alone; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+
+Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
+
+##### 3. Write the steps  [17:00:31]
+onboard:
+apply.sh
+handover.sh
+ingress-nginx
+kyverno
+kyverno-policies
+management
+plan.txt
+profiles.yaml
+
+onboard/kyverno:
+change-workflow.yaml
+kyverno.values.yaml
+kyverno.yaml
+  onboard/kyverno/kyverno.yaml holds 71 objects
+
+##### 4. Run them  [17:00:37]
+
+== 0/6 Check before changing anything
+
+== 1/6 One named Target per cluster, in ob-targets
+
+== 2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow
+
+== 3/6 One variant per cluster, each holding what its base holds
+
+== 4/6 The management cluster's record: one delivery profile per variant
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-ob-targets created
+
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
+  kubectl get clustersummaries -A
+The delivery profiles of ingress-nginx, kyverno, kyverno-policies wait for handover.sh, which steps your live profiles aside first, so no object has two profiles managing it.
+
+#####    the live profiles still manage everything; the delivery profiles wait for handover.sh  [17:03:00]
+  ingress-nginx                prod-eu     Helm      Provisioned          
+  ingress-nginx                prod-us     Helm      Provisioned          
+  kyverno                      prod-eu     Helm      Provisioned          
+  kyverno                      prod-us     Helm      Provisioned          
+  kyverno                      staging-eu  Helm      Provisioned          
+  kyverno-policies             prod-eu     Resources Provisioned          
+  kyverno-policies             prod-us     Resources Provisioned          
+  kyverno-policies             staging-eu  Resources Provisioned          
+
+##### 5. Hand the live profiles over  [17:03:00]
+== ingress-nginx
+clusterprofile.config.projectsveltos.io/ingress-nginx patched
+clusterprofile.config.projectsveltos.io "ingress-nginx" deleted
+== kyverno-policies
+clusterprofile.config.projectsveltos.io/kyverno-policies patched
+clusterprofile.config.projectsveltos.io "kyverno-policies" deleted
+== kyverno
+clusterprofile.config.projectsveltos.io/kyverno patched
+clusterprofile.config.projectsveltos.io "kyverno" deleted
+== the delivery profiles
+clusterprofile.config.projectsveltos.io/ingress-nginx-prod-eu created
+clusterprofile.config.projectsveltos.io/ingress-nginx-prod-us created
+clusterprofile.config.projectsveltos.io/kyverno-staging-eu created
+clusterprofile.config.projectsveltos.io/kyverno-prod-eu created
+clusterprofile.config.projectsveltos.io/kyverno-prod-us created
+clusterprofile.config.projectsveltos.io/kyverno-policies-staging-eu created
+clusterprofile.config.projectsveltos.io/kyverno-policies-prod-eu created
+clusterprofile.config.projectsveltos.io/kyverno-policies-prod-us created
+Helm still records release ingress-nginx on prod-eu, prod-us, though ConfigHub manages its objects now, so a helm uninstall there would remove them. Remove the record, which leaves the objects, on each of those clusters: kubectl -n ingress-nginx delete secret -l owner=helm,name=ingress-nginx
+Helm still records release kyverno on staging-eu, prod-eu, prod-us, though ConfigHub manages its objects now, so a helm uninstall there would remove them. Remove the record, which leaves the objects, on each of those clusters: kubectl -n kyverno delete secret -l owner=helm,name=kyverno
+ConfigMap default/kyverno-policies is no longer read; ConfigHub holds its objects. Delete it when you are ready: kubectl delete configmap -n default kyverno-policies
+
+Done. Each delivery profile reports Provisioned within a minute:
+  kubectl get clustersummaries -A
+  ingress-nginx-prod-eu        prod-eu     Resources Provisioned          
+  ingress-nginx-prod-us        prod-us     Resources Provisioned          
+  kyverno-policies-prod-eu     prod-eu     Resources Provisioned          
+  kyverno-policies-prod-us     prod-us     Resources Provisioned          
+  kyverno-policies-staging-eu  staging-eu  Resources Provisioned          
+  kyverno-prod-eu              prod-eu     Resources Provisioned          
+  kyverno-prod-us              prod-us     Resources Provisioned          
+  kyverno-staging-eu           staging-eu  Resources Provisioned          
+  every pod and policy is the one that ran before onboarding: nothing was reinstalled
+  Helm's record, still at the revision it had:
+  staging-eu  helm list: kyverno@rev1
+  prod-eu     helm list: ingress-nginx@rev1 kyverno@rev1
+  prod-us     helm list: ingress-nginx@rev1 kyverno@rev1
+  removing Helm's record of the releases, as handover.sh says:
+    secret/sh.helm.release.v1.kyverno.v1
+    No resources found
+    secret/sh.helm.release.v1.kyverno.v1
+    secret/sh.helm.release.v1.ingress-nginx.v1
+    secret/sh.helm.release.v1.kyverno.v1
+    secret/sh.helm.release.v1.ingress-nginx.v1
+  staging-eu  helm list: nothing
+  prod-eu     helm list: nothing
+  prod-us     helm list: nothing
+  staging-eu  kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx -
+  prod-eu     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx 1/1
+  prod-us     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx 1/1
+
+##### 6. Two changes, one release, through the stages: a chart upgrade and a field  [17:05:59]
+  Kyverno 3.8.2, rendered the way apply.sh says kyverno was rendered, onto the base:
+    # kyverno is rendered with: cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --create-namespace -f kyverno/kyverno.values.yaml
+  and the admission controller at 4 replicas, a field changed in ConfigHub:
+  what the base changed, field by field, leaving out the chart's version labels:
+    -  replicas: 3
+    +  replicas: 4
+    -        image: "reg.kyverno.io/kyverno/kyvernopre:v1.18.1"
+    +        image: "reg.kyverno.io/kyverno/kyvernopre:v1.18.2"
+    -        image: "reg.kyverno.io/kyverno/kyverno:v1.18.1"
+    +        image: "reg.kyverno.io/kyverno/kyverno:v1.18.2"
+    -        image: "reg.kyverno.io/kyverno/background-controller:v1.18.1"
+    +        image: "reg.kyverno.io/kyverno/background-controller:v1.18.2"
+    -        image: "reg.kyverno.io/kyverno/cleanup-controller:v1.18.1"
+    +        image: "reg.kyverno.io/kyverno/cleanup-controller:v1.18.2"
+    -        image: "reg.kyverno.io/kyverno/reports-controller:v1.18.1"
+    +        image: "reg.kyverno.io/kyverno/reports-controller:v1.18.2"
+  EXPECT REFUSAL, promote into prod before staging released:
+    Failed: unable to promote to stage 'prod', Variant 'staging-eu' has taken change order 'kyverno-3-8-2' but has not released it
+  after staging:
+  staging-eu  kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx -
+  prod-eu     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx 1/1
+  prod-us     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.1       replicas 3  ingress-nginx 1/1
+  after prod:
+  staging-eu  kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx -
+  prod-eu     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx 1/1
+  prod-us     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx 1/1
+{
+  "Stage": "Completed",
+  "State": "Released"
+}
+
+##### 7. A new cluster registers with Sveltos  [17:11:42]
+[17:12:13] fleet ready; kubeconfigs in $ONBOARD_DIR
+  what Sveltos put on staging-us by itself: nothing
+kyverno  (selects env In [staging, prod])
+  base     ob-kyverno-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno  chart kyverno 3.8.1 from https://kyverno.github.io/kyverno: 71 objects (22 CRDs)
+  stage staging
+    staging-eu   variant ob-kyverno-staging-eu  ->  Target ob-targets/staging-eu
+    staging-us   variant ob-kyverno-staging-us  ->  Target ob-targets/staging-us
+  stage prod
+    prod-eu      variant ob-kyverno-prod-eu  ->  Target ob-targets/prod-eu
+    prod-us      variant ob-kyverno-prod-us  ->  Target ob-targets/prod-us
+
+
+== 0/6 Check before changing anything
+
+== 1/6 One named Target per cluster, in ob-targets
+
+== 2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow
+
+== 3/6 One variant per cluster, each holding what its base holds
+
+== 4/6 The management cluster's record: one delivery profile per variant
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+ingress-nginx: every variant in this plan is released
+ob-kyverno-staging-eu already released
+ob-kyverno-prod-eu already released
+ob-kyverno-prod-us already released
+ob-kyverno-policies-staging-eu already released
+ob-kyverno-policies-prod-eu already released
+ob-kyverno-policies-prod-us already released
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-ob-targets unchanged
+clusterprofile.config.projectsveltos.io/ingress-nginx-prod-eu configured
+clusterprofile.config.projectsveltos.io/ingress-nginx-prod-us configured
+clusterprofile.config.projectsveltos.io/kyverno-staging-eu configured
+clusterprofile.config.projectsveltos.io/kyverno-staging-us created
+clusterprofile.config.projectsveltos.io/kyverno-prod-eu configured
+clusterprofile.config.projectsveltos.io/kyverno-prod-us configured
+clusterprofile.config.projectsveltos.io/kyverno-policies-staging-eu configured
+clusterprofile.config.projectsveltos.io/kyverno-policies-staging-us created
+clusterprofile.config.projectsveltos.io/kyverno-policies-prod-eu configured
+clusterprofile.config.projectsveltos.io/kyverno-policies-prod-us configured
+
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
+  kubectl get clustersummaries -A
+  staging-eu  kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx -
+  prod-eu     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx 1/1
+  prod-us     kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx 1/1
+  staging-us  kyverno reg.kyverno.io/kyverno/kyverno:v1.18.2       replicas 4  ingress-nginx -
+  staging-us joined after the change and has it, and the policy: clusterpolicy.kyverno.io/disallow-latest-tag
+
+##### 8. What ConfigHub holds  [17:15:13]
+  NAME
+  ob-targets
+  ob-kyverno-base
+  ob-kyverno-policies-base
+  ob-ingress-nginx-base
+  ob-ingress-nginx-prod-eu
+  ob-ingress-nginx-prod-us
+  ob-kyverno-prod-eu
+  ob-kyverno-staging-eu
+  ob-kyverno-prod-us
+  ob-kyverno-policies-staging-eu
+  ob-kyverno-policies-prod-eu
+  ob-kyverno-policies-prod-us
+  ob-management
+  ob-kyverno-staging-us
+  ob-kyverno-policies-staging-us
+
+##### ONBOARD-REHEARSAL-DONE  [17:15:14]

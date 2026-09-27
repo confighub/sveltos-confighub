@@ -1,13 +1,16 @@
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: confighub-sveltos-kyverno-policies-staging-eu
+  name: kyverno-policies-staging-eu
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
       kind: SveltosCluster
-      namespace: mgmt
-      name: mgmt
+      namespace: projectsveltos
+      name: staging-eu
+  syncMode: ContinuousWithDriftDetection
+  continueOnError: true
+  dependsOn: [kyverno-staging-eu]
   policyRefs:
     - deploymentType: Remote
       remoteURL:
@@ -20,13 +23,16 @@ spec:
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: confighub-sveltos-kyverno-policies-prod-eu
+  name: kyverno-policies-prod-eu
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
       kind: SveltosCluster
-      namespace: mgmt
-      name: mgmt
+      namespace: projectsveltos
+      name: prod-eu
+  syncMode: ContinuousWithDriftDetection
+  continueOnError: true
+  dependsOn: [kyverno-prod-eu]
   policyRefs:
     - deploymentType: Remote
       remoteURL:
@@ -39,13 +45,16 @@ spec:
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: confighub-sveltos-kyverno-policies-prod-us
+  name: kyverno-policies-prod-us
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
       kind: SveltosCluster
-      namespace: mgmt
-      name: mgmt
+      namespace: projectsveltos
+      name: prod-us
+  syncMode: ContinuousWithDriftDetection
+  continueOnError: true
+  dependsOn: [kyverno-prod-us]
   policyRefs:
     - deploymentType: Remote
       remoteURL:

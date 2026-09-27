@@ -24,21 +24,27 @@ npm run verify
 ```
 
 **Already running Sveltos?** Point the onboarding plan at what your
-management cluster already knows. Offline, it shows the fleet ConfigHub would
-govern: one base per ClusterProfile, and one variant per cluster the profile
-selects today.
+management cluster already knows. With no account and no cluster, it shows
+the fleet ConfigHub would govern: each profile's charts rendered to the
+Kubernetes objects they install, held once as a base, and one variant per
+cluster the profile selects today, holding exactly the objects that cluster
+runs.
 
 ```bash
 cub plugin install confighub/sveltos-confighub
+cub plugin install confighub/cub-helm
 kubectl get clusterprofiles,sveltosclusters -A -o yaml > my-fleet.yaml
 cub sveltos plan my-fleet.yaml --stage-label env --stages staging,prod
 ```
 
+![Before and after the handover: one label-selector profile installing Kyverno on three clusters becomes a ConfigHub base with one variant per cluster, delivered by one Sveltos delivery profile per variant to the same clusters, with nothing reinstalled](docs/images/sveltos/sveltos-handover-before-after.svg)
+
 [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md) takes it
 from there: one more command writes the steps as a script to read and run,
-live profiles hand over to their variants without reinstalling anything, and
-Kyverno policies come with them, so a policy change is reviewed and staged
-cluster by cluster.
+live profiles hand over to one delivery profile per cluster without
+reinstalling anything, and Kyverno policies come with them. From then on a
+change, a chart upgrade included, is a reviewed change to the objects,
+released stage by stage.
 
 This is the fleet companion to
 [kubara-confighub](https://github.com/confighub/kubara-confighub), which
@@ -286,16 +292,22 @@ labelled `addons.gpu-operator: enabled`. It onboards that fleet with
 `cub sveltos`, enables the operator on one more cluster by approval rather
 than by label, shows a mislabel shipping nothing, and upgrades operator and
 driver on staging before prod, using NVIDIA's own AI Cluster Runtime recipe.
-It is recorded on kind as a run log rather than a receipt, and kind has no
-GPUs, so it proves the governance and delivery, not a driver coming up.
+ConfigHub holds the operator as the objects its chart renders to, so the
+driver version a reviewer approves is the ClusterPolicy's
+`spec.driver.version`, a field of its own. It is recorded on kind as a run
+log rather than a receipt, and kind has no GPUs, so it proves the governance
+and delivery, not a driver coming up.
 
 **[A slice of Meridian](examples/meridian-slice/README.md)**, ConfigHub's
 demo fleet, delivered for real by Sveltos: four of its eu-central clusters
 and its Kyverno component in Meridian's three levels (a root base, a class
 base per class, a deployment per cluster), made by `cub sveltos
---class-label` from one Sveltos profile per class. One chart upgrade on the
-root reached the class bases, then test, uat and prod in order, and each
-class kept its own replicas. Recorded on kind as a run log.
+--class-label` from one Sveltos profile per class. Each class base holds
+what its class's values render differently: the admission controller's
+replicas, protected, and a PodDisruptionBudget above one replica. One chart
+upgrade and one replica change on the root reached the class bases, then
+test, uat and prod in order, and uat and prod kept their own replicas.
+Recorded on kind as a run log.
 
 ## How to run it
 
