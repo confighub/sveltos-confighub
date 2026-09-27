@@ -153,6 +153,47 @@ A profile that deploys through `policyRefs` names ConfigMaps or Secrets on
 your management cluster. ConfigHub governs the profile, including which of
 them it names; the ConfigMaps and Secrets themselves stay where they are.
 
+## Kyverno policies, and other `policyRefs`
+
+A profile that deploys through `policyRefs` names ConfigMaps on your
+management cluster, and for Kyverno those ConfigMaps hold the policies
+themselves. Onboarding brings them into ConfigHub too, so the policy text is
+reviewed and staged like any other change. The plan names each ConfigMap it
+needs; pass it as a second input:
+
+```bash
+kubectl get configmap -n default kyverno-policies -o yaml > kyverno-policies.yaml
+cub sveltos plan my-fleet.yaml kyverno-policies.yaml --stage-label env --stages staging,prod
+```
+
+Each ConfigMap becomes a unit beside the profile in its base. Each variant
+gets its own copy, renamed for its cluster (`kyverno-policies-staging-eu`),
+and its `policyRefs` entry points at that copy, so a policy change can reach
+staging and not prod. After the takeover the original ConfigMap is no longer
+read, and `takeover.sh` says so.
+
+A policy change is then an edit to the base's ConfigMap, promoted like any
+other:
+
+```bash
+cub unit data --space sveltos-kyverno-policies-base configmap-default-kyverno-policies > policies.yaml
+# change failureAction: Audit to failureAction: Enforce, then store it
+cub unit update --space sveltos-kyverno-policies-base configmap-default-kyverno-policies policies.yaml \
+  --change-desc "Enforce: refuse pods that run :latest"
+cub changeorder create --space sveltos-kyverno-policies-base enforce-tags \
+  --change-workflow sveltos-kyverno-policies-base/rollout --description "Enforce disallow-latest-tag"
+cub variant promote --change-order sveltos-kyverno-policies-base/enforce-tags --target-stage staging
+cub variant approve --change-order sveltos-kyverno-policies-base/enforce-tags --stage staging
+cub release publish sveltos-kyverno-policies-staging-eu --revision ChangeOrder:sveltos-kyverno-policies-base/enforce-tags
+```
+
+Measured on kind with stock Sveltos v1.15.0 and Kyverno 3.8.1: the live
+policy profile handed over with its ClusterPolicy objects unchanged; after
+staging's release a pod running `:latest` was refused on staging and still
+admitted on prod; after prod's own approval and release, prod refused it
+too. Secrets named in `policyRefs` stay where they are: their content does
+not belong in a review diff.
+
 ## Making a change afterwards
 
 ConfigHub now holds each profile's base, so a change starts there. It is made
@@ -220,6 +261,8 @@ and every variant takes it while keeping its own departures.
   delivery time.
 - Profiles that select no cluster today.
 - Clusters no profile selects; the plan lists them.
+- Secrets named in `policyRefs`, and ConfigMaps named there without a
+  namespace, which each cluster reads from its own cluster namespace.
 
 Cluster API clusters are addressed as their `Cluster`, the same structural
 way; that path has not been rehearsed live yet.

@@ -1,4 +1,4 @@
-Onboarding plan: 2 profiles over 3 clusters, one variant per cluster per profile (5 variants).
+Onboarding plan: 3 profiles over 3 clusters, one variant per cluster per profile (8 variants).
 Nothing has changed. This is what ConfigHub would hold.
 
 ingress-nginx  (selects env=prod)
@@ -20,16 +20,31 @@ kyverno  (selects env In [staging, prod])
     prod-us      variant sveltos-kyverno-prod-us  ->  Target sveltos-targets/prod-us
                  differs from the base in metadata.name, spec.clusterRefs
 
+kyverno-policies  (selects env In [staging, prod])
+  base     sveltos-kyverno-policies-base  reaches no cluster: clusterRefs is empty
+  policy   ConfigMap default/kyverno-policies  held in ConfigHub as unit configmap-default-kyverno-policies; each variant gets its own copy
+  stage staging
+    staging-eu   variant sveltos-kyverno-policies-staging-eu  ->  Target sveltos-targets/staging-eu
+                 differs from the base in metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs
+                 reads ConfigMap default/kyverno-policies-staging-eu
+  stage prod
+    prod-eu      variant sveltos-kyverno-policies-prod-eu  ->  Target sveltos-targets/prod-eu
+                 differs from the base in metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs
+                 reads ConfigMap default/kyverno-policies-prod-eu
+    prod-us      variant sveltos-kyverno-policies-prod-us  ->  Target sveltos-targets/prod-us
+                 differs from the base in metadata.name, spec.clusterRefs, spec.dependsOn, spec.policyRefs
+                 reads ConfigMap default/kyverno-policies-prod-us
+
 Management cluster mgmt/mgmt
-  record   sveltos-management  one bootstrap profile per variant (5), fetching its release from the gateway
+  record   sveltos-management  one bootstrap profile per variant (8), fetching its release from the gateway
 
 Not onboarded
   cluster dev-1: no profile selects it
 
 In ConfigHub
   4 Targets in sveltos-targets, one per cluster, on a server-hosted worker
-  2 components, each one base, 5 variants, 1 management record
-  9 Spaces and 5 Links, one tying each variant to its base (check your organization's quotas for both first)
-  first rollout: ingress-nginx in 1 stage, kyverno in 2 stages; one approval per stage, one release per variant
+  3 components, each one base, 8 variants, 1 management record
+  13 Spaces and 8 Links, one tying each variant to its base (check your organization's quotas for both first)
+  first rollout: ingress-nginx in 1 stage, kyverno in 2 stages, kyverno-policies in 2 stages; one approval per stage, one release per variant
 
 Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.

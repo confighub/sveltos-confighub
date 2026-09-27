@@ -36,7 +36,9 @@ cub sveltos plan my-fleet.yaml --stage-label env --stages staging,prod
 
 [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md) takes it
 from there: one more command writes the steps as a script to read and run,
-and live profiles hand over to their variants without reinstalling anything.
+live profiles hand over to their variants without reinstalling anything, and
+Kyverno policies come with them, so a policy change is reviewed and staged
+cluster by cluster.
 
 This is the fleet companion to
 [kubara-confighub](https://github.com/confighub/kubara-confighub), which

@@ -172,7 +172,7 @@ func TestExamplePlan(t *testing.T) {
 		n += len(b.Profiles)
 		units = append(units, b.Unit)
 	}
-	if n != 5 || strings.Join(units, ",") != "bootstrap-ingress-nginx,bootstrap-kyverno" {
+	if n != 8 || strings.Join(units, ",") != "bootstrap-ingress-nginx,bootstrap-kyverno,bootstrap-kyverno-policies" {
 		t.Errorf("one bootstrap profile per variant, one unit per profile; got %d in %v", n, units)
 	}
 	if plan.Live {
@@ -221,6 +221,16 @@ func TestEverythingStoredAddressesOneCluster(t *testing.T) {
 			back := value
 			obj(back["metadata"])["name"] = str(obj(p.BaseValue["metadata"])["name"])
 			obj(back["spec"])["clusterRefs"] = []any{}
+			if deps, ok := obj(p.BaseValue["spec"])["dependsOn"]; ok {
+				obj(back["spec"])["dependsOn"] = deps
+			}
+			for i, pm := range p.Policies {
+				for _, r := range list(obj(back["spec"])["policyRefs"]) {
+					if ref := obj(r); str(ref["name"]) == v.Policies[i].Name {
+						ref["name"] = pm.Name
+					}
+				}
+			}
 			base, _ := yaml.Marshal(p.BaseValue)
 			again, _ := yaml.Marshal(back)
 			if string(base) != string(again) {
@@ -251,7 +261,7 @@ func TestBaseKeepsTheUsersOrder(t *testing.T) {
 		if strings.HasPrefix(strings.TrimSpace(text), "{") {
 			t.Errorf("%s's base should be YAML: a JSON base does not line up with its variants", p.Name)
 		}
-		if strings.Index(text, "syncMode") > strings.Index(text, "helmCharts") {
+		if strings.Contains(text, "helmCharts") && strings.Index(text, "syncMode") > strings.Index(text, "helmCharts") {
 			t.Errorf("%s's base should keep the key order the user wrote", p.Name)
 		}
 		if !strings.Contains(text, "clusterRefs: []") {
@@ -292,7 +302,7 @@ func TestApplyScript(t *testing.T) {
 		{strings.Contains(script, "publish sveltos-kyverno-prod-eu "+order) && strings.Contains(script, `--revision "ChangeOrder:$2"`),
 			"a release names its change order with its base Space, so two profiles' change orders cannot be confused"},
 		{strings.Contains(script, "if rolled_out "+order+"; then"), "a finished first release is skipped on a re-run"},
-		{strings.Contains(script, `depart sveltos-kyverno-prod-eu '.metadata.name = "kyverno-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}]'`) &&
+		{strings.Contains(script, `depart sveltos-kyverno-prod-eu clusterprofile '.metadata.name = "kyverno-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}]'`) &&
 			!regexp.MustCompile(`(?m)^cub unit update --space sveltos-kyverno-prod-eu`).MatchString(script),
 			"departures touch only their own fields, once, so a variant keeps what the base holds today"},
 		{strings.Index(script, order+" --target-stage staging") > 0 && strings.Index(script, order+" --target-stage staging") < strings.Index(script, order+" --target-stage prod"),
@@ -315,6 +325,67 @@ func TestApplyScript(t *testing.T) {
 				t.Errorf("%s should read the gateway through this onboarding's own Secret", bp.Metadata.Name)
 			}
 		}
+	}
+}
+
+func TestKyvernoPolicies(t *testing.T) {
+	plan := mustPlan(t, exampleDocs(t), exampleOpts)
+	var policies Profile
+	for _, p := range plan.Profiles {
+		if p.Name == "kyverno-policies" {
+			policies = p
+		}
+	}
+	if len(policies.Policies) != 1 || policies.Policies[0].Unit != "configmap-default-kyverno-policies" {
+		t.Fatalf("the policy ConfigMap should be held in ConfigHub as one unit beside the profile: %+v", policies.Policies)
+	}
+	base := policies.Policies[0].BaseValue
+	if _, ok := obj(base["metadata"])["uid"]; ok || !strings.Contains(str(obj(base["data"])["disallow-latest-tag.yaml"]), "kind: ClusterPolicy") {
+		t.Errorf("the ConfigMap's policies should be held, and nothing the API server wrote back")
+	}
+	script := ApplyScript(plan)
+	for _, v := range policies.Variants {
+		if len(v.Policies) != 1 || v.Policies[0].Name != "kyverno-policies-"+v.Target {
+			t.Errorf("%s should read its own copy of the policies: %+v", v.Space, v.Policies)
+		}
+		if !strings.Contains(v.DepartExpression, `select(.kind == "ConfigMap" and .namespace == "default" and .name == "kyverno-policies") | .name) = "kyverno-policies-`+v.Target+`"`) {
+			t.Errorf("%s's policyRefs entry should be renamed where it stands: %s", v.Space, v.DepartExpression)
+		}
+		if !strings.Contains(script, "depart "+v.Space+" configmap-default-kyverno-policies '.metadata.name = \"kyverno-policies-"+v.Target+"\"'") {
+			t.Errorf("%s's copy of the ConfigMap should be renamed for its cluster", v.Space)
+		}
+		value, err := VariantValue(policies, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := obj(list(obj(value["spec"])["policyRefs"])[0])
+		if str(ref["name"]) != "kyverno-policies-"+v.Target || !addressedStructurally(value) {
+			t.Errorf("%s should address one cluster and read its own policies: %v", v.Space, ref)
+		}
+		if v.DependsOn[0] != "kyverno-"+v.Target {
+			t.Errorf("%s should depend on the kyverno variant for its own cluster", v.Space)
+		}
+	}
+	if !strings.Contains(script, "cub unit create --space sveltos-kyverno-policies-base configmap-default-kyverno-policies kyverno-policies/configmap-default-kyverno-policies.yaml") {
+		t.Errorf("the base should hold the policy ConfigMap")
+	}
+
+	missing := mustPlan(t, parse(t, mgmt+cluster("a", "projectsveltos", "env", "prod")+"apiVersion: config.projectsveltos.io/v1beta1\nkind: ClusterProfile\nmetadata: {name: p}\nspec:\n  clusterSelector: {matchLabels: {env: prod}}\n  policyRefs: [{kind: ConfigMap, namespace: default, name: pols}, {kind: Secret, namespace: default, name: creds}, {kind: ConfigMap, name: local}]\n"), Options{})
+	all := strings.Join(missing.Problems, " ")
+	if !strings.Contains(all, "kubectl get configmap -n default pols -o yaml > pols.yaml and pass that file too") {
+		t.Errorf("a ConfigMap missing from the input should be named with the command that adds it: %v", missing.Problems)
+	}
+	if !strings.Contains(all, "without a namespace") {
+		t.Errorf("a ConfigMap named without a namespace should be named as not yet onboarded")
+	}
+	if !strings.Contains(strings.Join(missing.Notes, " "), "Secret default/creds") {
+		t.Errorf("a Secret should be named and left where it is")
+	}
+
+	live := strings.Replace(mgmt+cluster("a", "projectsveltos", "env", "prod")+"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: pols, namespace: default, uid: \"9\"}\ndata: {p.yaml: x}\n---\napiVersion: config.projectsveltos.io/v1beta1\nkind: ClusterProfile\nmetadata: {name: p, uid: \"1\"}\nspec:\n  clusterSelector: {matchLabels: {env: prod}}\n  policyRefs: [{kind: ConfigMap, namespace: default, name: pols}]\n", "\\n", "\n", -1)
+	takeover := TakeoverScript(mustPlan(t, parse(t, live), Options{}))
+	if !strings.Contains(takeover, "kubectl delete configmap -n default pols") {
+		t.Errorf("the takeover should name the original ConfigMap, which is no longer read")
 	}
 }
 
