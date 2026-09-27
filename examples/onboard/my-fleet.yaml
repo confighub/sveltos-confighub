@@ -4,7 +4,7 @@
 #
 #   kubectl get clusterprofiles,sveltosclusters -A -o yaml
 #
-# `npm run onboard -- plan` reads this and shows the fleet ConfigHub would
+# `cub sveltos plan` reads this and shows the fleet ConfigHub would
 # govern: one base per profile, and one variant per cluster the profile
 # selects today, each addressed to its one cluster by clusterRefs.
 apiVersion: lib.projectsveltos.io/v1beta1

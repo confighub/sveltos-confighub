@@ -5,10 +5,13 @@ pick clusters by label, and the SveltosClusters they pick from. This guide
 turns that into a governed fleet in ConfigHub with three commands, and the
 first two change nothing.
 
-You need this repository cloned (node 22 or newer, python3 with pyyaml), the
-`cub` CLI logged in to your ConfigHub organization (`cub auth login`), and
-`kubectl` access to your management cluster, which must run Sveltos v1.14.0
-or newer.
+You need the `cub` CLI logged in to your ConfigHub organization
+(`cub auth login`), `kubectl` access to your management cluster, which must
+run Sveltos v1.14.0 or newer, and the plugin:
+
+```bash
+cub plugin install confighub/sveltos-confighub
+```
 
 ## The words you will meet
 
@@ -44,7 +47,7 @@ is an example with two profiles and five clusters.
 ## 2. See the plan
 
 ```bash
-npm run onboard -- plan my-fleet.yaml --stage-label env --stages staging,prod
+cub sveltos plan my-fleet.yaml --stage-label env --stages staging,prod
 ```
 
 The plan runs offline, with no account, and shows what ConfigHub would hold:
@@ -75,7 +78,7 @@ Leave out the stage options and every cluster is in one stage, `fleet`.
 ## 3. Write the steps, read them, run them
 
 ```bash
-npm run onboard -- apply my-fleet.yaml --stage-label env --stages staging,prod --out onboard
+cub sveltos apply my-fleet.yaml --stage-label env --stages staging,prod --out onboard
 MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/apply.sh
 ```
 
@@ -193,8 +196,8 @@ apply again, with the profiles `apply` saved and a fresh cluster list:
 
 ```bash
 kubectl get sveltosclusters -A -o yaml > clusters.yaml
-npm run onboard -- plan onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod
-npm run onboard -- apply onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod --out onboard
+cub sveltos plan onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod
+cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod --out onboard
 MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/apply.sh
 ```
 

@@ -4,18 +4,18 @@ metadata:
   name: confighub-sveltos-ingress-nginx-prod-eu
 spec:
   clusterRefs:
-  - apiVersion: lib.projectsveltos.io/v1beta1
-    kind: SveltosCluster
-    namespace: mgmt
-    name: mgmt
+    - apiVersion: lib.projectsveltos.io/v1beta1
+      kind: SveltosCluster
+      namespace: mgmt
+      name: mgmt
   policyRefs:
-  - deploymentType: Remote
-    remoteURL:
-      url: oci://oci.hub.confighub.com/space/sveltos-ingress-nginx-prod-eu:latest
-      interval: 1m0s
-      secretRef:
-        name: confighub-sveltos-targets
-        namespace: projectsveltos
+    - deploymentType: Remote
+      remoteURL:
+        url: oci://oci.hub.confighub.com/space/sveltos-ingress-nginx-prod-eu:latest
+        interval: 1m0s
+        secretRef:
+          name: confighub-sveltos-targets
+          namespace: projectsveltos
 ---
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
@@ -23,15 +23,15 @@ metadata:
   name: confighub-sveltos-ingress-nginx-prod-us
 spec:
   clusterRefs:
-  - apiVersion: lib.projectsveltos.io/v1beta1
-    kind: SveltosCluster
-    namespace: mgmt
-    name: mgmt
+    - apiVersion: lib.projectsveltos.io/v1beta1
+      kind: SveltosCluster
+      namespace: mgmt
+      name: mgmt
   policyRefs:
-  - deploymentType: Remote
-    remoteURL:
-      url: oci://oci.hub.confighub.com/space/sveltos-ingress-nginx-prod-us:latest
-      interval: 1m0s
-      secretRef:
-        name: confighub-sveltos-targets
-        namespace: projectsveltos
+    - deploymentType: Remote
+      remoteURL:
+        url: oci://oci.hub.confighub.com/space/sveltos-ingress-nginx-prod-us:latest
+        interval: 1m0s
+        secretRef:
+          name: confighub-sveltos-targets
+          namespace: projectsveltos

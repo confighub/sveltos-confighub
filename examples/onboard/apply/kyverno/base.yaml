@@ -4,15 +4,15 @@ metadata:
   name: kyverno-base
 spec:
   clusterRefs: []
-  helmCharts:
-  - chartName: kyverno/kyverno
-    chartVersion: 3.8.1
-    helmChartAction: Install
-    releaseName: kyverno
-    releaseNamespace: kyverno
-    repositoryName: kyverno
-    repositoryURL: https://kyverno.github.io/kyverno/
-    values: |
-      admissionController:
-        replicas: 3
   syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://kyverno.github.io/kyverno/
+      repositoryName: kyverno
+      chartName: kyverno/kyverno
+      chartVersion: 3.8.1
+      releaseName: kyverno
+      releaseNamespace: kyverno
+      helmChartAction: Install
+      values: |
+        admissionController:
+          replicas: 3

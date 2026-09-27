@@ -1,0 +1,92 @@
+name: release-plugin
+
+# Publishes the cub sveltos plugin as a GitHub release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#   cub plugin install confighub/sveltos-confighub
+#
+# Asset naming is a contract, not a preference: cub locates the right binary by
+# <repo-name>-<goos>-<goarch>, matching the convention of the other cub plugins
+# (cub-che, cub-lk, eks-inference). Rename these and `cub plugin install` stops
+# finding them.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - run: go vet ./...
+      - run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          ldflags="-s -w \
+            -X github.com/confighub/sveltos-confighub/cmd.version=${version} \
+            -X github.com/confighub/sveltos-confighub/cmd.commit=${GITHUB_SHA} \
+            -X github.com/confighub/sveltos-confighub/cmd.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          out="sveltos-confighub-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags "$ldflags" -o "$out" .
+          echo "ASSET=$out" >> "$GITHUB_ENV"
+      - name: Checksum
+        run: shasum -a 256 "$ASSET" > "$ASSET.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/*
