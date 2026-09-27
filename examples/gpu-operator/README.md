@@ -63,11 +63,10 @@ waits for a go-ahead ([#48](https://github.com/confighub/sveltos-confighub/issue
 cluster run different AICR recipes. Keep one profile per recipe, each
 selecting its accelerator, and onboard with `--class-label accelerator`: they
 become one component with a class base per accelerator, each holding its own
-values, and a chart upgrade made once on the root reaches both. Per-cluster
-values departures would hold the same differences, but chart values are one
-string field, and when a base change and a departure touch the same field,
-ConfigHub keeps the departure and drops the change without saying so: every
-values change would have to be made cluster by cluster.
+values, and a chart upgrade made once on the root reaches both. A setting a
+class overrides is changed on the class bases, never on the root: when the
+base changes a setting an override holds, the base's value replaces the
+override and the promotion reports nothing (measured 2026-09-27).
 
 **Reviewing a values change is harder than it should be.** ConfigHub's
 Rollouts view highlights the chart version change, but it shows the 136 lines

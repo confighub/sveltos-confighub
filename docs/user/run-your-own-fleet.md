@@ -27,10 +27,11 @@ and one base that reaches no cluster.
   and departs from it in the fields that make it that cluster's own: its
   `metadata.name`, the clusterRefs entry that names exactly one cluster
   (`spec.clusterRefs`, one `SveltosCluster` reference), and its
-  `spec.stopMatchingBehavior`. Keep departures out of fields the base
-  rewrites: chart values live in one string field, and a values departure
-  would be silently swallowed by the next inherited change (this repository's
-  collision guard refuses that arrangement; copy it).
+  `spec.stopMatchingBehavior`. Keep departures out of settings the base
+  changes: when the base changes a setting a variant overrides, the base's
+  value replaces the override and the promotion reports nothing, even inside
+  the chart's values string (measured 2026-09-27). This repository's
+  collision guard refuses that arrangement before a run; copy it.
 - **The management record** holds one bootstrap `ClusterProfile` per workload
   Space, each pointing at that Space on the ConfigHub OCI gateway. Its first
   revision is applied out of band with kubectl, because it is what enables
