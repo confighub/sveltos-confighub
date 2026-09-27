@@ -100,6 +100,16 @@ Enforce on the base: after staging's release a `:latest` pod was refused on
 staging and admitted on prod; after prod's own approval and release, prod
 refused it too.
 
+## The GPU operator
+
+Chapter seven ([examples/gpu-operator](../../examples/gpu-operator/README.md))
+ran the same path for NVIDIA's GPU operator, with the `h100-any` recipe on
+kind. The live label-selector profile handed over with the same release and
+operator pod. A newly labelled cluster received nothing until its variant was
+released through the prod stage, which a re-run added to the workflow. A
+mislabelled cluster received nothing. The operator and driver upgrade reached
+staging before prod. Kind has no GPUs, so no driver ran.
+
 ## Not measured
 
 The takeover with Kustomize profiles; Cluster API clusters as input;

@@ -1,6 +1,7 @@
 package onboard
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -138,6 +139,26 @@ func line(words ...string) string {
 	return strings.Join(quoted, " ")
 }
 
+type stageJSON struct {
+	Name                 string   `json:"Name"`
+	WhereSpace           string   `json:"WhereSpace"`
+	Prerequisites        []string `json:"Prerequisites,omitempty"`
+	ReleasePrerequisites []string `json:"ReleasePrerequisites"`
+}
+
+// The workflow's stages as a patch, the same stages workflowText writes.
+func stagesJSON(stages []string) string {
+	out := make([]stageJSON, len(stages))
+	for i, s := range stages {
+		out[i] = stageJSON{Name: s, WhereSpace: fmt.Sprintf("Labels.Stage = '%s'", s), ReleasePrerequisites: []string{"approval"}}
+		if i > 0 {
+			out[i].Prerequisites = []string{"Released"}
+		}
+	}
+	data, _ := json.Marshal(map[string]any{"Stages": out})
+	return string(data)
+}
+
 // ApplyScript is the one script apply writes: cub and kubectl steps to read,
 // then run, and safe to run again.
 func ApplyScript(plan *Plan) string {
@@ -177,6 +198,9 @@ func ApplyScript(plan *Plan) string {
 		`    echo "$1/$2 already has its departures"`,
 		"  fi",
 		"}",
+		"# A cluster that joins in a stage the workflow does not have yet adds that",
+		"# stage. Only the stages are patched, so approval settings made since stay.",
+		`stages_are() { [ "$(cub changeworkflow get --space "$1" "$2" -o 'jq=[.ChangeWorkflow.Stages[].Name] | join(",")')" = "$3" ]; }`,
 		"publish() {",
 		"  local out",
 		`  out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0`,
@@ -208,7 +232,9 @@ func ApplyScript(plan *Plan) string {
 			L = append(L, line("cub", "unit", "create", "--space", p.BaseSpace, pm.Unit, p.Name+"/"+pm.Unit+".yaml", "--change-desc", fmt.Sprintf("Onboard the policies %s reads from ConfigMap %s/%s", p.Name, pm.Namespace, pm.Name), "--allow-exists", "--quiet"))
 		}
 		L = append(L,
-			line("cub", "changeworkflow", "create", "--space", p.BaseSpace, workflowSlug, "--filename", p.Name+"/change-workflow.yaml", "--allow-exists", "--quiet"))
+			line("cub", "changeworkflow", "create", "--space", p.BaseSpace, workflowSlug, "--filename", p.Name+"/change-workflow.yaml", "--allow-exists", "--quiet"),
+			fmt.Sprintf("stages_are %s %s %s || %s | %s", p.BaseSpace, workflowSlug, strings.Join(p.Stages, ","),
+				line("echo", stagesJSON(p.Stages)), line("cub", "changeworkflow", "update", "--patch", "--space", p.BaseSpace, workflowSlug, "--from-stdin", "--quiet")))
 	}
 	L = append(L, "", `step "3/6 One variant per cluster, addressed to that cluster alone"`)
 	for _, p := range plan.Profiles {

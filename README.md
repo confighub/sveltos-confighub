@@ -280,6 +280,15 @@ attestations next
 ([#34](https://github.com/confighub/sveltos-confighub/issues/34)). Their
 offline self-tests keep walking the old path against their own fakes.
 
+**Chapter seven, [the GPU operator on exactly the clusters approved for it](examples/gpu-operator/README.md),**
+starts where GPU fleets are today: NVIDIA's operator on every cluster
+labelled `addons.gpu-operator: enabled`. It onboards that fleet with
+`cub sveltos`, enables the operator on one more cluster by approval rather
+than by label, shows a mislabel shipping nothing, and upgrades operator and
+driver on staging before prod, using NVIDIA's own AI Cluster Runtime recipe.
+It is recorded on kind as a run log rather than a receipt, and kind has no
+GPUs, so it proves the governance and delivery, not a driver coming up.
+
 ## How to run it
 
 Already running Sveltos? [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md)

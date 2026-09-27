@@ -302,6 +302,8 @@ func TestApplyScript(t *testing.T) {
 		{strings.Contains(script, "publish sveltos-kyverno-prod-eu "+order) && strings.Contains(script, `--revision "ChangeOrder:$2"`),
 			"a release names its change order with its base Space, so two profiles' change orders cannot be confused"},
 		{strings.Contains(script, "if rolled_out "+order+"; then"), "a finished first release is skipped on a re-run"},
+		{strings.Contains(script, `stages_are sveltos-kyverno-base rollout staging,prod || echo '{"Stages":[{"Name":"staging","WhereSpace":"Labels.Stage = '\''staging'\''","ReleasePrerequisites":["approval"]},{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","Prerequisites":["Released"],"ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-kyverno-base rollout --from-stdin --quiet`),
+			"a stage a joining cluster brings is patched into the workflow, and only the stages"},
 		{strings.Contains(script, `depart sveltos-kyverno-prod-eu clusterprofile '.metadata.name = "kyverno-prod-eu" | .spec.clusterRefs = [{"apiVersion":"lib.projectsveltos.io/v1beta1","kind":"SveltosCluster","namespace":"projectsveltos","name":"prod-eu"}]'`) &&
 			!regexp.MustCompile(`(?m)^cub unit update --space sveltos-kyverno-prod-eu`).MatchString(script),
 			"departures touch only their own fields, once, so a variant keeps what the base holds today"},
