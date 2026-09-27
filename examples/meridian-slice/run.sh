@@ -68,7 +68,7 @@ cub space list --where "Component.Slug = 'mer-kyverno' AND Labels.Role = 'deploy
 say "2. One change for every class, at the root: Kyverno 3.8.2, and 4 replicas"
 SEL='select(.kind == "Deployment" and .metadata.name == "kyverno-admission-controller")'
 grep '^# kyverno is rendered with' onboard/apply.sh | sed 's/^/  the root was /'
-cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 --namespace kyverno --create-namespace -f onboard/kyverno/kyverno.values.yaml > kyverno-3.8.2.yaml 2>/dev/null || fail "render 3.8.2"
+cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 --namespace kyverno --create-namespace -f onboard/kyverno/kyverno.values.yaml 2>/dev/null | grep -vxF '$comment$head$: ""' > kyverno-3.8.2.yaml || fail "render 3.8.2"
 cub unit update --space mer-kyverno-base kyverno kyverno-3.8.2.yaml --change-desc "Kyverno 3.8.2" --quiet || fail "root update"
 cub function set --space mer-kyverno-base --unit kyverno --change-desc "Admission controller at 4 replicas" --quiet -- set-yq "($SEL | .spec.replicas) = 4" > /dev/null || fail "root edit"
 cub changeorder create --space mer-kyverno-base kyverno-3-8-2 --change-workflow mer-kyverno-base/rollout --description "Kyverno 3.8.2, 4 replicas at the root" --quiet || fail "change order"

@@ -24,6 +24,17 @@ rolled_out() { [ "$(cub changeorder get --space "${1%/*}" "${1#*/}" -o jq=.Chang
 # objects. Later revisions are changes made in ConfigHub, which a re-run
 # leaves alone.
 fresh() { [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ] || { echo "$1/$2 already has its departures"; return 1; }; }
+# A base unit holds every object of its file: a document lost on the way
+# shows as a different count. (ConfigHub may lay the YAML out its own way,
+# so the count is of objects, not bytes.) Later revisions, changes made in
+# ConfigHub since, are left alone.
+stored() {
+  [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ] || return 0
+  local have want
+  want=$(grep -c '^kind:' "$3" || true)
+  have=$(cub unit data --space "$1" "$2" | grep -c '^kind:' || true)
+  [ "$have" = "$want" ] || { echo "$1/$2 holds $have objects, but $3 has $want; compare them with: cub unit data --space $1 $2 | diff - $3" >&2; return 1; }
+}
 # A variant must hold every unit of its base before it is released: Sveltos
 # removes from a cluster whatever a release no longer holds.
 holds() {
@@ -77,19 +88,22 @@ cub target create staging-eu '{}' server-worker --space sveltos-targets --provid
 step "2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow"
 cub component create sveltos-ingress-nginx --allow-exists --quiet
 cub space create sveltos-ingress-nginx-base --component sveltos-ingress-nginx --label Component=sveltos-ingress-nginx --label Role=base --allow-exists --quiet
-# ingress-nginx is rendered with: cub helm template ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version 4.15.1 --namespace ingress-nginx --create-namespace --include-hooks
+# ingress-nginx is rendered with: cub helm template ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version 4.15.1 --namespace ingress-nginx --create-namespace --include-hooks | grep -vxF '$comment$head$: ""'
 cub unit create --space sveltos-ingress-nginx-base ingress-nginx ingress-nginx/ingress-nginx.yaml --change-desc 'Onboard ingress-nginx: chart ingress-nginx 4.15.1 from https://kubernetes.github.io/ingress-nginx' --allow-exists --quiet
+stored sveltos-ingress-nginx-base ingress-nginx ingress-nginx/ingress-nginx.yaml
 cub changeworkflow create --space sveltos-ingress-nginx-base rollout --filename ingress-nginx/change-workflow.yaml --allow-exists --quiet
 stages_are sveltos-ingress-nginx-base rollout prod || echo '{"Stages":[{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-ingress-nginx-base rollout --from-stdin --quiet
 cub component create sveltos-kyverno --allow-exists --quiet
 cub space create sveltos-kyverno-base --component sveltos-kyverno --label Component=sveltos-kyverno --label Role=base --allow-exists --quiet
-# kyverno is rendered with: cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --create-namespace -f kyverno/kyverno.values.yaml
+# kyverno is rendered with: cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --create-namespace -f kyverno/kyverno.values.yaml | grep -vxF '$comment$head$: ""'
 cub unit create --space sveltos-kyverno-base kyverno kyverno/kyverno.yaml --change-desc 'Onboard kyverno: chart kyverno 3.8.1 from https://kyverno.github.io/kyverno' --allow-exists --quiet
+stored sveltos-kyverno-base kyverno kyverno/kyverno.yaml
 cub changeworkflow create --space sveltos-kyverno-base rollout --filename kyverno/change-workflow.yaml --allow-exists --quiet
 stages_are sveltos-kyverno-base rollout staging,prod || echo '{"Stages":[{"Name":"staging","WhereSpace":"Labels.Stage = '\''staging'\''","ReleasePrerequisites":["approval"]},{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","Prerequisites":["Released"],"ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-kyverno-base rollout --from-stdin --quiet
 cub component create sveltos-kyverno-policies --allow-exists --quiet
 cub space create sveltos-kyverno-policies-base --component sveltos-kyverno-policies --label Component=sveltos-kyverno-policies --label Role=base --allow-exists --quiet
 cub unit create --space sveltos-kyverno-policies-base kyverno-policies kyverno-policies/kyverno-policies.yaml --change-desc 'Onboard kyverno-policies: ConfigMap default/kyverno-policies' --allow-exists --quiet
+stored sveltos-kyverno-policies-base kyverno-policies kyverno-policies/kyverno-policies.yaml
 cub changeworkflow create --space sveltos-kyverno-policies-base rollout --filename kyverno-policies/change-workflow.yaml --allow-exists --quiet
 stages_are sveltos-kyverno-policies-base rollout staging,prod || echo '{"Stages":[{"Name":"staging","WhereSpace":"Labels.Stage = '\''staging'\''","ReleasePrerequisites":["approval"]},{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","Prerequisites":["Released"],"ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-kyverno-policies-base rollout --from-stdin --quiet
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -267,6 +268,17 @@ func ApplyScript(plan *Plan) string {
 		"# objects. Later revisions are changes made in ConfigHub, which a re-run",
 		"# leaves alone.",
 		`fresh() { [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ] || { echo "$1/$2 already has its departures"; return 1; }; }`,
+		"# A base unit holds every object of its file: a document lost on the way",
+		"# shows as a different count. (ConfigHub may lay the YAML out its own way,",
+		"# so the count is of objects, not bytes.) Later revisions, changes made in",
+		"# ConfigHub since, are left alone.",
+		"stored() {",
+		`  [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ] || return 0`,
+		`  local have want`,
+		`  want=$(grep -c '^kind:' "$3" || true)`,
+		`  have=$(cub unit data --space "$1" "$2" | grep -c '^kind:' || true)`,
+		`  [ "$have" = "$want" ] || { echo "$1/$2 holds $have objects, but $3 has $want; compare them with: cub unit data --space $1 $2 | diff - $3" >&2; return 1; }`,
+		"}",
 		"# A variant must hold every unit of its base before it is released: Sveltos",
 		"# removes from a cluster whatever a release no longer holds.",
 		"holds() {",
@@ -325,7 +337,9 @@ func ApplyScript(plan *Plan) string {
 			if u.Chart != nil {
 				L = append(L, "# "+u.Slug+" is rendered with: "+renderCommand(p, u))
 			}
-			L = append(L, line("cub", "unit", "create", "--space", p.BaseSpace, u.Slug, p.Name+"/"+u.Slug+".yaml", "--change-desc", fmt.Sprintf("Onboard %s: %s", p.Name, u.Source), "--allow-exists", "--quiet"))
+			L = append(L,
+				line("cub", "unit", "create", "--space", p.BaseSpace, u.Slug, p.Name+"/"+u.Slug+".yaml", "--change-desc", fmt.Sprintf("Onboard %s: %s", p.Name, u.Source), "--allow-exists", "--quiet"),
+				line("stored", p.BaseSpace, u.Slug, p.Name+"/"+u.Slug+".yaml"))
 		}
 		L = append(L,
 			line("cub", "changeworkflow", "create", "--space", p.BaseSpace, workflowSlug, "--filename", p.Name+"/change-workflow.yaml", "--allow-exists", "--quiet"),
@@ -459,10 +473,71 @@ func HandoverScript(plan *Plan) string {
 		"# the one that depends on it. Then it applies the delivery profiles, which",
 		"# adopt what is there. So no object ever has two profiles managing it.",
 		"# Skipping LeavePolicies would uninstall the add-ons first.",
+		"#",
+		"# Before it changes anything, it checks that each live profile, and each",
+		"# ConfigMap of policies, is still what was exported and planned, and still",
+		"# reaches the clusters planned. If one has changed, what ConfigHub holds",
+		"# may not be what runs, and the delivery profiles would change the",
+		"# clusters to match it; so it stops, and asks for a fresh export.",
 		"set -euo pipefail",
 		`cd "$(dirname "$0")"`,
 		`k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }`,
-		fmt.Sprintf(`k get secret -n %s %s >/dev/null 2>&1 || { echo "the gateway Secret is missing: run apply.sh first"; exit 1; }`, secretNamespace, gatewaySecretName(plan.TargetsSpace)),
+		`fail() { echo "handover.sh: $*" >&2; exit 1; }`,
+		`again="export again, then plan and apply again"`,
+		"# unchanged <profile> <uid> <generation>: the profile is as exported, or gone.",
+		"# A run of this script that stopped after setting LeavePolicies leaves it",
+		"# one generation on.",
+		`unchanged() {`,
+		`  local now uid gen leave`,
+		`  now=$(k get clusterprofile "$1" -o jsonpath='{.metadata.uid} {.metadata.generation} {.spec.stopMatchingBehavior}' 2>/dev/null) || return 0`,
+		`  read -r uid gen leave <<<"$now"`,
+		`  [ "$uid" = "$2" ] || fail "$1 is not the profile you exported: it was deleted and made again; $again"`,
+		`  [ "$gen" = "$3" ] && return 0`,
+		`  [ "$gen" = "$(($3 + 1))" ] && [ "$leave" = LeavePolicies ] && return 0`,
+		`  fail "$1 has changed since you exported it (generation $3, now $gen), so ConfigHub may not hold what it deploys; $again"`,
+		`}`,
+		"# reaches <profile> <clusters>: the profile reaches exactly the clusters planned, or is gone.",
+		`reaches() {`,
+		`  local now`,
+		`  now=$(k get clusterprofile "$1" -o jsonpath='{range .status.matchingClusters[*]}{.kind}/{.namespace}/{.name}{"\n"}{end}' 2>/dev/null) || return 0`,
+		`  now=$(sort <<<"$now" | sed '/^$/d' | paste -sd' ' -)`,
+		`  [ "$now" = "$2" ] || fail "$1 reaches ${now:-no cluster} now, not the clusters planned ($2); $again"`,
+		`}`,
+		"# policies <namespace> <name> <resourceVersion>: the ConfigMap is as exported.",
+		`policies() {`,
+		`  local now`,
+		`  now=$(k get configmap -n "$1" "$2" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null) || fail "ConfigMap $1/$2 is gone; $again"`,
+		`  [ "$now" = "$3" ] || fail "ConfigMap $1/$2 has changed since you exported it, so ConfigHub holds other policies than the clusters run; $again"`,
+		`}`,
+		fmt.Sprintf(`k get secret -n %s %s >/dev/null 2>&1 || fail "the gateway Secret is missing: run apply.sh first"`, secretNamespace, gatewaySecretName(plan.TargetsSpace)),
+	}
+	L = append(L, "", "echo "+q("== what was planned is what is live"))
+	for _, p := range live {
+		for _, m := range p.Members {
+			if !m.Live {
+				continue
+			}
+			if m.ManagedBy != "" {
+				L = append(L, fmt.Sprintf("k get clusterprofile %s >/dev/null 2>&1 && fail %s", m.Name, q(fmt.Sprintf("%s is applied by %s, which would apply it again once deleted: set stopMatchingBehavior: LeavePolicies on it there, let that apply, then remove it there, and run handover.sh again", m.Name, m.ManagedBy))))
+			}
+			if m.UID != "" && m.Generation != "" {
+				L = append(L, line("unchanged", m.Name, m.UID, m.Generation))
+			}
+			var keys []string
+			for _, v := range p.Variants {
+				if v.Member == m.Name {
+					keys = append(keys, v.ClusterRef.Kind+"/"+v.ClusterRef.Namespace+"/"+v.ClusterRef.Name)
+				}
+			}
+			sort.Strings(keys)
+			L = append(L, line("reaches", m.Name, strings.Join(keys, " ")))
+		}
+		for _, d := range p.PolicyMaps {
+			meta := obj(d.Value["metadata"])
+			if rv := str(meta["resourceVersion"]); rv != "" {
+				L = append(L, line("policies", str(meta["namespace"]), str(meta["name"]), rv))
+			}
+		}
 	}
 	type handover struct{ member Member }
 	var pending []handover
@@ -548,7 +623,7 @@ func renderCommand(p Profile, u Unit) string {
 	if u.Chart.Values != "" {
 		values = valuesFile(p, u)
 	}
-	return line(u.Chart.Command(values)...)
+	return line(u.Chart.Command(values)...) + " | " + renderFilter
 }
 
 // valuesFile is where apply writes a chart's values.

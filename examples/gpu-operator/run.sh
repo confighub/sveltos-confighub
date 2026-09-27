@@ -86,7 +86,7 @@ say "4. Upgrade: operator v26.3.1 to v26.7.0, driver 580.126.20 to 580.173.02, s
 echo "  rendered the way apply.sh says gpu-operator was rendered, at v26.7.0, with the driver moved to 580.173.02:"
 grep '^# gpu-operator is rendered with' onboard/apply.sh | sed 's/^/    /'
 sed 's/580.126.20/580.173.02/' onboard/gpu-operator/gpu-operator.values.yaml > values-26.7.yaml
-cub helm template gpu-operator gpu-operator --repo https://helm.ngc.nvidia.com/nvidia --version v26.7.0 --namespace gpu-operator --create-namespace -f values-26.7.yaml > gpu-operator-26.7.yaml 2>/dev/null || fail "render v26.7.0"
+cub helm template gpu-operator gpu-operator --repo https://helm.ngc.nvidia.com/nvidia --version v26.7.0 --namespace gpu-operator --create-namespace -f values-26.7.yaml 2>/dev/null | grep -vxF '$comment$head$: ""' > gpu-operator-26.7.yaml || fail "render v26.7.0"
 cub unit update --space ch7-gpu-operator-base gpu-operator gpu-operator-26.7.yaml --change-desc "Upgrade to AICR h100-any as published: gpu-operator v26.7.0, driver 580.173.02" --quiet || fail "base update"
 head=$(cub unit get --space ch7-gpu-operator-base gpu-operator -o jq=.Unit.HeadRevisionNum)
 cub unit diff --space ch7-gpu-operator-base gpu-operator --from $((head - 1)) --to "$head" -o mutations 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' > upgrade.mutations

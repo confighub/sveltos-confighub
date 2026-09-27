@@ -110,8 +110,8 @@ flowchart LR
   pr["policyRefs ConfigMap<br/>default/kyverno-policies"] -->|"the objects it holds"| u2["unit kyverno-policies<br/>1 ClusterPolicy"]
 ```
 
-Each chart becomes one unit holding its rendered objects, exactly as
-`cub helm template` prints them. Your labels chose the clusters, and
+Each chart becomes one unit holding the objects `cub helm template`
+renders, in the order it prints them. Your labels chose the clusters, and
 `--stage-label` turns them into the order a change rolls out in; leave it
 out and every cluster is in one stage, `fleet`. The [full plan for the example](../../examples/onboard/plan.txt)
 also lists what is left out and why, and how many Spaces and Links the fleet
@@ -182,6 +182,19 @@ profiles' delivery profiles for `handover.sh`. Run it after `apply.sh`:
 MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/handover.sh
 ```
 
+Before it changes anything, `handover.sh` checks that what was planned is
+still what is live:
+- each live profile is the one you exported, unchanged since (its uid and
+  generation);
+- it still reaches the clusters planned;
+- each ConfigMap of policies is unchanged.
+
+If one has moved on since the export, say a chart was upgraded in the
+profile or a cluster was labelled, ConfigHub no longer holds what runs, and
+the delivery profiles would change the clusters to match an older plan. So
+it stops, before touching anything, and asks you to export, plan and apply
+again. A run that stopped half-way can simply be run again.
+
 Until then your live profiles keep managing everything. `handover.sh` sets
 each live profile to `stopMatchingBehavior: LeavePolicies`, so deleting it
 leaves everything in place, and deletes it; a profile another live profile
@@ -217,9 +230,18 @@ Helm still records each release it installed, though ConfigHub manages the
 objects now, and a `helm uninstall` would remove them. `handover.sh` prints
 the command that removes the record on each cluster and leaves the objects.
 
-If your live profiles are themselves applied from Git, by Flux or Argo CD,
-remove them from that repository as part of the handover. Otherwise GitOps
-puts them straight back, and they compete with the delivery profiles.
+If a live profile is itself applied from somewhere else, by Flux, Argo CD
+or Helm, the plan says so, from the labels those tools leave, and
+`handover.sh` stops while the profile is still there: deleting it would only
+see it applied again, competing with its delivery profiles. Hand it over
+where it comes from instead:
+1. Set `stopMatchingBehavior: LeavePolicies` on it there, and let that apply.
+2. Remove it there. That deletes it, and leaves everything it deployed in
+   place.
+3. Run `handover.sh`. It finds the profile gone and applies its delivery
+   profiles.
+
+Removing it without step 1 would withdraw its add-ons from every cluster.
 
 ## Kyverno policies, and other `policyRefs`
 
@@ -304,14 +326,17 @@ on the base:
 
 ```bash
 cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 \
-  --namespace kyverno --create-namespace -f onboard/kyverno/kyverno.values.yaml > kyverno.yaml
+  --namespace kyverno --create-namespace -f onboard/kyverno/kyverno.values.yaml \
+  | grep -vxF '$comment$head$: ""' > kyverno.yaml
 cub unit update --space sveltos-kyverno-base kyverno kyverno.yaml --change-desc "Kyverno 3.8.2"
 ```
 
-The base held the old rendering exactly as printed, so the review shows only
-what the new version changes, including what the chart changed besides your
-values: new RBAC rules, CRD schema, whole new objects. This lists it object
-by object, each changed field by its path:
+The `grep` drops a stray line `cub helm template` prints at the top of some
+documents, which is no part of the chart; `apply.sh` renders the same way.
+
+Review it object by object: this lists what the new version changes, each
+changed field by its path, including what the chart changed besides your
+values, such as new RBAC rules, CRD schema and whole new objects:
 
 ```bash
 cub unit diff --space sveltos-kyverno-base kyverno --from=-1 -o mutations
@@ -405,6 +430,16 @@ again on your machine.
   each as a problem.
 - Charts that render differently each time they are rendered, through
   `lookup` or random values; set those values explicitly.
+- Charts at a version range (`1.2.x`, `^1.2.0`) or read from a Flux source
+  (`gitrepository://`, `ocirepository://`, `bucket://`). What ConfigHub
+  renders must be the exact chart that is running, so the plan names each as
+  a problem; pin the version that runs.
+- Profiles another object owns, such as those a ClusterPromotion makes; the
+  plan skips them, since the owner would make them again. Govern the owner.
+- Charts that render differently by the cluster's Kubernetes version or APIs
+  (`.Capabilities`). `cub helm template` renders them for a default cluster,
+  and `handover.sh` does not yet compare the rendering with what Helm
+  installed on each cluster.
 - Profiles that select no cluster today, and clusters no profile selects;
   the plan lists them.
 

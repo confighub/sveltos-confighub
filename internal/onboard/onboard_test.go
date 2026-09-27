@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -1044,7 +1045,7 @@ func TestKeptHooks(t *testing.T) {
 	if len(plan.Problems) > 0 || string(text) != string(rendering.Stdout) {
 		t.Errorf("a chart whose hooks are kept is held exactly as cub helm template printed it, TTL and all:\n%s\n%v", text, plan.Problems)
 	}
-	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml\n") {
+	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml | "+renderFilter+"\n") {
 		t.Errorf("apply.sh records the plain render, so the next version is rendered the same way:\n%s", script)
 	}
 	dp, _ := EncodeYAML(plan.Management.ByProfile[0].Profiles[0])
@@ -1069,5 +1070,185 @@ func TestHandoverHandsDependentsOverFirst(t *testing.T) {
 	handover := HandoverScript(mustPlan(t, parse(t, fleet), Options{}))
 	if strings.Index(handover, "k delete clusterprofile kyverno-policies ") > strings.Index(handover, "k delete clusterprofile kyverno ") {
 		t.Errorf("Sveltos holds a profile's deletion while another depends on it, so the dependent is handed over first:\n%s", handover)
+	}
+}
+
+// liveFleet is a live profile as kubectl exports it: installing one chart and
+// the policies of one ConfigMap, reaching clusters a and b.
+const liveFleet = `apiVersion: v1
+kind: List
+items:
+- {apiVersion: lib.projectsveltos.io/v1beta1, kind: SveltosCluster, metadata: {name: mgmt, namespace: mgmt}}
+- {apiVersion: lib.projectsveltos.io/v1beta1, kind: SveltosCluster, metadata: {name: a, namespace: projectsveltos, labels: {env: prod}}}
+- {apiVersion: lib.projectsveltos.io/v1beta1, kind: SveltosCluster, metadata: {name: b, namespace: projectsveltos, labels: {env: prod}}}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata: {name: policies, namespace: default, resourceVersion: "41"}
+  data: {policy.yaml: "apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata: {name: no-latest}\n"}
+- apiVersion: config.projectsveltos.io/v1beta1
+  kind: ClusterProfile
+  metadata: {name: p, uid: u-1, generation: 3}
+  spec:
+    clusterSelector: {matchLabels: {env: prod}}
+    helmCharts: [{repositoryURL: https://charts.example.com, chartName: example/p, chartVersion: 1.0.0, releaseName: p, releaseNamespace: p}]
+    policyRefs: [{kind: ConfigMap, namespace: default, name: policies}]
+  status:
+    matchingClusters:
+    - {apiVersion: lib.projectsveltos.io/v1beta1, kind: SveltosCluster, namespace: projectsveltos, name: a}
+    - {apiVersion: lib.projectsveltos.io/v1beta1, kind: SveltosCluster, namespace: projectsveltos, name: b}
+`
+
+// The handover must not swap in what ConfigHub holds when the live profile
+// or its policies changed after the export: the delivery profiles would
+// change the clusters to match an older plan. This runs handover.sh itself
+// against a stand-in kubectl, so it tests what the checks do, not their text.
+func TestHandoverStopsWhenWhatIsLiveHasChanged(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("needs bash")
+	}
+	plan := mustPlan(t, parse(t, liveFleet), Options{})
+	if len(plan.Problems) > 0 {
+		t.Fatalf("problems: %v", plan.Problems)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := `#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  *"get secret"*) exit 0 ;;
+  *"get clusterprofile"*uid*) [ -n "$PROFILE_NOW" ] || exit 1; printf '%s' "$PROFILE_NOW" ;;
+  *"get clusterprofile"*matchingClusters*) [ -n "$PROFILE_NOW" ] || exit 1; printf '%b' "$CLUSTERS_NOW" ;;
+  *"get clusterprofile"*) [ -n "$PROFILE_NOW" ] || exit 1 ;;
+  *"get configmap"*) printf '%s' "$POLICIES_NOW" ;;
+  *) echo "$args" >> "$LOG" ;;
+esac
+`
+	for name, text := range map[string]string{"kubectl": kubectl, "sleep": "#!/bin/sh\nexit 0\n"} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(text), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := filepath.Join(dir, "handover.sh")
+	if err := os.WriteFile(script, []byte(HandoverScript(plan)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	both := `SveltosCluster/projectsveltos/a\nSveltosCluster/projectsveltos/b\n`
+	for _, c := range []struct {
+		name, profile, clusters, policies string
+		stops                             string
+	}{
+		{"as exported", "u-1 3 WithdrawPolicies", both, "41", ""},
+		{"a run that stopped after LeavePolicies", "u-1 4 LeavePolicies", both, "41", ""},
+		{"already handed over", "", both, "41", ""},
+		{"changed since the export", "u-1 4 WithdrawPolicies", both, "41", "p has changed since you exported it (generation 3, now 4)"},
+		{"deleted and made again", "u-2 1 WithdrawPolicies", both, "41", "p is not the profile you exported"},
+		{"reaching other clusters", "u-1 3 WithdrawPolicies", `SveltosCluster/projectsveltos/a\n`, "41", "p reaches SveltosCluster/projectsveltos/a now"},
+		{"policies edited", "u-1 3 WithdrawPolicies", both, "42", "ConfigMap default/policies has changed since you exported it"},
+	} {
+		log := filepath.Join(dir, c.name+".log")
+		cmd := exec.Command("bash", script)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log,
+			"PROFILE_NOW="+c.profile, "CLUSTERS_NOW="+c.clusters, "POLICIES_NOW="+c.policies)
+		out, err := cmd.CombinedOutput()
+		changed, _ := os.ReadFile(log)
+		if c.stops == "" {
+			if err != nil || !strings.Contains(string(changed), "apply -f management/p.yaml") {
+				t.Errorf("%s: the handover should go ahead (err %v):\n%s\nkubectl changed:\n%s", c.name, err, out, changed)
+			}
+			if c.profile == "" && strings.Contains(string(changed), "delete clusterprofile") {
+				t.Errorf("%s: a profile already gone is not deleted again", c.name)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(string(out), c.stops) {
+			t.Errorf("%s: the handover should stop with %q (err %v):\n%s", c.name, c.stops, err, out)
+		}
+		if len(changed) > 0 {
+			t.Errorf("%s: the handover changed something before it stopped:\n%s", c.name, changed)
+		}
+	}
+}
+
+// A chart ConfigHub renders must be the chart Sveltos installed: an exact
+// version from a Helm or OCI repository.
+func TestChartVersionsMustBeExact(t *testing.T) {
+	for _, c := range []struct {
+		repo, version string
+		problem       string
+	}{
+		{"https://charts.example.com", "1.0.0", ""},
+		{"https://charts.example.com", "v26.3.1", ""},
+		{"oci://registry.example/charts", "1.2.3-rc.1", ""},
+		{"https://charts.example.com", "1.0.x", `at "1.0.x", which is not one exact version`},
+		{"https://charts.example.com", "^1.0.0", `at "^1.0.0", which is not one exact version`},
+		{"https://charts.example.com", "1.0", `at "1.0", which is not one exact version`},
+		{"https://charts.example.com", "", `at "", which is not one exact version`},
+		{"gitrepository://flux-system/flux-system/charts/p", "", "from a Flux source, gitrepository://flux-system/flux-system/charts/p"},
+		{"ocirepository://flux-system/charts/p", "1.0.0", "from a Flux source"},
+	} {
+		fleet := mgmt + cluster("a", "projectsveltos", "env", "prod") +
+			"apiVersion: config.projectsveltos.io/v1beta1\nkind: ClusterProfile\nmetadata: {name: p}\nspec:\n  clusterSelector: {matchLabels: {env: prod}}\n" +
+			"  helmCharts: [{repositoryURL: \"" + c.repo + "\", chartName: example/p, chartVersion: \"" + c.version + "\", releaseName: p, releaseNamespace: p}]\n"
+		plan := mustPlan(t, parse(t, fleet), Options{})
+		got := strings.Join(plan.Problems, "\n")
+		if c.problem == "" && got != "" {
+			t.Errorf("%s at %q is one exact chart, but: %s", c.repo, c.version, got)
+		}
+		if c.problem != "" && !strings.Contains(got, c.problem) {
+			t.Errorf("%s at %q should be a problem saying %q, got: %q", c.repo, c.version, c.problem, got)
+		}
+	}
+}
+
+// A profile something else makes or applies comes back after the handover
+// deletes it, and competes with the delivery profiles.
+func TestProfilesSomethingElseApplies(t *testing.T) {
+	owned := mgmt + cluster("a", "projectsveltos", "env", "prod") +
+		"apiVersion: config.projectsveltos.io/v1beta1\nkind: ClusterProfile\nmetadata:\n  name: p-staging\n  ownerReferences: [{apiVersion: config.projectsveltos.io/v1beta1, kind: ClusterPromotion, name: p, uid: x}]\nspec:\n  clusterSelector: {matchLabels: {env: prod}}\n" +
+		"  helmCharts: [{repositoryURL: https://charts.example.com, chartName: example/p, chartVersion: 1.0.0, releaseName: p, releaseNamespace: p}]\n"
+	plan := mustPlan(t, parse(t, owned), Options{})
+	if len(plan.Profiles) != 0 || len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "owned by ClusterPromotion p") {
+		t.Errorf("a profile a ClusterPromotion owns is left to it, with the reason: %+v", plan.Skipped)
+	}
+
+	gitops := strings.Replace(liveFleet, "metadata: {name: p, uid: u-1, generation: 3}",
+		"metadata: {name: p, uid: u-1, generation: 3, labels: {kustomize.toolkit.fluxcd.io/name: infra, kustomize.toolkit.fluxcd.io/namespace: flux-system}}", 1)
+	plan = mustPlan(t, parse(t, gitops), Options{})
+	if !strings.Contains(strings.Join(plan.Notes, "\n"), "p is applied by Flux Kustomization flux-system/infra") {
+		t.Errorf("the plan should say a live profile is applied by Flux, and how to hand it over: %v", plan.Notes)
+	}
+	handover := HandoverScript(plan)
+	guard := strings.Index(handover, "k get clusterprofile p >/dev/null 2>&1 && fail")
+	if guard < 0 || guard > strings.Index(handover, "k patch clusterprofile p") {
+		t.Errorf("handover.sh should stop, before changing anything, while Flux still applies the profile:\n%s", handover)
+	}
+}
+
+// cub helm template prints a stray line at the top of some documents, which
+// ConfigHub drops when a unit is created but keeps when it is updated. The
+// base must hold the render without it, and every object the render has.
+func TestStrayLinesAreDropped(t *testing.T) {
+	plan := mustPlan(t, exampleDocs(t), exampleOpts)
+	for _, p := range plan.Profiles {
+		for _, u := range p.Units {
+			if u.Chart == nil {
+				continue
+			}
+			text, _ := u.Text()
+			rendering, _ := recorded(*u.Chart)
+			if strings.Contains(string(text), strayLine) {
+				t.Errorf("%s: the base holds the stray line cub helm template prints", u.Slug)
+			}
+			want := strings.Count(string(rendering.Stdout), "\n"+strayLine+"\n")
+			if got := strings.Count(string(rendering.Stdout), "\n") - strings.Count(string(text), "\n"); got != want {
+				t.Errorf("%s: %d lines dropped, want the %d stray ones only", u.Slug, got, want)
+			}
+			if u.Slug == "kyverno" && (want == 0 || len(u.Objects) != 71) {
+				t.Errorf("kyverno's recorded render has stray lines (%d), and all 71 objects stay (%d)", want, len(u.Objects))
+			}
+		}
 	}
 }

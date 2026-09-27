@@ -45,8 +45,12 @@ the run above:
    objects, Namespace and CRDs first, so rendering the next version with
    `cub helm template` changed every line. Sveltos creates a missing
    Namespace before applying into it (measured: a fresh cluster took a
-   rendering whose Namespace came last), so a chart is now held exactly as
-   printed, and the diff shows only what changed.
+   rendering whose Namespace came last), so a chart is now held in the order
+   `cub helm template` prints it, and the diff shows only what changed.
+   (Later measured: ConfigHub lays out the YAML its own way when a unit is
+   created, and keeps an update as given, so for some charts a text diff
+   also shows layout. `cub unit diff -o mutations` compares objects and
+   fields, and shows only what changed.)
 5. **A kept hook Job ran forever.** ingress-nginx's certificate jobs delete
    themselves when they finish (`ttlSecondsAfterFinished: 0`). As plain
    objects under drift detection, Sveltos recreated one ten times in a minute

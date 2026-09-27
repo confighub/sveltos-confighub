@@ -153,8 +153,8 @@ type Unit struct {
 	Objects []Object
 	// Hooks are the Helm hook manifests the rendering left out.
 	Hooks []Hook
-	// raw is a chart's rendering as cub helm template printed it, which the
-	// unit holds byte for byte, so rendering the next version the same way
+	// raw is a chart's rendering as cub helm template printed it, in its order
+	// and without the stray line, so rendering the next version the same way
 	// shows a reviewer only what changed.
 	raw []byte
 }
@@ -292,6 +292,7 @@ func (rc *renderCache) do(c Chart) renderResult {
 	if !bytes.Equal(first.Stdout, second.Stdout) {
 		return renderResult{err: fmt.Errorf("renders differently each time it is rendered (random values or lookup), so it cannot be held as one set of objects; set those values explicitly")}
 	}
+	first.Stdout = dropStrayLines(first.Stdout)
 	objects, err := objectsOf(first.Stdout)
 	if err != nil {
 		return renderResult{err: fmt.Errorf("reading its rendering: %w", err)}
@@ -300,6 +301,36 @@ func (rc *renderCache) do(c Chart) renderResult {
 		return renderResult{err: errors.New("renders no objects")}
 	}
 	return renderResult{objects: objects, hooks: hooksOf(first.Stderr), raw: first.Stdout}
+}
+
+// Sveltos reads a chart from a Flux source when its repositoryURL is
+// gitrepository://, ocirepository:// or bucket://, and ignores chartVersion.
+var fluxSource = regexp.MustCompile(`(?i)^(gitrepository|ocirepository|bucket)://`)
+
+// An exact chart version: a range or a partial version resolves to whatever
+// is newest when it is rendered, which need not be what is running.
+var exactVersion = regexp.MustCompile(`^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+
+// strayLine is a line cub helm template prints at the top of some documents,
+// after their comments: a key that is no part of the chart. ConfigHub drops
+// it, with the comments above it, when a unit is created, but keeps it when a
+// unit is updated, so a later upgrade's review would show it, and a cluster
+// could be sent it. Dropped here, and by the command apply.sh records.
+const strayLine = `$comment$head$: ""`
+
+// renderFilter is the same, for the render command apply.sh records.
+const renderFilter = `grep -vxF '` + strayLine + `'`
+
+func dropStrayLines(data []byte) []byte {
+	lines := bytes.SplitAfter(data, []byte("\n"))
+	out := make([]byte, 0, len(data))
+	for _, l := range lines {
+		if string(bytes.TrimRight(l, "\n")) == strayLine {
+			continue
+		}
+		out = append(out, l...)
+	}
+	return out
 }
 
 // chartsOf reads a profile's helmCharts, and says what cannot be rendered once
@@ -322,6 +353,12 @@ func chartsOf(profile string, spec map[string]any, includeHooks func(string) boo
 			continue
 		case release == "" || str(hc["chartName"]) == "":
 			problems = append(problems, fmt.Sprintf("%s has a helmCharts entry without a releaseName or chartName", profile))
+			continue
+		case fluxSource.MatchString(str(hc["repositoryURL"])):
+			problems = append(problems, fmt.Sprintf("%s reads chart %s from a Flux source, %s, whose content moves when its source does, with no version of its own; this version renders charts from Helm and OCI repositories at an exact version", profile, release, str(hc["repositoryURL"])))
+			continue
+		case !exactVersion.MatchString(str(hc["chartVersion"])):
+			problems = append(problems, fmt.Sprintf("%s installs chart %s at %q, which is not one exact version, so what ConfigHub renders may not be what Sveltos installed; pin chartVersion to the exact version running, then onboard", profile, release, str(hc["chartVersion"])))
 			continue
 		}
 		repo := strings.TrimSuffix(str(hc["repositoryURL"]), "/")

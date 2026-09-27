@@ -138,6 +138,13 @@ type Member struct {
 	Name   string
 	Live   bool
 	Source *yaml.Node
+	// UID and Generation are the live profile's as exported, so handover.sh
+	// can tell whether it has changed since.
+	UID        string
+	Generation string
+	// ManagedBy names what applies the profile, such as a Flux Kustomization,
+	// which would apply it again after the handover deleted it.
+	ManagedBy string
 }
 
 // Skipped is a profile left as it is, with the reason.
@@ -472,6 +479,37 @@ func madeByEvents(v map[string]any) bool {
 	return false
 }
 
+// ownerOf names the object that owns a profile, such as a ClusterPromotion,
+// which makes it again if it is deleted.
+func ownerOf(v map[string]any) (kind, name string) {
+	for _, o := range list(obj(v["metadata"])["ownerReferences"]) {
+		return str(obj(o)["kind"]), str(obj(o)["name"])
+	}
+	return "", ""
+}
+
+// managedBy names what applies a profile from elsewhere, by the marks Flux,
+// Argo CD and Helm leave on what they apply.
+func managedBy(v map[string]any) string {
+	meta := obj(v["metadata"])
+	labels, annotations := obj(meta["labels"]), obj(meta["annotations"])
+	switch {
+	case str(labels["kustomize.toolkit.fluxcd.io/name"]) != "":
+		return fmt.Sprintf("Flux Kustomization %s/%s", str(labels["kustomize.toolkit.fluxcd.io/namespace"]), str(labels["kustomize.toolkit.fluxcd.io/name"]))
+	case str(labels["helm.toolkit.fluxcd.io/name"]) != "":
+		return fmt.Sprintf("Flux HelmRelease %s/%s", str(labels["helm.toolkit.fluxcd.io/namespace"]), str(labels["helm.toolkit.fluxcd.io/name"]))
+	case str(annotations["argocd.argoproj.io/tracking-id"]) != "":
+		return fmt.Sprintf("Argo CD (tracking-id %s)", str(annotations["argocd.argoproj.io/tracking-id"]))
+	case str(labels["argocd.argoproj.io/instance"]) != "":
+		return fmt.Sprintf("Argo CD Application %s", str(labels["argocd.argoproj.io/instance"]))
+	case str(annotations["meta.helm.sh/release-name"]) != "":
+		return fmt.Sprintf("Helm release %s/%s", str(annotations["meta.helm.sh/release-namespace"]), str(annotations["meta.helm.sh/release-name"]))
+	case str(labels["app.kubernetes.io/instance"]) != "" && str(labels["app.kubernetes.io/managed-by"]) == "":
+		return fmt.Sprintf("Argo CD Application %s, by its label app.kubernetes.io/instance", str(labels["app.kubernetes.io/instance"]))
+	}
+	return ""
+}
+
 // The profile as its owner described it, kept so the fleet can be planned again.
 func sourceOf(node *yaml.Node, value map[string]any) *yaml.Node {
 	metadata := mapping(scalar("name"), scalar(str(obj(value["metadata"])["name"])))
@@ -691,6 +729,10 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 				plan.Skipped = append(plan.Skipped, Skipped{name, "was made by Sveltos's event framework, which changes its scope when something happens; govern the EventTrigger that makes it instead"})
 				continue
 			}
+			if kind, owner := ownerOf(p.value); owner != "" {
+				plan.Skipped = append(plan.Skipped, Skipped{name, fmt.Sprintf("is owned by %s %s, which would make it again after the handover deleted it; govern the %s instead", kind, owner, kind)})
+				continue
+			}
 			if selector, has := spec["clusterSelector"]; has && !selectorGiven(obj(selector)) {
 				plan.Skipped = append(plan.Skipped, Skipped{name, "has an empty clusterSelector; say which clusters it is for with labels or clusterRefs"})
 				continue
@@ -888,7 +930,15 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			_, hasUID := obj(m.doc.value["metadata"])["uid"]
 			_, hasStatus := m.doc.value["status"]
 			source := sourceOf(m.doc.node, m.doc.value)
-			memberList = append(memberList, Member{Name: m.name, Live: hasUID || hasStatus, Source: source})
+			meta := obj(m.doc.value["metadata"])
+			member := Member{Name: m.name, Live: hasUID || hasStatus, Source: source, UID: str(meta["uid"]), ManagedBy: managedBy(m.doc.value)}
+			if g, ok := meta["generation"]; ok && g != nil {
+				member.Generation = fmt.Sprint(g)
+			}
+			if member.Live && member.ManagedBy != "" {
+				plan.Notes = append(plan.Notes, fmt.Sprintf("%s is applied by %s, which would apply it again after handover.sh deleted it. Before handover.sh: set stopMatchingBehavior: LeavePolicies on it there and let that apply, then remove it there, which deletes it and leaves everything in place. handover.sh stops while it is still there.", m.name, member.ManagedBy))
+			}
+			memberList = append(memberList, member)
 			live = live || hasUID || hasStatus
 		}
 		plan.Profiles = append(plan.Profiles, Profile{
