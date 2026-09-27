@@ -4,12 +4,12 @@ metadata:
   name: ingress-nginx-base
 spec:
   clusterRefs: []
-  helmCharts:
-  - chartName: ingress-nginx/ingress-nginx
-    chartVersion: 4.15.1
-    helmChartAction: Install
-    releaseName: ingress-nginx
-    releaseNamespace: ingress-nginx
-    repositoryName: ingress-nginx
-    repositoryURL: https://kubernetes.github.io/ingress-nginx
   syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://kubernetes.github.io/ingress-nginx
+      repositoryName: ingress-nginx
+      chartName: ingress-nginx/ingress-nginx
+      chartVersion: 4.15.1
+      releaseName: ingress-nginx
+      releaseNamespace: ingress-nginx
+      helmChartAction: Install

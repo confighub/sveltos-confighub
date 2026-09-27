@@ -1,0 +1,110 @@
+
+##### 0. A live profile  [06:17:04]
+clusterprofile.config.projectsveltos.io/podinfo created
+  podinfo@rev1  pods: e791cf33-2431-4a04-bf17-01a34c18be57 
+
+##### 1. cub sveltos plan  [06:17:29]
+Onboarding plan: 1 profile over 1 cluster, one variant per cluster per profile (1 variant).
+Nothing has changed. This is what ConfigHub would hold.
+
+podinfo  (selects env=prod)
+  base     ob5-podinfo-base  reaches no cluster: clusterRefs is empty
+  stage fleet
+    prod-eu      variant ob5-podinfo-prod-eu  ->  Target ob5-targets/prod-eu
+                 differs from the base in metadata.name, spec.clusterRefs
+
+Management cluster mgmt/mgmt
+  record   ob5-management  one bootstrap profile per variant (1), fetching its release from the gateway
+
+In ConfigHub
+  2 Targets in ob5-targets, one per cluster, on a server-hosted worker
+  1 component, each one base, 1 variant, 1 management record
+  4 Spaces and 1 Link, one tying each variant to its base (check your organization's quotas for both first)
+  first rollout: podinfo in 1 stage; one approval per stage, one release per variant
+
+Live on your management cluster: podinfo. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+
+Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
+
+##### 2. cub sveltos apply  [06:17:29]
+Onboarding plan: 1 profile over 1 cluster, one variant per cluster per profile (1 variant).
+Nothing has changed. This is what ConfigHub would hold.
+
+podinfo  (selects env=prod)
+  base     ob5-podinfo-base  reaches no cluster: clusterRefs is empty
+  stage fleet
+    prod-eu      variant ob5-podinfo-prod-eu  ->  Target ob5-targets/prod-eu
+                 differs from the base in metadata.name, spec.clusterRefs
+
+Management cluster mgmt/mgmt
+  record   ob5-management  one bootstrap profile per variant (1), fetching its release from the gateway
+
+In ConfigHub
+  2 Targets in ob5-targets, one per cluster, on a server-hosted worker
+  1 component, each one base, 1 variant, 1 management record
+  4 Spaces and 1 Link, one tying each variant to its base (check your organization's quotas for both first)
+  first rollout: podinfo in 1 stage; one approval per stage, one release per variant
+
+Live on your management cluster: podinfo. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+
+Wrote onboard/apply.sh and the files it reads. Read it, then run it:
+  MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/apply.sh
+
+Then hand the live profiles over, without reinstalling anything:
+  MGMT_CONTEXT=<same context> bash onboard/takeover.sh
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: podinfo-base
+spec:
+  clusterRefs: []
+  continueOnConflict: false
+  continueOnError: false
+  helmCharts:
+    - chartName: podinfo/podinfo
+      chartVersion: 6.7.1
+      helmChartAction: Install
+      releaseName: podinfo
+      releaseNamespace: podinfo
+      repositoryName: podinfo
+      repositoryURL: https://stefanprodan.github.io/podinfo
+  reloader: false
+  stopMatchingBehavior: WithdrawPolicies
+  syncMode: ContinuousWithDriftDetection
+  tier: 100
+
+##### 3. apply.sh  [06:17:29]
+
+== 0/6 Check before changing anything
+
+== 1/6 One named Target per cluster, in ob5-targets
+
+== 2/6 One component, one base and one rollout workflow per profile
+
+== 3/6 One variant per cluster, addressed to that cluster alone
+
+== 4/6 The management cluster's record: its bootstrap profiles
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-ob5-targets created
+clusterprofile.config.projectsveltos.io/confighub-ob5-podinfo-prod-eu created
+
+Done. Sveltos fetches each variant's release within a minute. Watch it with:
+  kubectl get clustersummaries -A
+
+##### 4. takeover.sh  [06:18:45]
+== podinfo
+clusterprofile.config.projectsveltos.io/podinfo patched
+clusterprofile.config.projectsveltos.io "podinfo" deleted
+
+Done. Each per-cluster profile reports Provisioned within a minute:
+  kubectl get clustersummaries -A
+NAME                            AGE
+confighub-ob5-podinfo-prod-eu   2m10s
+podinfo-prod-eu                 2m7s
+  podinfo@rev1  pods: e791cf33-2431-4a04-bf17-01a34c18be57 
+  same pods before and after: nothing reinstalled
+
+##### PLUGIN-SMOKE-DONE  [06:19:56]

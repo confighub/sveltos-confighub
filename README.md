@@ -29,8 +29,9 @@ govern: one base per ClusterProfile, and one variant per cluster the profile
 selects today.
 
 ```bash
+cub plugin install confighub/sveltos-confighub
 kubectl get clusterprofiles,sveltosclusters -A -o yaml > my-fleet.yaml
-npm run onboard -- plan my-fleet.yaml --stage-label env --stages staging,prod
+cub sveltos plan my-fleet.yaml --stage-label env --stages staging,prod
 ```
 
 [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md) takes it

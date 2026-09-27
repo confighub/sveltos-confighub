@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Onboard ingress-nginx, kyverno into ConfigHub: one variant per cluster per profile.
-# Written by `npm run onboard -- apply`. Read it, then run it:
+# Written by `cub sveltos apply`. Read it, then run it:
 #
 #   MGMT_CONTEXT=<kubectl context of your management cluster> bash apply.sh
 #

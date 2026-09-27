@@ -9,6 +9,9 @@ output of the final run is in
 [onboarding-rehearsal-2026-09-26.log](onboarding-rehearsal-2026-09-26.log);
 it carries no credential.
 
+The tool ran then as `npm run onboard`; it has since become the `cub sveltos`
+plugin, which writes the same steps.
+
 ## The journey, and what each step showed
 
 | Step | What the user ran | Measured |
@@ -75,6 +78,15 @@ conflict was detected while deploying resource Namespace:/demo-policyrefs`
 and nothing changed. After `takeover.sh` it reported `Provisioned`, and both
 objects kept their UIDs: nothing was deleted or recreated. The ConfigMap the
 profile names stays on the management cluster; ConfigHub governs the profile.
+
+## The plugin
+
+On 2026-09-27 the same path ran through the installed `cub sveltos` plugin,
+built from this repository and installed with `cub plugin install`, whose
+hook wrote its manifest ([log](onboarding-rehearsal-plugin-2026-09-27.log)):
+a live `podinfo` profile, `cub sveltos plan`, `cub sveltos apply`,
+`apply.sh`, then `takeover.sh`. The release stayed at revision 1 with the
+same pod.
 
 ## Not measured
 

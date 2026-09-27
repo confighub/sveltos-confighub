@@ -32,4 +32,4 @@ In ConfigHub
   9 Spaces and 5 Links, one tying each variant to its base (check your organization's quotas for both first)
   first rollout: ingress-nginx in 1 stage, kyverno in 2 stages; one approval per stage, one release per variant
 
-Next: npm run onboard -- apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
+Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
