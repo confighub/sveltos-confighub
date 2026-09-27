@@ -1,43 +1,11 @@
 package onboard
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
-
-type workerEntity struct {
-	Slug         string `json:"Slug"`
-	OrgRole      string `json:"OrgRole"`
-	ProvidedInfo struct {
-		IsServerWorker   bool `json:"IsServerWorker"`
-		BridgeWorkerInfo struct {
-			SupportedConfigTypes []struct {
-				ProviderType  string `json:"ProviderType"`
-				ToolchainType string `json:"ToolchainType"`
-			} `json:"SupportedConfigTypes"`
-		} `json:"BridgeWorkerInfo"`
-	} `json:"ProvidedInfo"`
-}
-
-// The Targets' worker: hosted by ConfigHub, with no process behind it and no
-// role in the organization, able to hold OCI Targets.
-func workerJSON() []byte {
-	var w workerEntity
-	w.Slug = workerSlug
-	w.OrgRole = "none"
-	w.ProvidedInfo.IsServerWorker = true
-	w.ProvidedInfo.BridgeWorkerInfo.SupportedConfigTypes = []struct {
-		ProviderType  string `json:"ProviderType"`
-		ToolchainType string `json:"ToolchainType"`
-	}{{ProviderType: "OCI", ToolchainType: "Any"}}
-	out, _ := json.MarshalIndent(w, "", "  ")
-	return append(out, '\n')
-}
 
 type outFile struct {
 	rel  string
@@ -46,7 +14,7 @@ type outFile struct {
 }
 
 // WriteApply writes the plan, the files apply.sh reads, apply.sh itself, and
-// takeover.sh when profiles are live. It runs nothing.
+// handover.sh when profiles are live. It runs nothing.
 func WriteApply(plan *Plan, dir string) (string, error) {
 	if len(plan.Problems) > 0 {
 		return "", fmt.Errorf("the plan has problems to fix first:\n  - %s", strings.Join(plan.Problems, "\n  - "))
@@ -58,10 +26,16 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 		}
 		return os.WriteFile(path, data, mode)
 	}
+	// profiles.yaml keeps every profile as its owner wrote it, with the
+	// ConfigMaps it names, so a joining cluster is planned from it and a
+	// fresh cluster list alone.
 	var sources []any
 	for _, p := range plan.Profiles {
 		for _, m := range p.Members {
 			sources = append(sources, m.Source)
+		}
+		for _, d := range p.PolicyMaps {
+			sources = append(sources, configMapSource(d))
 		}
 	}
 	profilesYAML, err := EncodeYAML(sources...)
@@ -70,26 +44,20 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 	}
 	files := []outFile{
 		{"plan.txt", []byte(RenderPlan(plan, true)), 0o644},
-		{"worker.json", workerJSON(), 0o644},
 		{"profiles.yaml", profilesYAML, 0o644},
 	}
 	for _, p := range plan.Profiles {
-		// The base is stored as YAML: ConfigHub lines each variant up with its
-		// base by the stored document, and a JSON base would not line up.
-		base, err := EncodeYAML(p.Base)
-		if err != nil {
-			return "", err
-		}
-		files = append(files,
-			outFile{p.Name + "/base.yaml", base, 0o644},
-			outFile{p.Name + "/change-workflow.yaml", []byte(p.WorkflowText), 0o644})
-		for _, pm := range p.Policies {
-			data, err := EncodeYAML(pm.Base)
+		for _, u := range p.Units {
+			data, err := u.Text()
 			if err != nil {
 				return "", err
 			}
-			files = append(files, outFile{p.Name + "/" + pm.Unit + ".yaml", data, 0o644})
+			files = append(files, outFile{p.Name + "/" + u.Slug + ".yaml", data, 0o644})
+			if u.Chart != nil && u.Chart.Values != "" {
+				files = append(files, outFile{valuesFile(p, u), []byte(u.Chart.Values), 0o644})
+			}
 		}
+		files = append(files, outFile{p.Name + "/change-workflow.yaml", []byte(p.WorkflowText), 0o644})
 	}
 	if m := plan.Management; m != nil {
 		for _, b := range m.ByProfile {
@@ -106,7 +74,7 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 	}
 	files = append(files, outFile{"apply.sh", []byte(ApplyScript(plan)), 0o755})
 	if plan.Live {
-		files = append(files, outFile{"takeover.sh", []byte(TakeoverScript(plan)), 0o755})
+		files = append(files, outFile{"handover.sh", []byte(HandoverScript(plan)), 0o755})
 	}
 	for _, f := range files {
 		if err := write(f.rel, f.data, f.mode); err != nil {
@@ -114,36 +82,4 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 		}
 	}
 	return filepath.Join(dir, "apply.sh"), nil
-}
-
-// VariantValue is the variant's document as ConfigHub will hold it after its
-// departures: the base with its own name, its cluster, and its dependencies.
-func VariantValue(p Profile, v Variant) (map[string]any, error) {
-	data, err := yaml.Marshal(p.BaseValue)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]any
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	obj(out["metadata"])["name"] = v.ProfileName
-	spec := obj(out["spec"])
-	spec["clusterRefs"] = []any{map[string]any{"apiVersion": v.ClusterRef.APIVersion, "kind": v.ClusterRef.Kind, "namespace": v.ClusterRef.Namespace, "name": v.ClusterRef.Name}}
-	for i, vp := range v.Policies {
-		for _, r := range list(spec["policyRefs"]) {
-			ref := obj(r)
-			if str(ref["kind"]) == "ConfigMap" && str(ref["namespace"]) == p.Policies[i].Namespace && str(ref["name"]) == p.Policies[i].Name {
-				ref["name"] = vp.Name
-			}
-		}
-	}
-	if len(v.DependsOn) > 0 {
-		deps := make([]any, len(v.DependsOn))
-		for i, d := range v.DependsOn {
-			deps[i] = d
-		}
-		spec["dependsOn"] = deps
-	}
-	return out, nil
 }

@@ -1,28 +1,28 @@
 
-##### 0. The fleet today: the GPU operator on every cluster labelled addons.gpu-operator: enabled  [07:50:34]
+##### 0. The fleet today: the GPU operator on every cluster labelled addons.gpu-operator: enabled  [18:05:40]
 NAMESPACE        NAME    READY   VERSION   AGE   SHARD   LABELS
-mgmt             mgmt    true    v1.35.0   28s           projectsveltos.io/k8s-version=v1.35.0,sveltos-agent=present
-projectsveltos   cpu-c   true    v1.35.0   13s           env=prod,projectsveltos.io/k8s-version=v1.35.0
-projectsveltos   gpu-a   true    v1.35.0   14s           accelerator=h100,addons.gpu-operator=enabled,env=staging,projectsveltos.io/k8s-version=v1.35.0
-projectsveltos   gpu-b   true    v1.35.0   13s           accelerator=h100,env=prod,projectsveltos.io/k8s-version=v1.35.0
+mgmt             mgmt    true    v1.35.0   15s           projectsveltos.io/k8s-version=v1.35.0
+projectsveltos   cpu-c   true    v1.35.0   1s            env=prod,projectsveltos.io/k8s-version=v1.35.0
+projectsveltos   gpu-a   true    v1.35.0   1s            accelerator=h100,addons.gpu-operator=enabled,env=staging,projectsveltos.io/k8s-version=v1.35.0
+projectsveltos   gpu-b   true    v1.35.0   1s            accelerator=h100,env=prod,projectsveltos.io/k8s-version=v1.35.0
 clusterprofile.config.projectsveltos.io/gpu-operator created
-  gpu-a  gpu-operator-v26.3.1@rev1    driver 580.126.20  operator pod a7cea44c-dfd0-438d-8fba-43521636e2e2
-  gpu-b  none                         driver -           operator pod -
-  cpu-c  none                         driver -           operator pod -
+  gpu-a  gpu-operator:v26.3.1   driver 580.126.20  operator pod 4b1ef611-f181-4726-aa46-c6998bf0ad57
+  gpu-b  none                   driver -           operator pod -
+  cpu-c  none                   driver -           operator pod -
   GPU daemonsets on gpu-a (kind has no GPUs, so none schedule):
 
-##### 1. Onboard: export, plan, apply, take over  [07:51:00]
-Onboarding plan: 1 profile over 1 cluster, one variant per cluster per profile (1 variant).
+##### 1. Onboard: export, plan, apply, hand over  [18:06:11]
+Onboarding plan: 1 profile over 1 cluster, one variant per cluster per component (1 variant).
 Nothing has changed. This is what ConfigHub would hold.
 
 gpu-operator  (selects addons.gpu-operator=enabled)
-  base     ch7-gpu-operator-base  reaches no cluster: clusterRefs is empty
+  base     ch7-gpu-operator-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   gpu-operator  chart gpu-operator v26.3.1 from https://helm.ngc.nvidia.com/nvidia: 11 objects (2 CRDs)
   stage staging
     gpu-a        variant ch7-gpu-operator-gpu-a  ->  Target ch7-targets/gpu-a
-                 differs from the base in metadata.name, spec.clusterRefs
 
 Management cluster mgmt/mgmt
-  record   ch7-management  one bootstrap profile per variant (1), fetching its release from the gateway
+  record   ch7-management  one delivery profile per variant (1): each sends its variant's releases to its one cluster
 
 Not onboarded
   cluster cpu-c: no profile selects it
@@ -31,10 +31,12 @@ Not onboarded
 In ConfigHub
   2 Targets in ch7-targets, one per cluster, on a server-hosted worker
   1 component, each one base, 1 variant, 1 management record
-  4 Spaces and 1 Link, one tying each variant to its base (check your organization's quotas for both first)
+  4 Spaces and 1 Link, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
   first rollout: gpu-operator in 1 stage; one approval per stage, one release per variant
 
-Live on your management cluster: gpu-operator. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
+Note: gpu-operator's chart gpu-operator has 4 Helm hooks for upgrade, delete or test, among them Jobs gpu-operator-upgrade-crd. They are left out, as cub helm leaves them out, because only Helm runs them.
+
+Live on your management cluster: gpu-operator. Each delivery profile deploys the same objects to the same cluster. apply also writes handover.sh, which steps each live profile aside without removing anything, so the delivery profiles carry on alone; run it after apply.sh. See "If your profiles are live" in docs/user/onboard-your-sveltos-fleet.md.
 
 Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.
 
@@ -42,93 +44,129 @@ Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/app
 
 == 1/6 One named Target per cluster, in ch7-targets
 
-== 2/6 One component, one base and one rollout workflow per profile
+== 2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow
 
-== 3/6 One variant per cluster, addressed to that cluster alone
+== 3/6 One variant per cluster, each holding what its base holds
 
-== 4/6 The management cluster's record: its bootstrap profiles
+== 4/6 The management cluster's record: one delivery profile per variant
 
 == 5/6 Release each variant, stage by stage: promote, approve, publish
 
 == 6/6 Point Sveltos at ConfigHub (your management cluster)
 secret/confighub-ch7-targets created
-clusterprofile.config.projectsveltos.io/confighub-ch7-gpu-operator-gpu-a created
 
-Done. Sveltos fetches each variant's release within a minute. Watch it with:
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
   kubectl get clustersummaries -A
+The delivery profiles of gpu-operator wait for handover.sh, which steps your live profiles aside first, so no object has two profiles managing it.
 == gpu-operator
 clusterprofile.config.projectsveltos.io/gpu-operator patched
 clusterprofile.config.projectsveltos.io "gpu-operator" deleted
+== the delivery profiles
+clusterprofile.config.projectsveltos.io/gpu-operator-gpu-a created
+Helm still records release gpu-operator on gpu-a, though ConfigHub manages its objects now, so a helm uninstall there would remove them. Remove the record, which leaves the objects, on each of those clusters: kubectl -n gpu-operator delete secret -l owner=helm,name=gpu-operator
 
-Done. Each per-cluster profile reports Provisioned within a minute:
+Done. Each delivery profile reports Provisioned within a minute:
   kubectl get clustersummaries -A
-  gpu-a  gpu-operator-v26.3.1@rev1    driver 580.126.20  operator pod a7cea44c-dfd0-438d-8fba-43521636e2e2
-  gpu-b  none                         driver -           operator pod -
-  cpu-c  none                         driver -           operator pod -
-  gpu-a: same release revision and the same operator pod: nothing reinstalled
+  gpu-a  gpu-operator:v26.3.1   driver 580.126.20  operator pod 4b1ef611-f181-4726-aa46-c6998bf0ad57
+  gpu-b  none                   driver -           operator pod -
+  cpu-c  none                   driver -           operator pod -
+  gpu-a: the same operator and driver, and the same operator pod: nothing reinstalled
+  removing Helm's record of the release, as handover.sh says, leaving its objects:
+    secret/sh.helm.release.v1.gpu-operator.v1
 
-##### 2. gpu-b is labelled for the operator  [07:53:26]
+##### 2. gpu-b is labelled for the operator  [18:08:57]
 sveltoscluster.lib.projectsveltos.io/gpu-b labeled
   a minute later, the label alone has shipped nothing:
-  gpu-b  none                         driver -           operator pod -
+  gpu-b  none                   driver -           operator pod -
 gpu-operator  (selects addons.gpu-operator=enabled)
-  base     ch7-gpu-operator-base  reaches no cluster: clusterRefs is empty
+  base     ch7-gpu-operator-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   gpu-operator  chart gpu-operator v26.3.1 from https://helm.ngc.nvidia.com/nvidia: 11 objects (2 CRDs)
   stage staging
     gpu-a        variant ch7-gpu-operator-gpu-a  ->  Target ch7-targets/gpu-a
-                 differs from the base in metadata.name, spec.clusterRefs
   stage prod
     gpu-b        variant ch7-gpu-operator-gpu-b  ->  Target ch7-targets/gpu-b
-                 differs from the base in metadata.name, spec.clusterRefs
 
-== 2/6 One component, one base and one rollout workflow per profile
+== 2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow
 
-== 3/6 One variant per cluster, addressed to that cluster alone
-ch7-gpu-operator-gpu-a/clusterprofile already has its departures
+== 3/6 One variant per cluster, each holding what its base holds
 
-== 4/6 The management cluster's record: its bootstrap profiles
+== 4/6 The management cluster's record: one delivery profile per variant
 == 5/6 Release each variant, stage by stage: promote, approve, publish
 ch7-gpu-operator-gpu-a already released
 
 == 6/6 Point Sveltos at ConfigHub (your management cluster)
   workflow stages: staging,prod
-  gpu-a  gpu-operator-v26.3.1@rev1    driver 580.126.20  operator pod a7cea44c-dfd0-438d-8fba-43521636e2e2
-  gpu-b  gpu-operator-v26.3.1@rev1    driver 580.126.20  operator pod 7046850d-14d5-4aed-b335-39f323d39506
-  cpu-c  none                         driver -           operator pod -
+  gpu-a  gpu-operator:v26.3.1   driver 580.126.20  operator pod 4b1ef611-f181-4726-aa46-c6998bf0ad57
+  gpu-b  gpu-operator:v26.3.1   driver 580.126.20  operator pod a1793400-0943-4a7b-baf0-a2136f7199aa
+  cpu-c  none                   driver -           operator pod -
 
-##### 3. cpu-c is labelled by mistake  [07:55:10]
+##### 3. cpu-c is labelled by mistake  [18:11:21]
 sveltoscluster.lib.projectsveltos.io/cpu-c labeled
   a minute later, nothing has shipped to cpu-c:
-  cpu-c  none                         driver -           operator pod -
+  cpu-c  none                   driver -           operator pod -
   the plan shows the proposal a reviewer would refuse:
       cpu-c        variant ch7-gpu-operator-cpu-c  ->  Target ch7-targets/cpu-c
-                   differs from the base in metadata.name, spec.clusterRefs
   label removed; nothing was applied
 
-##### 4. Upgrade: operator v26.3.1 to v26.7.0, driver 580.126.20 to 580.173.02, staging first  [07:56:11]
-  11:    chartVersion: v26.7.0
-  122:        version: 580.173.02
+##### 4. Upgrade: operator v26.3.1 to v26.7.0, driver 580.126.20 to 580.173.02, staging first  [18:12:29]
+  rendered the way apply.sh says gpu-operator was rendered, at v26.7.0, with the driver moved to 580.173.02:
+    # gpu-operator is rendered with: cub helm template gpu-operator gpu-operator --repo https://helm.ngc.nvidia.com/nvidia --version v26.3.1 --namespace gpu-operator --create-namespace -f gpu-operator/gpu-operator.values.yaml
+  what the base changed, object by object, as ConfigHub's diff lists it, leaving out the chart's version labels:
+    ClusterPolicy cluster-policy                                   20 paths
+    ClusterRole gpu-operator                                       11 paths
+    CustomResourceDefinition clusterpolicies.nvidia.com            63 paths
+    CustomResourceDefinition gpuclusters.nvidia.com                added
+    CustomResourceDefinition nvidiadrivers.nvidia.com              57 paths
+    CustomResourceDefinition computedomaincliques.resource.nvidia.com added
+    CustomResourceDefinition computedomains.resource.nvidia.com    added
+    Deployment gpu-operator/gpu-operator                           4 paths
+    Role gpu-operator/gpu-operator                                 1 path
+  the ClusterPolicy's and the operator's, in full:
+    ClusterPolicy cluster-policy
+      ~ spec.ccManager.version
+      ~ spec.dcgm.version
+      + spec.dcgmExporter.serviceMonitor.scrapeTimeout
+      ~ spec.dcgmExporter.version
+      ~ spec.devicePlugin.version
+      ~ spec.driver.manager.version
+      ~ spec.driver.version
+      ~ spec.gdrcopy.version
+      ~ spec.gds.version
+      ~ spec.gfd.version
+      ~ spec.kataSandboxDevicePlugin.version
+      ~ spec.migManager.version
+      ~ spec.nodeStatusExporter.version
+      ~ spec.sandboxDevicePlugin.version
+      ~ spec.toolkit.version
+      ~ spec.validator.version
+      ~ spec.vfioManager.driverManager.version
+      ~ spec.vfioManager.version
+      ~ spec.vgpuDeviceManager.version
+      ~ spec.vgpuManager.driverManager.version
+    Deployment gpu-operator/gpu-operator
+      ~ spec.template.spec.containers.?name=gpu-operator;@0.env.?name=DRIVER_MANAGER_IMAGE;@2.value
+      + spec.template.spec.containers.?name=gpu-operator;@0.env.?name=VALIDATOR_IMAGE;@3
+      ~ spec.template.spec.containers.?name=gpu-operator;@0.image
+      + spec.template.spec.nodeSelector.kubernetes~1io/os
   EXPECT REFUSAL, promote into prod before staging released:
     Failed: unable to promote to stage 'prod', Variant 'gpu-a' has taken change order 'upgrade-26-7' but has not released it
-  gpu-a  gpu-operator-v26.7.0@rev2    driver 580.173.02  operator pod a32c6c79-2fc1-4d18-af60-7a54a2955f2d
-  gpu-b  gpu-operator-v26.3.1@rev1    driver 580.126.20  operator pod 7046850d-14d5-4aed-b335-39f323d39506
-  cpu-c  none                         driver -           operator pod -
-  gpu-a  gpu-operator-v26.7.0@rev2    driver 580.173.02  operator pod a32c6c79-2fc1-4d18-af60-7a54a2955f2d
-  gpu-b  gpu-operator-v26.7.0@rev2    driver 580.173.02  operator pod 66ed0e98-535b-471c-8e68-c827b884c872
-  cpu-c  none                         driver -           operator pod -
+  gpu-a  gpu-operator:v26.7.0   driver 580.173.02  operator pod d02e900f-806b-446a-8c59-4ef3ab96c4be
+  gpu-b  gpu-operator:v26.3.1   driver 580.126.20  operator pod a1793400-0943-4a7b-baf0-a2136f7199aa
+  cpu-c  none                   driver -           operator pod -
+  gpu-a  gpu-operator:v26.7.0   driver 580.173.02  operator pod d02e900f-806b-446a-8c59-4ef3ab96c4be
+  gpu-b  gpu-operator:v26.7.0   driver 580.173.02  operator pod f56722c1-4682-4cb0-8888-95f02d7d227b
+  cpu-c  none                   driver -           operator pod -
 {
   "Stage": "Completed",
   "State": "Released"
 }
 
-##### 5. What runs on a node with no GPU  [07:59:03]
+##### 5. What runs on a node with no GPU  [18:15:55]
 == gpu-a
-  pod/gpu-operator-65fd58485d-82n6q   1/1   Running   0     108s
+  pod/gpu-operator-65fd58485d-9trlx   1/1   Running   0     2m9s
   ClusterPolicy status ready, nodes labelled nvidia.com/gpu.present: 0
 == gpu-b
-  pod/gpu-operator-65fd58485d-k6nr5   1/1   Running   0     24s
-  ClusterPolicy status notReady, nodes labelled nvidia.com/gpu.present: 0
+  pod/gpu-operator-65fd58485d-6gtgm   1/1   Running   0     67s
+  ClusterPolicy status ready, nodes labelled nvidia.com/gpu.present: 0
 
-##### GPU-CHAPTER-DONE  [07:59:04]
-
-# Checked by hand a minute after the run: gpu-b ClusterPolicy ready, operator 1/1 Running.
-# notReady above was the 24 seconds after its operator pod was replaced by the upgrade.
+##### GPU-CHAPTER-DONE  [18:16:26]

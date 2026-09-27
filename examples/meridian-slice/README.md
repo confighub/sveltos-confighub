@@ -10,8 +10,9 @@ Group with 99 clusters across 8 regions, 4 classes (dev, test, uat, prod) and
   class knobs: replicas 1 for test, 2 for uat, 3 for prod);
 - one deployment per cluster, cloned from its class base.
 
-Meridian is synthetic. Its clusters are Targets on a server-hosted worker,
-and its live status is generated.
+Meridian's units are the Kubernetes objects themselves, and each class knob
+is a real field. Its clusters are Targets on a server-hosted worker, and its
+live status is generated.
 
 This slice makes part of it real with Sveltos. It takes the shared
 eu-central clusters that Meridian places Kyverno on, `eu-central-test1`,
@@ -26,12 +27,24 @@ cub sveltos plan examples/meridian-slice/meridian-slice.yaml \
 ```
 
 `--class-label class` makes the three profiles one component in Meridian's
-shape. The prod profile becomes the root base. Each class gets a class base
-holding its replicas, and each cluster's deployment is cloned from its class
-base. The Spaces carry Meridian's `Role` and `Cluster` labels, so Meridian's
-queries (`Labels.Role = 'base'`, `Labels.Role = 'deployment'`) find them.
+shape. Each profile's chart is rendered with its class's values, and the
+plan compares the renderings:
 
-![Root base, three class bases, four deployments](../../docs/images/sveltos/sveltos-meridian-slice-tree.png)
+```text
+kyverno  (selects one profile per class: prod, test, uat)
+  base     sveltos-kyverno-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno  chart kyverno 3.8.1 from https://kyverno.github.io/kyverno: 70 objects (22 CRDs)
+  class    prod         sveltos-kyverno-class-prod  from profile kyverno-prod; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
+  class    test         sveltos-kyverno-class-test  from profile kyverno-test; the same as the base
+  class    uat          sveltos-kyverno-class-uat  from profile kyverno-uat; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
+```
+
+Kyverno renders a PodDisruptionBudget only above one replica, so the root
+base is test's rendering, the one whose objects every other class also has.
+uat and prod each depart from it in two ways: the admission controller's
+`spec.replicas`, protected, and the PodDisruptionBudget they add. The Spaces
+carry Meridian's `Role` and `Cluster` labels, so Meridian's queries
+(`Labels.Role = 'base'`, `Labels.Role = 'deployment'`) find them.
 
 ## What was recorded
 
@@ -42,23 +55,26 @@ running [run.sh](run.sh) against a fleet from
 
 | Step | Measured |
 | --- | --- |
-| Before | Kyverno 3.8.1 on all four clusters. The admission controller runs 1 replica on test, 2 on uat and 3 on both prod clusters, set by the three per-class profiles. |
-| Onboard: plan, apply, takeover | The three profiles became one component with a class base per class. `takeover.sh` handed all three over, and every cluster kept its release revision and its class's replicas. |
-| One change at the root, Kyverno 3.8.1 to 3.8.2 | The `bases` stage carried it into the three class bases, each keeping its replicas. ConfigHub refused uat until test had taken the change. Test, then uat, then both prod clusters moved to 3.8.2, each still at its class's replicas, and the change order finished `Completed` and `Released`. |
+| Before | Kyverno 3.8.1 on all four clusters from three profiles, one per class: test at 1 replica, uat at 2 and prod at 3, uat and prod with a PodDisruptionBudget. |
+| Onboard: plan, apply, handover | One component: a root base (test's rendering, 70 objects, 22 of them CRDs), three class bases and a deployment per cluster, in 10 Spaces with 7 Links. The handover stepped the three profiles aside, and four delivery profiles took over with every pod the same: nothing was reinstalled. Meridian's queries (`Labels.Role = 'base'`, `'deployment'`) find the four bases and the four deployments. |
+| One change for every class | Kyverno 3.8.2 and 4 replicas, both made on the root, in one change order. After its first stage, `bases`, every class base held 3.8.2; test's took 4 replicas, and uat's and prod's kept 2 and 3. uat was refused while test had not taken the change. Test, uat and prod then took it in order, and the clusters ended at 3.8.2 with 4, 2, 3 and 3 replicas. The change order ended `Completed`, `Released`. |
 
 ## The rule the three levels come with
 
-When the base changes a setting that a class or a cluster overrides, the
-base's value replaces the override, and the promotion reports nothing.
-Changes to different settings both survive, even inside the same Helm values
-string. Protecting the override with `cub unit set-protection` did not hold
-for Helm values, because ConfigHub identifies the entries of a chart list by
-their content (measured 2026-09-27).
+A class base holds what its class differs in as changes of its own: fields
+it sets, protected, and objects it adds. A later change at the root reaches
+every class base, and a class's protected fields keep the class's values.
 
-Here each class overrides its replicas, so replicas are changed on the class
-bases, never on the root: a root change to them would replace every class's
-value. The chart upgrade above changed a different field, so it could be made
-once on the root.
+The class's clusters get what the class holds when each promotion takes the
+change as one diff, with `--squash`, as `apply.sh` and `run.sh` do. Without
+it, ConfigHub replays the root's function on each cluster's unit, past the
+class's protection: an earlier recording of this slice ended with every
+cluster at the root's 4 replicas, while the class bases still said 2 and 3.
+The [rehearsal record](../../docs/planning/onboarding-rehearsal.md) has the
+three-Space reproduction.
+
+A class that removes an object the root has cannot protect the removal; the
+plan says so when that happens, and here the root is chosen so it does not.
 
 ## What this slice is not
 
@@ -77,6 +93,7 @@ kubectl and helm installed:
 
 ```bash
 cub plugin install confighub/sveltos-confighub
+cub plugin install confighub/cub-helm
 node examples/meridian-slice/kind-fleet.mjs
 bash examples/meridian-slice/run.sh
 node examples/meridian-slice/kind-fleet.mjs --delete

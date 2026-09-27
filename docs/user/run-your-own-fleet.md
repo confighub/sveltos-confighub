@@ -233,7 +233,11 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    change without releasing it. Chapter three asks for a skipped stage once,
    before its first wave, and records the refusal as evidence. The recorded
    chapters four and five upgraded the set instead,
-   `cub unit update --patch --space "*" --where <query> --upgrade`.
+   `cub unit update --patch --space "*" --where <query> --upgrade`. With a
+   level between the base and the variants, such as class bases, add
+   `--squash`, so a change a class protects against does not reach its
+   clusters by replay; [Onboard your Sveltos fleet](onboard-your-sveltos-fleet.md#making-a-change-afterwards)
+   says why.
 8. **Approve the change in the stage, in one operation**:
    `cub variant approve --change-order <base-space>/<change-order> --stage <stage>`
    records an Approval attestation on the revision the change order's end

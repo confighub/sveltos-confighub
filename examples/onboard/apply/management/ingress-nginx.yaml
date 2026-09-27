@@ -1,13 +1,22 @@
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: confighub-sveltos-ingress-nginx-prod-eu
+  name: ingress-nginx-prod-eu
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
       kind: SveltosCluster
-      namespace: mgmt
-      name: mgmt
+      namespace: projectsveltos
+      name: prod-eu
+  syncMode: ContinuousWithDriftDetection
+  continueOnError: true
+  patches:
+    - target:
+        annotationSelector: helm.sh/hook
+      patch: |
+        - op: add
+          path: /metadata/annotations/projectsveltos.io~1driftDetectionIgnore
+          value: ok
   policyRefs:
     - deploymentType: Remote
       remoteURL:
@@ -20,13 +29,22 @@ spec:
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
-  name: confighub-sveltos-ingress-nginx-prod-us
+  name: ingress-nginx-prod-us
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
       kind: SveltosCluster
-      namespace: mgmt
-      name: mgmt
+      namespace: projectsveltos
+      name: prod-us
+  syncMode: ContinuousWithDriftDetection
+  continueOnError: true
+  patches:
+    - target:
+        annotationSelector: helm.sh/hook
+      patch: |
+        - op: add
+          path: /metadata/annotations/projectsveltos.io~1driftDetectionIgnore
+          value: ok
   policyRefs:
     - deploymentType: Remote
       remoteURL:

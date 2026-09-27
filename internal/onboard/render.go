@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 func count(n int, word string) string {
@@ -60,14 +62,20 @@ func RenderPlan(plan *Plan, next bool) string {
 			how = append(how, "names "+count(p.ClusterRefs, "cluster"))
 		}
 		out = append(out, fmt.Sprintf("%s  (%s)", p.Name, strings.Join(how, "; ")))
-		out = append(out, fmt.Sprintf("  base     %s  reaches no cluster: clusterRefs is empty", p.BaseSpace))
-		for _, pm := range p.Policies {
-			out = append(out, fmt.Sprintf("  policy   ConfigMap %s/%s  held in ConfigHub as unit %s; each variant gets its own copy", pm.Namespace, pm.Name, pm.Unit))
+		out = append(out, fmt.Sprintf("  base     %s  holds what its charts and policies render to, and delivers to no cluster:", p.BaseSpace))
+		uw := 0
+		for _, u := range p.Units {
+			if len(u.Slug) > uw {
+				uw = len(u.Slug)
+			}
+		}
+		for _, u := range p.Units {
+			out = append(out, fmt.Sprintf("    unit   %-*s  %s: %s", uw, u.Slug, u.Source, u.Summary()))
 		}
 		for _, c := range p.Classes {
 			differs := "the same as the base"
 			if len(c.Departures) > 0 {
-				differs = "differs from the base in " + strings.Join(c.Departures, ", ")
+				differs = "differs from the base in " + describeDepartures(c.Departures)
 			}
 			from := ""
 			if len(p.Members) > 1 {
@@ -81,12 +89,7 @@ func RenderPlan(plan *Plan, next bool) string {
 				if v.Stage != stage {
 					continue
 				}
-				out = append(out,
-					fmt.Sprintf("    %-*s variant %s%s  ->  Target %s/%s", width, v.Cluster, v.Space, classNote(v), plan.TargetsSpace, v.Target),
-					fmt.Sprintf("    %-*s differs from the base in %s", width, "", strings.Join(v.Departures, ", ")))
-				for i, vp := range v.Policies {
-					out = append(out, fmt.Sprintf("    %-*s reads ConfigMap %s/%s", width, "", p.Policies[i].Namespace, vp.Name))
-				}
+				out = append(out, fmt.Sprintf("    %-*s variant %s%s  ->  Target %s/%s", width, v.Cluster, v.Space, classNote(v), plan.TargetsSpace, v.Target))
 			}
 		}
 	}
@@ -97,7 +100,7 @@ func RenderPlan(plan *Plan, next bool) string {
 		}
 		out = append(out, "",
 			fmt.Sprintf("Management cluster %s/%s", m.Namespace, m.Cluster),
-			fmt.Sprintf("  record   %s  one bootstrap profile per variant (%d), fetching its release from the gateway", m.Space, n))
+			fmt.Sprintf("  record   %s  one delivery profile per variant (%d): each sends its variant's releases to its one cluster", m.Space, n))
 	}
 	if len(plan.Ungoverned) > 0 || len(plan.Skipped) > 0 {
 		out = append(out, "", "Not onboarded")
@@ -126,7 +129,7 @@ func RenderPlan(plan *Plan, next bool) string {
 	out = append(out, "", "In ConfigHub",
 		fmt.Sprintf("  %s in %s, one per cluster, on a server-hosted worker", count(len(plan.Targets), "Target"), plan.TargetsSpace),
 		fmt.Sprintf("  %s, each one base, %s%s, 1 management record", count(len(plan.Profiles), "component"), classCount(plan), count(variants, "variant")),
-		fmt.Sprintf("  %s and %s, one tying each variant to its base (check your organization's quotas for both first)", count(spaces, "Space"), count(variants+classTotal(plan), "Link")),
+		fmt.Sprintf("  %s and %s, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)", count(spaces, "Space"), count(plan.linkCount(), "Link")),
 		fmt.Sprintf("  first rollout: %s; one approval per stage, one release per variant", strings.Join(rollouts, ", ")))
 	for _, note := range plan.Notes {
 		out = append(out, "", "Note: "+note)
@@ -140,7 +143,7 @@ func RenderPlan(plan *Plan, next bool) string {
 				}
 			}
 		}
-		out = append(out, "", fmt.Sprintf("Live on your management cluster: %s. Each variant's profile deploys the same add-ons to the same cluster, and Sveltos lets one profile manage a release at a time, so the per-cluster profiles wait until the live one steps aside. apply also writes takeover.sh, which hands each release over without reinstalling it; run it after apply.sh. See \"If your profiles are live\" in docs/user/onboard-your-sveltos-fleet.md.", strings.Join(live, ", ")))
+		out = append(out, "", fmt.Sprintf("Live on your management cluster: %s. Each delivery profile deploys the same objects to the same cluster. apply also writes handover.sh, which steps each live profile aside without removing anything, so the delivery profiles carry on alone; run it after apply.sh. See \"If your profiles are live\" in docs/user/onboard-your-sveltos-fleet.md.", strings.Join(live, ", ")))
 	}
 	if len(plan.Problems) > 0 {
 		out = append(out, "", "Fix these before apply:")
@@ -160,10 +163,12 @@ func classNote(v Variant) string {
 	return " (class " + v.Class + ")"
 }
 
-func classTotal(plan *Plan) int {
+// linkCount is the Links the plan makes: cub variant create ties each unit of
+// a class base or a variant to its upstream's.
+func (p *Plan) linkCount() int {
 	n := 0
-	for _, p := range plan.Profiles {
-		n += len(p.Classes)
+	for _, pr := range p.Profiles {
+		n += len(pr.Units) * (len(pr.Classes) + len(pr.Variants))
 	}
 	return n
 }
@@ -243,11 +248,12 @@ func ApplyScript(plan *Plan) string {
 		"#   MGMT_CONTEXT=<kubectl context of your management cluster> bash apply.sh",
 		"#",
 		"# cub uses its current context; set CUB_CONTEXT to choose another.",
-		"# Steps 1 to 4 only create records in ConfigHub. Step 5 is the first release:",
-		"# each stage is promoted, approved, released. All of it is safe to re-run,",
-		"# which is also how a cluster that joined since gets its variants.",
-		"# Step 6 is the one change to your management cluster: a Secret holding the",
-		"# gateway credential, and one bootstrap profile per variant.",
+		"# Steps 1 to 4 only create records in ConfigHub: each base holds the objects",
+		"# its charts and policies rendered to, in the files beside this script. Step 5",
+		"# is the first release: each stage is promoted, approved, released. All of it",
+		"# is safe to re-run, which is also how a cluster that joined since gets its",
+		"# variants. Step 6 is the one change to your management cluster: a Secret",
+		"# holding the gateway credential, and one delivery profile per variant.",
 		"set -euo pipefail",
 		`cd "$(dirname "$0")"`,
 		`k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }`,
@@ -256,22 +262,39 @@ func ApplyScript(plan *Plan) string {
 		"# finished change order is skipped, and a variant with nothing new is kept.",
 		"# A cluster that joined since makes a new change order, which releases it.",
 		`rolled_out() { [ "$(cub changeorder get --space "${1%/*}" "${1#*/}" -o jq=.ChangeOrder.Stage)" = Completed ]; }`,
-		"# A variant takes its departures once, as a fresh clone (an empty revision,",
-		"# then the clone), and they touch only their own fields, so the clone keeps",
-		"# everything the base holds today. Later revisions are changes made in",
-		"# ConfigHub, which a re-run leaves alone.",
-		"depart() {",
-		`  if [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ]; then`,
-		`    cub function set --space "$1" --unit "$2" --change-desc "$4" --quiet -- set-yq "$3"`,
-		"  else",
-		`    echo "$1/$2 already has its departures"`,
-		"  fi",
+		"# A class base takes its departures once, as a fresh clone (an empty",
+		"# revision, then the clone), and they touch only their own fields and",
+		"# objects. Later revisions are changes made in ConfigHub, which a re-run",
+		"# leaves alone.",
+		`fresh() { [ "$(cub unit get --space "$1" "$2" -o jq=.Unit.HeadRevisionNum)" -le 2 ] || { echo "$1/$2 already has its departures"; return 1; }; }`,
+		"# A variant must hold every unit of its base before it is released: Sveltos",
+		"# removes from a cluster whatever a release no longer holds.",
+		"holds() {",
+		`  local n; n=$(cub unit list --space "$1" -o jq=length)`,
+		`  [ "$n" -ge "$2" ] || { echo "$1 holds $n of its $2 units; run this script again" >&2; return 1; }`,
 		"}",
 		"# A cluster that joins in a stage the workflow does not have yet adds that",
 		"# stage. Only the stages are patched, so approval settings made since stay.",
 		`stages_are() { [ "$(cub changeworkflow get --space "$1" "$2" -o 'jq=[.ChangeWorkflow.Stages[].Name] | join(",")')" = "$3" ]; }`,
+		"# A promotion takes each unit's change as one diff (--squash). Walked",
+		"# revision by revision, it replays the functions a change was made with,",
+		"# and a function run at the root then reaches a class's clusters although",
+		"# the class base protected the field (measured on kind). Promoting a large",
+		"# unit, a chart with its CRDs, can also outlast the request: cub reports no",
+		"# response while the server finishes. A promotion is idempotent, so it is",
+		"# asked again, and a change order with nothing left to promote has done it.",
+		"promote() {",
+		"  local out i",
+		"  for i in 1 2 3; do",
+		`    out=$(cub variant promote --change-order "$1" --target-stage "$2" --squash --quiet 2>&1 >/dev/null) && return 0`,
+		`    case "$out" in *"nothing left to promote"*) return 0 ;; esac`,
+		"    sleep 15",
+		"  done",
+		`  echo "$out" >&2; return 1`,
+		"}",
 		"publish() {",
 		"  local out",
+		`  holds "$1" "$3" || return 1`,
 		`  out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0`,
 		`  case "$out" in *"no changes were made since :latest bundle"*) echo "$1 already released" ;; *) echo "$out" >&2; return 1 ;; esac`,
 		"}",
@@ -286,50 +309,68 @@ func ApplyScript(plan *Plan) string {
 		"",
 		fmt.Sprintf(`step "1/6 One named Target per cluster, in %s"`, plan.TargetsSpace),
 		line("cub", "space", "create", plan.TargetsSpace, "--allow-exists", "--quiet"),
-		line("cub", "worker", "create", "--space", plan.TargetsSpace, workerSlug, "--filename", "worker.json", "--allow-exists", "--quiet"),
+		"# A server-hosted worker has no process behind it and no role in the",
+		"# organization; it holds the Targets and is the credential Sveltos reads with.",
+		line("cub", "worker", "create", "--space", plan.TargetsSpace, workerSlug, "--is-server-worker", "--org-role", "none", "--allow-exists", "--quiet"),
 	}
 	for _, t := range plan.Targets {
 		L = append(L, line("cub", "target", "create", t.Target, "{}", workerSlug, "--space", plan.TargetsSpace, "--provider", "OCI", "--toolchain", "Any", "--allow-exists", "--quiet"))
 	}
-	L = append(L, "", `step "2/6 One component, one base and one rollout workflow per profile"`)
+	L = append(L, "", `step "2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow"`)
 	for _, p := range plan.Profiles {
 		L = append(L,
 			line("cub", "component", "create", p.Component, "--allow-exists", "--quiet"),
-			line("cub", "space", "create", p.BaseSpace, "--component", p.Component, "--label", "Component="+p.Component, "--label", "Role=base", "--allow-exists", "--quiet"),
-			line("cub", "unit", "create", "--space", p.BaseSpace, unitSlug, p.Name+"/base.yaml", "--change-desc", fmt.Sprintf("Onboard %s from its ClusterProfile: the shared base", p.Name), "--allow-exists", "--quiet"))
-		for _, pm := range p.Policies {
-			L = append(L, line("cub", "unit", "create", "--space", p.BaseSpace, pm.Unit, p.Name+"/"+pm.Unit+".yaml", "--change-desc", fmt.Sprintf("Onboard the policies %s reads from ConfigMap %s/%s", p.Name, pm.Namespace, pm.Name), "--allow-exists", "--quiet"))
+			line("cub", "space", "create", p.BaseSpace, "--component", p.Component, "--label", "Component="+p.Component, "--label", "Role=base", "--allow-exists", "--quiet"))
+		for _, u := range p.Units {
+			if u.Chart != nil {
+				L = append(L, "# "+u.Slug+" is rendered with: "+renderCommand(p, u))
+			}
+			L = append(L, line("cub", "unit", "create", "--space", p.BaseSpace, u.Slug, p.Name+"/"+u.Slug+".yaml", "--change-desc", fmt.Sprintf("Onboard %s: %s", p.Name, u.Source), "--allow-exists", "--quiet"))
 		}
 		L = append(L,
 			line("cub", "changeworkflow", "create", "--space", p.BaseSpace, workflowSlug, "--filename", p.Name+"/change-workflow.yaml", "--allow-exists", "--quiet"),
 			fmt.Sprintf("stages_are %s %s %s || %s | %s", p.BaseSpace, workflowSlug, strings.Join(workflowStages(p), ","),
 				line("echo", stagesJSON(p.Stages, len(p.Classes) > 0)), line("cub", "changeworkflow", "update", "--patch", "--space", p.BaseSpace, workflowSlug, "--from-stdin", "--quiet")))
 	}
-	L = append(L, "", `step "3/6 One variant per cluster, addressed to that cluster alone"`)
+	L = append(L, "", `step "3/6 One variant per cluster, each holding what its base holds"`)
 	for _, p := range plan.Profiles {
 		for _, c := range p.Classes {
-			L = append(L, line("cub", "variant", "create", "class-"+Slug(c.Value), p.BaseSpace, "--stage", basesStage, "--space-pattern", "template:"+c.Space, "--allow-exists", "--quiet"))
-			if len(c.Departures) > 0 {
-				L = append(L, line("depart", c.Space, unitSlug, c.DepartExpression, fmt.Sprintf("Class %s departs from the base: %s", c.Value, strings.Join(c.Departures, ", "))))
+			L = append(L,
+				line("cub", "variant", "create", "class-"+Slug(c.Value), p.BaseSpace, "--stage", basesStage, "--space-pattern", "template:"+c.Space, "--allow-exists", "--quiet"),
+				line("holds", c.Space, fmt.Sprint(len(p.Units))))
+			for _, u := range p.Units {
+				var ds []Departure
+				for _, d := range c.Departures {
+					if d.Unit == u.Slug {
+						ds = append(ds, d)
+					}
+				}
+				if len(ds) == 0 {
+					continue
+				}
+				L = append(L, "if "+line("fresh", c.Space, u.Slug)+"; then")
+				// cub prints the mutations these make even with --quiet; a
+				// failure still reaches stderr.
+				for _, cmd := range departureCommands(c.Space, u.Slug, fmt.Sprintf("Class %s departs from the base", c.Value), ds) {
+					L = append(L, "  "+line(cmd...)+" >/dev/null")
+				}
+				L = append(L, "fi")
 			}
 		}
 		for _, v := range p.Variants {
 			L = append(L,
 				line("cub", "variant", "create", v.Cluster, v.Upstream, "--stage", v.Stage, "--space-pattern", "template:"+v.Space, "--target", plan.TargetsSpace+"/"+v.Target, "--space-label", "Role=deployment", "--space-label", "Cluster="+v.Cluster, "--allow-exists", "--quiet"),
-				line("depart", v.Space, unitSlug, v.DepartExpression, fmt.Sprintf("Depart from the base for %s: %s", v.Cluster, strings.Join(v.Departures, ", "))))
-			for _, vp := range v.Policies {
-				L = append(L, line("depart", v.Space, vp.Unit, vp.DepartExpression, fmt.Sprintf("%s's own copy of the policies: %s", v.Cluster, vp.Name)))
-			}
+				line("holds", v.Space, fmt.Sprint(len(p.Units))))
 		}
 	}
 	if m := plan.Management; m != nil {
-		L = append(L, "", `step "4/6 The management cluster's record: its bootstrap profiles"`,
+		L = append(L, "", `step "4/6 The management cluster's record: one delivery profile per variant"`,
 			line("cub", "component", "create", m.Component, "--allow-exists", "--quiet"),
 			line("cub", "space", "create", m.Space, "--component", m.Component, "--allow-exists", "--quiet"))
 		for _, b := range m.ByProfile {
 			L = append(L,
-				line("cub", "unit", "create", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The bootstrap profiles that point Sveltos at each %s variant's releases", b.Profile), "--allow-exists", "--quiet"),
-				line("cub", "unit", "update", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--change-desc", fmt.Sprintf("The bootstrap profiles for every %s variant this plan holds", b.Profile), "--quiet"))
+				line("cub", "unit", "create", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The profiles that deliver each %s variant's releases to its cluster", b.Profile), "--allow-exists", "--quiet"),
+				line("cub", "unit", "update", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--change-desc", fmt.Sprintf("The delivery profiles for every %s variant this plan holds", b.Profile), "--quiet"))
 		}
 	}
 	L = append(L, "", `step "5/6 Release each variant, stage by stage: promote, approve, publish"`)
@@ -345,15 +386,15 @@ func ApplyScript(plan *Plan) string {
 			"  echo "+q(p.Name+": every variant in this plan is released"),
 			"else")
 		if len(p.Classes) > 0 {
-			L = append(L, "  "+line("cub", "variant", "promote", "--change-order", order, "--target-stage", basesStage, "--quiet"))
+			L = append(L, "  "+line("promote", order, basesStage))
 		}
 		for _, stage := range p.Stages {
 			L = append(L,
-				"  "+line("cub", "variant", "promote", "--change-order", order, "--target-stage", stage, "--quiet"),
+				"  "+line("promote", order, stage),
 				"  "+line("cub", "variant", "approve", "--change-order", order, "--stage", stage, "--quiet"))
 			for _, v := range p.Variants {
 				if v.Stage == stage {
-					L = append(L, "  "+line("publish", v.Space, order))
+					L = append(L, "  "+line("publish", v.Space, order, fmt.Sprint(len(p.Units))))
 				}
 			}
 		}
@@ -369,24 +410,31 @@ func ApplyScript(plan *Plan) string {
 			fmt.Sprintf(`k create secret generic %s --namespace %s --type %s \`, gatewaySecretName(plan.TargetsSpace), secretNamespace, secretType),
 			fmt.Sprintf(`  --from-file=username=<(%s -o jq=.BridgeWorker.BridgeWorkerID | tr -d '\n') \`, worker),
 			fmt.Sprintf(`  --from-file=password=<(%s --include-secret -o jq=.BridgeWorker.Secret | tr -d '\n') \`, worker),
-			"  --dry-run=client -o yaml | k apply -f -",
-			"k apply -f management/",
-			"",
-			"echo",
-			`echo "Done. Sveltos fetches each variant's release within a minute. Watch it with:"`,
-			`echo "  kubectl get clustersummaries -A"`)
+			"  --dry-run=client -o yaml | k apply -f -")
+		var live []string
+		for _, p := range plan.Profiles {
+			if p.Live {
+				live = append(live, p.Name)
+				continue
+			}
+			L = append(L, line("k", "apply", "-f", "management/"+p.Name+".yaml"))
+		}
+		L = append(L, "", "echo", `echo "Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:"`, `echo "  kubectl get clustersummaries -A"`)
+		if len(live) > 0 {
+			L = append(L, "echo "+q(fmt.Sprintf("The delivery profiles of %s wait for handover.sh, which steps your live profiles aside first, so no object has two profiles managing it.", strings.Join(live, ", "))))
+		}
 	}
 	return strings.Join(L, "\n") + "\n"
 }
 
-// TakeoverScript hands each live profile's add-ons to the per-cluster profiles
-// ConfigHub delivers. Measured on kind with Sveltos v1.15.0, for Helm charts and
-// for plain resources through policyRefs: while the live profile manages them,
-// each per-cluster profile waits and nothing changes. Set to LeavePolicies and
-// then deleted, the live profile leaves everything in place, and each
-// per-cluster profile takes it over within a minute, with the same Helm
-// revisions, the same pods and the same objects.
-func TakeoverScript(plan *Plan) string {
+// HandoverScript hands each live profile's add-ons to the delivery profiles.
+// Measured on kind with Sveltos v1.15.0: set to LeavePolicies and then deleted,
+// a live profile leaves everything in place, and a delivery profile applied
+// after it adopts what is there. Applied while the live profile still ran, a
+// delivery profile found policyRefs objects in conflict, and a live profile
+// with drift detection took its first write as drift and ran one more helm
+// upgrade, hooks and all; so the live profiles leave first.
+func HandoverScript(plan *Plan) string {
 	var live []Profile
 	var names []string
 	for _, p := range plan.Profiles {
@@ -401,46 +449,136 @@ func TakeoverScript(plan *Plan) string {
 	}
 	L := []string{
 		"#!/usr/bin/env bash",
-		fmt.Sprintf("# Hand %s to the per-cluster profiles ConfigHub delivers,", strings.Join(names, ", ")),
+		fmt.Sprintf("# Hand %s to the delivery profiles ConfigHub releases to,", strings.Join(names, ", ")),
 		"# without reinstalling anything. Run it after apply.sh:",
 		"#",
-		"#   MGMT_CONTEXT=<kubectl context of your management cluster> bash takeover.sh",
+		"#   MGMT_CONTEXT=<kubectl context of your management cluster> bash handover.sh",
 		"#",
-		"# For each live profile it checks that every per-cluster profile has arrived,",
-		"# sets the live profile to LeavePolicies so deleting it leaves its add-ons in",
-		"# place, then deletes it. Each per-cluster profile then takes over the release",
-		"# it was waiting for. Skipping LeavePolicies would uninstall the add-ons first.",
+		"# It sets each live profile to LeavePolicies, so deleting it leaves what it",
+		"# deployed in place, and deletes it; a profile another depends on goes after",
+		"# the one that depends on it. Then it applies the delivery profiles, which",
+		"# adopt what is there. So no object ever has two profiles managing it.",
+		"# Skipping LeavePolicies would uninstall the add-ons first.",
 		"set -euo pipefail",
+		`cd "$(dirname "$0")"`,
 		`k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }`,
+		fmt.Sprintf(`k get secret -n %s %s >/dev/null 2>&1 || { echo "the gateway Secret is missing: run apply.sh first"; exit 1; }`, secretNamespace, gatewaySecretName(plan.TargetsSpace)),
+	}
+	type handover struct{ member Member }
+	var pending []handover
+	for _, p := range live {
+		for _, m := range p.Members {
+			if m.Live {
+				pending = append(pending, handover{m})
+			}
+		}
+	}
+	// A live profile another live profile depends on cannot leave first:
+	// Sveltos holds its deletion, Blocked, until the dependent is gone. So each
+	// dependent is handed over before what it depends on.
+	for len(pending) > 0 {
+		next := 0
+		for i, h := range pending {
+			needed := false
+			for _, other := range pending {
+				if contains(dependsOnOf(other.member.Source), h.member.Name) {
+					needed = true
+				}
+			}
+			if !needed {
+				next = i
+				break
+			}
+		}
+		h := pending[next]
+		pending = append(pending[:next], pending[next+1:]...)
+		m := h.member
+		L = append(L, "",
+			"echo "+q("== "+m.Name),
+			fmt.Sprintf("if ! k get clusterprofile %s >/dev/null 2>&1; then", m.Name),
+			"  echo "+q(m.Name+" is already gone"),
+			"else",
+			fmt.Sprintf(`  k patch clusterprofile %s --type merge -p '{"spec":{"stopMatchingBehavior":"LeavePolicies"}}'`, m.Name),
+			"  sleep 20",
+			fmt.Sprintf("  k delete clusterprofile %s --wait=true", m.Name),
+			"fi")
+	}
+	L = append(L, "", "echo "+q("== the delivery profiles"))
+	for _, p := range live {
+		L = append(L, line("k", "apply", "-f", "management/"+p.Name+".yaml"))
 	}
 	for _, p := range live {
-		var perCluster []string
+		var clusters []string
 		for _, v := range p.Variants {
-			perCluster = append(perCluster, v.ProfileName)
+			clusters = append(clusters, v.Cluster)
 		}
-		for _, m := range p.Members {
-			if !m.Live {
+		for _, u := range p.Units {
+			if u.Chart == nil {
 				continue
 			}
-			L = append(L, "",
-				"echo "+q("== "+m.Name),
-				fmt.Sprintf("if ! k get clusterprofile %s >/dev/null 2>&1; then", m.Name),
-				"  echo "+q(m.Name+" is already gone"),
-				"else",
-				fmt.Sprintf("  for profile in %s; do", strings.Join(perCluster, " ")),
-				`    k get clusterprofile "$profile" >/dev/null 2>&1 || { echo "$profile has not arrived from ConfigHub yet: run apply.sh, wait a minute, run this again"; exit 1; }`,
-				"  done",
-				fmt.Sprintf(`  k patch clusterprofile %s --type merge -p '{"spec":{"stopMatchingBehavior":"LeavePolicies"}}'`, m.Name),
-				"  sleep 20",
-				fmt.Sprintf("  k delete clusterprofile %s --wait=true", m.Name),
-				"fi")
+			L = append(L, "echo "+q(fmt.Sprintf("Helm still records release %s on %s, though ConfigHub manages its objects now, so a helm uninstall there would remove them. Remove the record, which leaves the objects, on each of those clusters: kubectl -n %s delete secret -l owner=helm,name=%s", u.Chart.Release, strings.Join(clusters, ", "), u.Chart.Namespace, u.Chart.Release)))
 		}
-		for _, pm := range p.Policies {
-			L = append(L, "echo "+q(fmt.Sprintf("ConfigMap %s/%s is no longer read; each variant reads its own copy. Delete it when you are ready: kubectl delete configmap -n %s %s", pm.Namespace, pm.Name, pm.Namespace, pm.Name)))
+		for _, key := range p.Policies {
+			ns, name, _ := strings.Cut(key, "/")
+			L = append(L, "echo "+q(fmt.Sprintf("ConfigMap %s is no longer read; ConfigHub holds its objects. Delete it when you are ready: kubectl delete configmap -n %s %s", key, ns, name)))
 		}
 	}
 	L = append(L, "", "echo",
-		`echo "Done. Each per-cluster profile reports Provisioned within a minute:"`,
+		`echo "Done. Each delivery profile reports Provisioned within a minute:"`,
 		`echo "  kubectl get clustersummaries -A"`)
 	return strings.Join(L, "\n") + "\n"
+}
+
+// dependsOnOf is the profiles a profile names in dependsOn.
+func dependsOnOf(source *yaml.Node) []string {
+	var out []string
+	if deps := mapGet(mapGet(source, "spec"), "dependsOn"); deps != nil {
+		for _, d := range deps.Content {
+			out = append(out, d.Value)
+		}
+	}
+	return out
+}
+
+// renderCommand is the cub helm template command a chart unit was rendered
+// with, reading its values from the file apply writes beside it. Rendering the
+// next version the same way is how a chart upgrade starts.
+func renderCommand(p Profile, u Unit) string {
+	values := ""
+	if u.Chart.Values != "" {
+		values = valuesFile(p, u)
+	}
+	return line(u.Chart.Command(values)...)
+}
+
+// valuesFile is where apply writes a chart's values.
+func valuesFile(p Profile, u Unit) string { return p.Name + "/" + u.Slug + ".values.yaml" }
+
+// departureCommands are the cub commands that make a class base's departures
+// in one unit: its fields in one set-yq, each object it adds or removes, then
+// the protection of its fields, so a later change at the root keeps them.
+func departureCommands(space, unit, desc string, ds []Departure) [][]string {
+	var cmds [][]string
+	var edits, shown, protect []string
+	for _, d := range ds {
+		switch {
+		case d.Adds:
+			cmds = append(cmds, []string{"cub", "function", "set", "--space", space, "--unit", unit, "--change-desc", desc + ": " + d.Shown, "--quiet", "--", "upsert-resource", d.Object, d.ResourceType, d.ResourceName})
+		case d.Deletes:
+			cmds = append(cmds, []string{"cub", "function", "set", "--space", space, "--unit", unit, "--change-desc", desc + ": " + d.Shown, "--quiet", "--", "delete-resource", d.ResourceType, d.ResourceName})
+		default:
+			edits = append(edits, d.Edit)
+			shown = append(shown, d.Shown)
+			if !d.Removed {
+				protect = append(protect, "--protect", d.Resource+":"+d.Path)
+			}
+		}
+	}
+	if len(edits) > 0 {
+		cmds = append([][]string{{"cub", "function", "set", "--space", space, "--unit", unit, "--change-desc", desc + ": " + strings.Join(shown, ", "), "--quiet", "--", "set-yq", strings.Join(edits, " | ")}}, cmds...)
+	}
+	if len(protect) > 0 {
+		cmds = append(cmds, append(append([]string{"cub", "unit", "set-protection", "--space", space, unit}, protect...), "--quiet"))
+	}
+	return cmds
 }
