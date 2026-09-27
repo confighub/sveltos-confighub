@@ -58,9 +58,11 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 		}
 		return os.WriteFile(path, data, mode)
 	}
-	sources := make([]any, len(plan.Profiles))
-	for i, p := range plan.Profiles {
-		sources[i] = p.Source
+	var sources []any
+	for _, p := range plan.Profiles {
+		for _, m := range p.Members {
+			sources = append(sources, m.Source)
+		}
 	}
 	profilesYAML, err := EncodeYAML(sources...)
 	if err != nil {

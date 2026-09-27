@@ -1,0 +1,119 @@
+# A slice of Meridian, the synthetic fleet in confighub/cub-demo
+# (scenarios/meridian.yaml), as a Sveltos user would run it today: the shared
+# eu-central clusters that Meridian places Kyverno on (test, uat, prod), named
+# the Meridian way (<region>-<class><n>), and one Kyverno profile per class
+# carrying Meridian's class knob for it, replicas 1, 2 and 3.
+#
+#   cub sveltos plan examples/meridian-slice/meridian-slice.yaml \
+#     --class-label class --stage-label class --stages test,uat,prod
+#
+# The three profiles become one component: a root base, a class base per
+# class holding its replicas, and one deployment per cluster.
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: mgmt
+  namespace: mgmt
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: eu-central-test1
+  namespace: projectsveltos
+  labels:
+    region: eu-central
+    class: test
+    department: shared
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: eu-central-uat1
+  namespace: projectsveltos
+  labels:
+    region: eu-central
+    class: uat
+    department: shared
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: eu-central-prod1
+  namespace: projectsveltos
+  labels:
+    region: eu-central
+    class: prod
+    department: shared
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: eu-central-prod2
+  namespace: projectsveltos
+  labels:
+    region: eu-central
+    class: prod
+    department: shared
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno-test
+spec:
+  clusterSelector:
+    matchLabels:
+      class: test
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://kyverno.github.io/kyverno/
+      repositoryName: kyverno
+      chartName: kyverno/kyverno
+      chartVersion: 3.8.1
+      releaseName: kyverno
+      releaseNamespace: kyverno
+      helmChartAction: Install
+      values: |
+        admissionController:
+          replicas: 1
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno-uat
+spec:
+  clusterSelector:
+    matchLabels:
+      class: uat
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://kyverno.github.io/kyverno/
+      repositoryName: kyverno
+      chartName: kyverno/kyverno
+      chartVersion: 3.8.1
+      releaseName: kyverno
+      releaseNamespace: kyverno
+      helmChartAction: Install
+      values: |
+        admissionController:
+          replicas: 2
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: kyverno-prod
+spec:
+  clusterSelector:
+    matchLabels:
+      class: prod
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://kyverno.github.io/kyverno/
+      repositoryName: kyverno
+      chartName: kyverno/kyverno
+      chartVersion: 3.8.1
+      releaseName: kyverno
+      releaseNamespace: kyverno
+      helmChartAction: Install
+      values: |
+        admissionController:
+          replicas: 3

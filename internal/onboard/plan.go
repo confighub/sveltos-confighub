@@ -48,6 +48,10 @@ type Options struct {
 	Stages     []string
 	Management string
 	Profiles   []string
+	// ClassLabel adds a level between the base and the clusters: one class base
+	// per value of this cluster label, each a variant of the base, and each
+	// cluster's variant a variant of its class base.
+	ClassLabel string
 }
 
 // Cluster is a SveltosCluster, or a Cluster API Cluster Sveltos addresses directly.
@@ -67,8 +71,10 @@ type ClusterRef struct {
 	Name       string `json:"name" yaml:"name"`
 }
 
-// Variant is one cluster's copy of a profile's base.
+// Variant is one cluster's copy of a profile's base, or of its class base.
 type Variant struct {
+	Upstream         string
+	Class            string
 	Cluster          string
 	ClusterKey       string
 	Stage            string
@@ -117,6 +123,26 @@ type Profile struct {
 	ReleaseOrder string
 	WorkflowText string
 	Policies     []PolicyMap
+	ClassLabel   string
+	Classes      []Class
+	Members      []Member
+}
+
+// Class is one class base: a variant of the root base that a class of
+// clusters shares, holding what that class differs in.
+type Class struct {
+	Value            string
+	Space            string
+	Member           string
+	Departures       []string
+	DepartExpression string
+}
+
+// Member is one input ClusterProfile a component was made from.
+type Member struct {
+	Name   string
+	Live   bool
+	Source *yaml.Node
 }
 
 // Skipped is a profile left as it is, with the reason.
@@ -502,6 +528,12 @@ func apiVersionOf(value map[string]any) string {
 	return profileAPIVersion
 }
 
+// profileDoc is one input ClusterProfile, as a node and as a value.
+type profileDoc struct {
+	node  *yaml.Node
+	value map[string]any
+}
+
 // PlanFleet shows what ConfigHub would hold for these objects.
 func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	prefix := Slug(opts.Prefix)
@@ -518,10 +550,6 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	// that first described the fleet.
 	var clusters []Cluster
 	clusterAt := map[string]int{}
-	type profileDoc struct {
-		node  *yaml.Node
-		value map[string]any
-	}
 	var allProfiles []profileDoc
 	profileAt := map[string]int{}
 	var namespaced []string
@@ -625,45 +653,107 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	sort.SliceStable(profiles, func(i, j int) bool {
 		return str(obj(profiles[i].value["metadata"])["name"]) < str(obj(profiles[j].value["metadata"])["name"])
 	})
+	if opts.ClassLabel != "" && contains(stageOrder, basesStage) {
+		plan.Problems = append(plan.Problems, fmt.Sprintf("with --class-label, the stage name %q is taken by the class bases; choose another stage name", basesStage))
+	}
 
+	// With a class label, profiles that each pin one class and are otherwise the
+	// same component (the same charts and policies, the same other selector
+	// terms) become one component with a class base per profile. Every other
+	// profile is a component of its own.
+	type family struct {
+		name    string
+		members []profileDoc
+		classes []string
+	}
+	var families []*family
+	familyAt := map[string]*family{}
 	for _, p := range profiles {
 		name := str(obj(p.value["metadata"])["name"])
 		spec := obj(p.value["spec"])
-		if len(list(spec["setRefs"])) > 0 {
-			plan.Skipped = append(plan.Skipped, Skipped{name, "selects through ClusterSets, which choose clusters at delivery time; list the clusters with clusterRefs or labels instead"})
+		class, rest := pinnedClass(obj(spec["clusterSelector"]), opts.ClassLabel)
+		if class == "" {
+			families = append(families, &family{name: name, members: []profileDoc{p}, classes: []string{""}})
 			continue
 		}
-		if madeByEvents(p.value) {
-			plan.Skipped = append(plan.Skipped, Skipped{name, "was made by Sveltos's event framework, which changes its scope when something happens; govern the EventTrigger that makes it instead"})
+		restJSON, _ := json.Marshal(rest)
+		key := string(restJSON) + "#" + deliveryIdentity(spec)
+		if f, ok := familyAt[key]; ok {
+			f.members = append(f.members, p)
+			f.classes = append(f.classes, class)
 			continue
 		}
-		selector, hasSelector := spec["clusterSelector"]
-		if hasSelector && !selectorGiven(obj(selector)) {
-			plan.Skipped = append(plan.Skipped, Skipped{name, "has an empty clusterSelector; say which clusters it is for with labels or clusterRefs"})
-			continue
+		f := &family{members: []profileDoc{p}, classes: []string{class}}
+		familyAt[key] = f
+		families = append(families, f)
+	}
+	memberFamily := map[string]string{}
+	for _, f := range families {
+		if f.name == "" {
+			f.name = familyName(f.members, f.classes)
 		}
-		res, err := resolveMatches(p.value, clusters)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
+		for _, m := range f.members {
+			memberFamily[str(obj(m.value["metadata"])["name"])] = f.name
 		}
-		verb := "names"
-		if res.fromStatus {
-			verb = "reaches"
-		}
-		for _, k := range res.missing {
-			plan.Problems = append(plan.Problems, fmt.Sprintf("%s %s %s, but no such cluster is in the input; export the SveltosClusters too", name, verb, stripKind(k)))
-		}
-		if len(res.differs) > 0 {
-			plan.Notes = append(plan.Notes, fmt.Sprintf("%s: Sveltos records it reaching a different set of clusters than its selector gives today (%s); the plan follows Sveltos's record.", name, strings.Join(res.differs, ", ")))
-		}
-		if len(res.matched) == 0 {
-			plan.Skipped = append(plan.Skipped, Skipped{name, "selects no cluster today, so there is nothing to govern yet"})
-			continue
-		}
+	}
+	sort.SliceStable(families, func(i, j int) bool { return families[i].name < families[j].name })
 
+	type resolvedMember struct {
+		doc   profileDoc
+		name  string
+		class string
+		res   resolution
+	}
+	for _, f := range families {
+		var members []resolvedMember
+		for i, p := range f.members {
+			name := str(obj(p.value["metadata"])["name"])
+			spec := obj(p.value["spec"])
+			if len(list(spec["setRefs"])) > 0 {
+				plan.Skipped = append(plan.Skipped, Skipped{name, "selects through ClusterSets, which choose clusters at delivery time; list the clusters with clusterRefs or labels instead"})
+				continue
+			}
+			if madeByEvents(p.value) {
+				plan.Skipped = append(plan.Skipped, Skipped{name, "was made by Sveltos's event framework, which changes its scope when something happens; govern the EventTrigger that makes it instead"})
+				continue
+			}
+			if selector, has := spec["clusterSelector"]; has && !selectorGiven(obj(selector)) {
+				plan.Skipped = append(plan.Skipped, Skipped{name, "has an empty clusterSelector; say which clusters it is for with labels or clusterRefs"})
+				continue
+			}
+			res, err := resolveMatches(p.value, clusters)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			verb := "names"
+			if res.fromStatus {
+				verb = "reaches"
+			}
+			for _, k := range res.missing {
+				plan.Problems = append(plan.Problems, fmt.Sprintf("%s %s %s, but no such cluster is in the input; export the SveltosClusters too", name, verb, stripKind(k)))
+			}
+			if len(res.differs) > 0 {
+				plan.Notes = append(plan.Notes, fmt.Sprintf("%s: Sveltos records it reaching a different set of clusters than its selector gives today (%s); the plan follows Sveltos's record.", name, strings.Join(res.differs, ", ")))
+			}
+			if len(res.matched) == 0 {
+				plan.Skipped = append(plan.Skipped, Skipped{name, "selects no cluster today, so there is nothing to govern yet"})
+				continue
+			}
+			members = append(members, resolvedMember{doc: p, name: name, class: f.classes[i], res: res})
+		}
+		if len(members) == 0 {
+			continue
+		}
+		sort.SliceStable(members, func(i, j int) bool { return members[i].class < members[j].class })
+		pinned := members[0].class != ""
+
+		name := f.name
+		root := members[0]
+		spec := obj(root.doc.value["spec"])
 		component := prefix + "-" + Slug(name)
 		baseSpace := component + "-base"
-		base := baseOf(p.node, p.value)
+		base := baseOf(root.doc.node, root.doc.value)
+		mapGet(mapGet(base, "metadata"), "name").Value = name + "-base"
 		var baseValue map[string]any
 		if err := base.Decode(&baseValue); err != nil {
 			return nil, err
@@ -677,72 +767,137 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 		for _, d := range list(spec["dependsOn"]) {
 			dependsOn = append(dependsOn, fmt.Sprint(d))
 		}
-		var variants []Variant
-		for _, c := range res.matched {
-			stage := defaultStage
-			if opts.StageLabel != "" {
-				value, has := c.Labels[opts.StageLabel]
-				if !has || !contains(stageOrder, value) {
-					shown := "missing"
-					if has {
-						shown = fmt.Sprintf("%q", value)
+		for _, m := range members[1:] {
+			ms := obj(m.doc.value["spec"])
+			if !reflectEqual(ms["dependsOn"], spec["dependsOn"]) || !reflectEqual(ms["policyRefs"], spec["policyRefs"]) {
+				plan.Problems = append(plan.Problems, fmt.Sprintf("%s and %s would be classes of one component but differ in dependsOn or policyRefs; onboard them without --class-label", root.name, m.name))
+			}
+		}
+
+		var classes []Class
+		classOf := map[string]*Class{}
+		addClass := func(value, member string, edits, paths []string) {
+			c := Class{Value: value, Space: component + "-class-" + Slug(value), Member: member, Departures: paths, DepartExpression: strings.Join(edits, " | ")}
+			classes = append(classes, c)
+		}
+		if opts.ClassLabel != "" {
+			if pinned {
+				for _, m := range members {
+					mb := baseOf(m.doc.node, m.doc.value)
+					mapGet(mapGet(mb, "metadata"), "name").Value = name + "-base"
+					var mv map[string]any
+					if err := mb.Decode(&mv); err != nil {
+						return nil, err
 					}
-					plan.Problems = append(plan.Problems, fmt.Sprintf("%s is selected by %s but its %s label is %s, which is not one of the stages (%s)", c.Name, name, opts.StageLabel, shown, strings.Join(stageOrder, ", ")))
-					continue
+					edits, paths := diffEdits(baseValue, mv, "")
+					addClass(m.class, m.name, edits, paths)
 				}
-				stage = value
+			} else {
+				seen := map[string]bool{}
+				var values []string
+				for _, c := range root.res.matched {
+					if v, ok := c.Labels[opts.ClassLabel]; ok && !seen[v] {
+						seen[v] = true
+						values = append(values, v)
+					}
+				}
+				sort.Strings(values)
+				for _, v := range values {
+					addClass(v, root.name, nil, nil)
+				}
 			}
-			target := targetOf(c)
-			ref := ClusterRef{APIVersion: clusterRefAPI[c.Kind], Kind: c.Kind, Namespace: c.Namespace, Name: c.Name}
-			v := Variant{
-				Cluster:     c.Name,
-				ClusterKey:  c.Key,
-				Stage:       stage,
-				Target:      target,
-				Space:       component + "-" + target,
-				ProfileName: name + "-" + target,
-				Departures:  []string{"metadata.name", "spec.clusterRefs"},
-				ClusterRef:  ref,
+			for i := range classes {
+				classOf[classes[i].Value] = &classes[i]
 			}
-			if len(dependsOn) > 0 {
-				var unmet []string
-				for _, dep := range dependsOn {
-					ok := false
-					if profileNames[dep] {
-						depRes, err := resolveMatches(profileByName[dep], clusters)
-						if err != nil {
-							return nil, err
+		}
+
+		var variants []Variant
+		for _, m := range members {
+			for _, c := range m.res.matched {
+				stage := defaultStage
+				if opts.StageLabel != "" {
+					value, has := c.Labels[opts.StageLabel]
+					if !has || !contains(stageOrder, value) {
+						shown := "missing"
+						if has {
+							shown = fmt.Sprintf("%q", value)
 						}
-						for _, m := range depRes.matched {
-							if m.Key == c.Key {
-								ok = true
+						plan.Problems = append(plan.Problems, fmt.Sprintf("%s is selected by %s but its %s label is %s, which is not one of the stages (%s)", c.Name, m.name, opts.StageLabel, shown, strings.Join(stageOrder, ", ")))
+						continue
+					}
+					stage = value
+				}
+				upstream, class := baseSpace, ""
+				if opts.ClassLabel != "" {
+					class = m.class
+					if class == "" {
+						value, has := c.Labels[opts.ClassLabel]
+						if !has {
+							plan.Problems = append(plan.Problems, fmt.Sprintf("%s is selected by %s but has no %s label, so it belongs to no class", c.Name, m.name, opts.ClassLabel))
+							continue
+						}
+						class = value
+					}
+					upstream = classOf[class].Space
+				}
+				target := targetOf(c)
+				ref := ClusterRef{APIVersion: clusterRefAPI[c.Kind], Kind: c.Kind, Namespace: c.Namespace, Name: c.Name}
+				v := Variant{
+					Upstream:    upstream,
+					Class:       class,
+					Cluster:     c.Name,
+					ClusterKey:  c.Key,
+					Stage:       stage,
+					Target:      target,
+					Space:       component + "-" + target,
+					ProfileName: name + "-" + target,
+					Departures:  []string{"metadata.name", "spec.clusterRefs"},
+					ClusterRef:  ref,
+				}
+				if len(dependsOn) > 0 {
+					var unmet []string
+					for _, dep := range dependsOn {
+						ok := false
+						if profileNames[dep] {
+							depRes, err := resolveMatches(profileByName[dep], clusters)
+							if err != nil {
+								return nil, err
+							}
+							for _, dm := range depRes.matched {
+								if dm.Key == c.Key {
+									ok = true
+								}
 							}
 						}
+						if !ok {
+							unmet = append(unmet, dep)
+						}
 					}
-					if !ok {
-						unmet = append(unmet, dep)
+					if len(unmet) > 0 {
+						plan.Problems = append(plan.Problems, fmt.Sprintf("%s depends on %s, which the input does not onboard for %s; onboard them together", m.name, strings.Join(unmet, ", "), c.Name))
 					}
+					for _, dep := range dependsOn {
+						depName := dep
+						if fam, ok := memberFamily[dep]; ok {
+							depName = fam
+						}
+						v.DependsOn = append(v.DependsOn, depName+"-"+target)
+					}
+					v.Departures = append(v.Departures, "spec.dependsOn")
 				}
-				if len(unmet) > 0 {
-					plan.Problems = append(plan.Problems, fmt.Sprintf("%s depends on %s, which the input does not onboard for %s; onboard them together", name, strings.Join(unmet, ", "), c.Name))
+				for _, pm := range policies {
+					v.Policies = append(v.Policies, VariantPolicy{
+						Unit:             pm.Unit,
+						Name:             pm.Name + "-" + target,
+						DepartExpression: fmt.Sprintf(".metadata.name = %s", jsonString(pm.Name+"-"+target)),
+					})
 				}
-				for _, dep := range dependsOn {
-					v.DependsOn = append(v.DependsOn, dep+"-"+target)
+				if len(policies) > 0 {
+					v.Departures = append(v.Departures, "spec.policyRefs")
 				}
-				v.Departures = append(v.Departures, "spec.dependsOn")
+				v.DepartExpression = departExpression(v, policies)
+				variants = append(variants, v)
 			}
-			for _, pm := range policies {
-				v.Policies = append(v.Policies, VariantPolicy{
-					Unit:             pm.Unit,
-					Name:             pm.Name + "-" + target,
-					DepartExpression: fmt.Sprintf(".metadata.name = %s", jsonString(pm.Name+"-"+target)),
-				})
-			}
-			if len(policies) > 0 {
-				v.Departures = append(v.Departures, "spec.policyRefs")
-			}
-			v.DepartExpression = departExpression(v, policies)
-			variants = append(variants, v)
 		}
 		sort.SliceStable(variants, func(i, j int) bool {
 			si, sj := indexOf(stageOrder, variants[i].Stage), indexOf(stageOrder, variants[j].Stage)
@@ -752,35 +907,59 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			return variants[i].Cluster < variants[j].Cluster
 		})
 		var stages []string
-		for _, s := range stageOrder {
+		for _, st := range stageOrder {
 			for _, v := range variants {
-				if v.Stage == s {
-					stages = append(stages, s)
+				if v.Stage == st {
+					stages = append(stages, st)
 					break
 				}
 			}
 		}
 		selectorText := ""
-		if hasSelector {
-			selectorText = describeSelector(obj(selector))
+		if pinned {
+			_, rest := pinnedClass(obj(spec["clusterSelector"]), opts.ClassLabel)
+			if selectorGiven(rest) {
+				selectorText = describeSelector(rest) + "; "
+			}
+			var values []string
+			for _, c := range classes {
+				values = append(values, c.Value)
+			}
+			selectorText += fmt.Sprintf("one class per %s: %s", opts.ClassLabel, strings.Join(values, ", "))
+		} else if sel, has := spec["clusterSelector"]; has {
+			selectorText = describeSelector(obj(sel))
+			if len(classes) > 0 {
+				selectorText += "; classes by " + opts.ClassLabel
+			}
 		}
-		_, hasUID := obj(p.value["metadata"])["uid"]
-		_, hasStatus := p.value["status"]
+		refs := 0
+		var memberList []Member
+		live := false
+		for _, m := range members {
+			refs += len(m.res.byRef)
+			_, hasUID := obj(m.doc.value["metadata"])["uid"]
+			_, hasStatus := m.doc.value["status"]
+			memberList = append(memberList, Member{Name: m.name, Live: hasUID || hasStatus, Source: sourceOf(m.doc.node, m.doc.value)})
+			live = live || hasUID || hasStatus
+		}
 		plan.Profiles = append(plan.Profiles, Profile{
 			Name:         name,
-			Live:         hasUID || hasStatus,
+			Live:         live,
 			Selector:     selectorText,
-			ClusterRefs:  len(res.byRef),
+			ClusterRefs:  refs,
 			Component:    component,
 			BaseSpace:    baseSpace,
 			Base:         base,
 			BaseValue:    baseValue,
-			Source:       sourceOf(p.node, p.value),
+			Source:       memberList[0].Source,
 			Stages:       stages,
 			Variants:     variants,
-			ReleaseOrder: releaseOrder(variants),
-			WorkflowText: workflowText(stages),
+			ReleaseOrder: releaseOrder(variants, classes),
+			WorkflowText: workflowText(stages, len(classes) > 0),
 			Policies:     policies,
+			ClassLabel:   opts.ClassLabel,
+			Classes:      classes,
+			Members:      memberList,
 		})
 	}
 
@@ -831,6 +1010,9 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	spaces := []string{plan.TargetsSpace}
 	for _, p := range plan.Profiles {
 		spaces = append(spaces, p.BaseSpace)
+		for _, c := range p.Classes {
+			spaces = append(spaces, c.Space)
+		}
 		for _, v := range p.Variants {
 			spaces = append(spaces, v.Space)
 		}
@@ -856,6 +1038,128 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 		}
 	}
 	return plan, nil
+}
+
+// basesStage is the first stage when a component has class bases: it carries a
+// change from the root base into every class base, which are never released.
+const basesStage = "bases"
+
+// The class a profile's selector pins, and its selector without that term.
+func pinnedClass(selector map[string]any, label string) (string, map[string]any) {
+	if label == "" || selector == nil {
+		return "", selector
+	}
+	rest := map[string]any{}
+	class := ""
+	if ml := obj(selector["matchLabels"]); len(ml) > 0 {
+		kept := map[string]any{}
+		for k, v := range ml {
+			if k == label {
+				class = fmt.Sprint(v)
+				continue
+			}
+			kept[k] = v
+		}
+		if len(kept) > 0 {
+			rest["matchLabels"] = kept
+		}
+	}
+	var exprs []any
+	for _, e := range list(selector["matchExpressions"]) {
+		expr := obj(e)
+		if str(expr["key"]) == label && str(expr["operator"]) == "In" && len(list(expr["values"])) == 1 && class == "" {
+			class = fmt.Sprint(list(expr["values"])[0])
+			continue
+		}
+		exprs = append(exprs, e)
+	}
+	if len(exprs) > 0 {
+		rest["matchExpressions"] = exprs
+	}
+	return class, rest
+}
+
+// What makes two profiles the same component in different classes: they
+// install the same charts and read the same policies, whatever the values.
+func deliveryIdentity(spec map[string]any) string {
+	var ids []string
+	for _, h := range list(spec["helmCharts"]) {
+		hc := obj(h)
+		ids = append(ids, "helm:"+str(hc["repositoryURL"])+"|"+str(hc["chartName"])+"|"+str(hc["releaseNamespace"])+"/"+str(hc["releaseName"]))
+	}
+	for _, r := range list(spec["policyRefs"]) {
+		ref := obj(r)
+		ids = append(ids, "policy:"+str(ref["kind"])+"|"+str(ref["namespace"])+"/"+str(ref["name"])+"|"+str(obj(ref["remoteURL"])["url"]))
+	}
+	for _, r := range list(spec["kustomizationRefs"]) {
+		ref := obj(r)
+		ids = append(ids, "kustomize:"+str(ref["kind"])+"|"+str(ref["namespace"])+"/"+str(ref["name"]))
+	}
+	return strings.Join(ids, ";")
+}
+
+var plainKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func yqPath(parent, key string) string {
+	if plainKey.MatchString(key) {
+		return parent + "." + key
+	}
+	return parent + "[" + jsonString(key) + "]"
+}
+
+// The set-yq edits that turn one document into another, leaf by leaf, and the
+// paths they touch. Lists of different lengths are replaced whole.
+func diffEdits(from, to any, path string) (edits, paths []string) {
+	fm, fok := from.(map[string]any)
+	tm, tok := to.(map[string]any)
+	if fok && tok {
+		keys := map[string]bool{}
+		for k := range fm {
+			keys[k] = true
+		}
+		for k := range tm {
+			keys[k] = true
+		}
+		var sorted []string
+		for k := range keys {
+			sorted = append(sorted, k)
+		}
+		sort.Strings(sorted)
+		for _, k := range sorted {
+			child := yqPath(path, k)
+			tv, inTo := tm[k]
+			if !inTo {
+				edits = append(edits, "del("+child+")")
+				paths = append(paths, strings.TrimPrefix(child, "."))
+				continue
+			}
+			e, p := diffEdits(fm[k], tv, child)
+			edits = append(edits, e...)
+			paths = append(paths, p...)
+		}
+		return edits, paths
+	}
+	fl, flok := from.([]any)
+	tl, tlok := to.([]any)
+	if flok && tlok && len(fl) == len(tl) {
+		for i := range fl {
+			e, p := diffEdits(fl[i], tl[i], fmt.Sprintf("%s[%d]", path, i))
+			edits = append(edits, e...)
+			paths = append(paths, p...)
+		}
+		return edits, paths
+	}
+	if reflectEqual(from, to) {
+		return nil, nil
+	}
+	value, _ := json.Marshal(to)
+	return []string{path + " = " + string(value)}, []string{strings.TrimPrefix(path, ".")}
+}
+
+func reflectEqual(a, b any) bool {
+	ja, _ := json.Marshal(a)
+	jb, _ := json.Marshal(b)
+	return string(ja) == string(jb)
 }
 
 func indexOf(list []string, value string) int {
@@ -955,14 +1259,45 @@ func configMapBase(d Doc) *yaml.Node {
 // it releases. Re-running with the same fleet finds it finished; a cluster that
 // joined makes a new set, and a new change order releases the newcomer while
 // every other variant has nothing new.
-func releaseOrder(variants []Variant) string {
-	spaces := make([]string, len(variants))
-	for i, v := range variants {
-		spaces[i] = v.Space
+func releaseOrder(variants []Variant, classes []Class) string {
+	var spaces []string
+	for _, c := range classes {
+		spaces = append(spaces, c.Space)
+	}
+	for _, v := range variants {
+		spaces = append(spaces, v.Space)
 	}
 	sort.Strings(spaces)
 	sum := sha256.Sum256([]byte(strings.Join(spaces, "\n")))
 	return "onboard-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// A component made of several input profiles is named for what they share: the
+// profile name without its class, or the chart's release name.
+func familyName(members []profileDoc, classes []string) string {
+	stripped := ""
+	for i, m := range members {
+		name := str(obj(m.value["metadata"])["name"])
+		s := strings.TrimSuffix(name, "-"+Slug(classes[i]))
+		if s == name {
+			s = strings.TrimSuffix(name, "-"+classes[i])
+		}
+		if i == 0 {
+			stripped = s
+		} else if s != stripped {
+			stripped = ""
+			break
+		}
+	}
+	if stripped != "" && len(members) > 0 && stripped != str(obj(members[0].value["metadata"])["name"]) {
+		return stripped
+	}
+	for _, h := range list(obj(members[0].value["spec"])["helmCharts"]) {
+		if r := str(obj(h)["releaseName"]); r != "" {
+			return r
+		}
+	}
+	return str(obj(members[0].value["metadata"])["name"])
 }
 
 // BootstrapProfile is one profile on the management cluster that fetches a
@@ -1013,7 +1348,7 @@ func bootstrapProfile(v Variant, management Cluster, secretName string) Bootstra
 // Every stage's releases wait for one approval of the change as it stands
 // there, and every stage after the first waits until the stage ahead has
 // released it.
-func workflowText(stages []string) string {
+func workflowText(stages []string, bases bool) string {
 	lines := []string{
 		"# The order a change moves through this profile's clusters, and what each",
 		"# stage waits for. ConfigHub enforces both on the server.",
@@ -1027,6 +1362,13 @@ func workflowText(stages []string) string {
 		"    Count: 1",
 		"    AllowAuthors: true",
 		"Stages:",
+	}
+	if bases {
+		lines = append(lines,
+			"  # carries a change from the root base into every class base;",
+			"  # class bases are never released, so nothing waits on this stage",
+			"  - Name: "+basesStage,
+			fmt.Sprintf("    WhereSpace: \"Labels.Stage = '%s'\"", basesStage))
 	}
 	for i, stage := range stages {
 		lines = append(lines, "  - Name: "+stage, fmt.Sprintf("    WhereSpace: \"Labels.Stage = '%s'\"", stage))
