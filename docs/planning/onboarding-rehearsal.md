@@ -97,6 +97,10 @@ after Kyverno's (`dependsOn`), and it has no classes:
 - **A link's `MergeEnableSubtraction` did not keep an unprotected override.** The base's value won both when set by a function and when set by a full update.
 - **`cub variant create` makes one upgrade Link per unit.** A chart split into one unit per template file, as `cub helm install` does, costs a Link per file per cluster (Kyverno: 57), so onboarding holds one unit per chart.
 - **`upsert-resource` takes a JSON ResourceList,** the shape `get-resources` returns, not YAML.
+- **handover.sh's comparison with what Helm installed, measured on a real Sveltos Helm release** (podinfo 6.7.1, installed by a live ClusterProfile on kind):
+  - Helm's record, read through the cluster's kubeconfig, compared the same with `cub helm template`'s rendering at the same values (two objects, and the release's Namespace as a note). This held once a null value counted as absent: `cub helm template` prints `resources.limits: null` where Helm's record leaves `limits` out.
+  - A replica count and a chart version changed were each named by field.
+  - The Sveltos kubeconfig named `mer-test1-control-plane`, which only the management cluster's network resolves. That is why `CLUSTER_KUBECONFIGS` exists, and why an unreachable cluster stops the handover rather than being skipped.
 - **`cub unit diff -o mutations` lists a change by object and field path,** and a whole new object as one entry. The GPU operator's upgrade is over 2,300 changed lines as text; as mutations it reads as 20 paths of the ClusterPolicy, 4 of the operator's Deployment, 12 of RBAC rules, 120 of CRD schema and 3 new CRDs.
 
 ## The first version, 2026-09-26

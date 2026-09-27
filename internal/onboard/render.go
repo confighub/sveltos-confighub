@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/confighub/sveltos-confighub/chartrender"
 	"gopkg.in/yaml.v3"
 )
 
@@ -509,6 +510,13 @@ func HandoverScript(plan *Plan) string {
 		`  now=$(k get configmap -n "$1" "$2" -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null) || fail "ConfigMap $1/$2 is gone; $again"`,
 		`  [ "$now" = "$3" ] || fail "ConfigMap $1/$2 has changed since you exported it, so ConfigHub holds other policies than the clusters run; $again"`,
 		`}`,
+		"# compare <cluster> <release> <space> <unit>: what ConfigHub released for the",
+		"# variant is what Helm installed on its cluster. cub sveltos reads Helm's record",
+		"# there through the cluster's kubeconfig Secret, as Sveltos reaches it.",
+		"# CLUSTER_KUBECONFIGS, if set, is a directory of <cluster>.kubeconfig files for",
+		"# clusters Sveltos reaches at an address only the management cluster can.",
+		`compare() { ${SVELTOS:-cub sveltos} compare ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} ${CLUSTER_KUBECONFIGS:+--kubeconfig-dir "$CLUSTER_KUBECONFIGS"} --cluster "$1" --release "$2" --space "$3" --unit "$4" || differs=1; }`,
+		`differs=`,
 		fmt.Sprintf(`k get secret -n %s %s >/dev/null 2>&1 || fail "the gateway Secret is missing: run apply.sh first"`, secretNamespace, gatewaySecretName(plan.TargetsSpace)),
 	}
 	L = append(L, "", "echo "+q("== what was planned is what is live"))
@@ -538,6 +546,36 @@ func HandoverScript(plan *Plan) string {
 				L = append(L, line("policies", str(meta["namespace"]), str(meta["name"]), rv))
 			}
 		}
+	}
+	var compares []string
+	for _, p := range live {
+		for _, m := range p.Members {
+			if !m.Live {
+				continue
+			}
+			first := true
+			for _, v := range p.Variants {
+				if v.Member != m.Name {
+					continue
+				}
+				for _, u := range p.Units {
+					if u.Chart == nil {
+						continue
+					}
+					if patches := mapGet(mapGet(m.Source, "spec"), "patches"); first && patches != nil && len(patches.Content) > 0 {
+						compares = append(compares, "# "+m.Name+" has patches, which Sveltos applied to what Helm installed and applies to what ConfigHub releases; a difference in a patched field is theirs.")
+					}
+					first = false
+					ref := v.ClusterRef
+					compares = append(compares, line("compare", ref.Kind+"/"+ref.Namespace+"/"+ref.Name, u.Chart.Namespace+"/"+u.Chart.Release, v.Space, u.Slug))
+				}
+			}
+		}
+	}
+	if len(compares) > 0 {
+		L = append(L, "", "echo "+q("== what ConfigHub releases is what Helm installed"))
+		L = append(L, compares...)
+		L = append(L, `[ -z "$differs" ] || [ "${ACCEPT_DIFFERENCES:-}" = yes ] || fail "what ConfigHub releases is not shown to be what Helm installed, as above, so the handover could change those clusters. Find out why first: a chart that branches on the cluster's Kubernetes version or APIs, or reads it with lookup, renders differently. To hand over anyway, and let the delivery profiles make any such changes: ACCEPT_DIFFERENCES=yes bash handover.sh"`)
 	}
 	type handover struct{ member Member }
 	var pending []handover
@@ -623,7 +661,7 @@ func renderCommand(p Profile, u Unit) string {
 	if u.Chart.Values != "" {
 		values = valuesFile(p, u)
 	}
-	return line(u.Chart.Command(values)...) + " | " + renderFilter
+	return line(u.Chart.Command(values)...) + " | " + chartrender.Filter
 }
 
 // valuesFile is where apply writes a chart's values.

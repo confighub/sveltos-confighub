@@ -3,6 +3,7 @@ package onboard
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confighub/sveltos-confighub/chartrender"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1045,7 +1047,7 @@ func TestKeptHooks(t *testing.T) {
 	if len(plan.Problems) > 0 || string(text) != string(rendering.Stdout) {
 		t.Errorf("a chart whose hooks are kept is held exactly as cub helm template printed it, TTL and all:\n%s\n%v", text, plan.Problems)
 	}
-	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml | "+renderFilter+"\n") {
+	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml | "+chartrender.Filter+"\n") {
 		t.Errorf("apply.sh records the plain render, so the next version is rendered the same way:\n%s", script)
 	}
 	dp, _ := EncodeYAML(plan.Management.ByProfile[0].Profiles[0])
@@ -1126,7 +1128,9 @@ case "$args" in
   *) echo "$args" >> "$LOG" ;;
 esac
 `
-	for name, text := range map[string]string{"kubectl": kubectl, "sleep": "#!/bin/sh\nexit 0\n"} {
+	// cub sveltos compare, reading Helm's record on the cluster, stands in too.
+	cub := "#!/usr/bin/env bash\n[ \"$1 $2\" = \"sveltos compare\" ] || exit 1\necho \"${COMPARED:-a p: ConfigHub releases what Helm installed}\"\n[ -z \"$COMPARED\" ]\n"
+	for name, text := range map[string]string{"kubectl": kubectl, "sleep": "#!/bin/sh\nexit 0\n", "cub": cub} {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(text), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -1139,19 +1143,22 @@ esac
 	for _, c := range []struct {
 		name, profile, clusters, policies string
 		stops                             string
+		compared, accept                  string
 	}{
-		{"as exported", "u-1 3 WithdrawPolicies", both, "41", ""},
-		{"a run that stopped after LeavePolicies", "u-1 4 LeavePolicies", both, "41", ""},
-		{"already handed over", "", both, "41", ""},
-		{"changed since the export", "u-1 4 WithdrawPolicies", both, "41", "p has changed since you exported it (generation 3, now 4)"},
-		{"deleted and made again", "u-2 1 WithdrawPolicies", both, "41", "p is not the profile you exported"},
-		{"reaching other clusters", "u-1 3 WithdrawPolicies", `SveltosCluster/projectsveltos/a\n`, "41", "p reaches SveltosCluster/projectsveltos/a now"},
-		{"policies edited", "u-1 3 WithdrawPolicies", both, "42", "ConfigMap default/policies has changed since you exported it"},
+		{"as exported", "u-1 3 WithdrawPolicies", both, "41", "", "", ""},
+		{"rendering other than Helm installed", "u-1 3 WithdrawPolicies", both, "41", "is not shown to be what Helm installed", "a p: ConfigHub releases something other than what Helm installed", ""},
+		{"differences accepted", "u-1 3 WithdrawPolicies", both, "41", "", "a p: ConfigHub releases something other than what Helm installed", "yes"},
+		{"a run that stopped after LeavePolicies", "u-1 4 LeavePolicies", both, "41", "", "", ""},
+		{"already handed over", "", both, "41", "", "", ""},
+		{"changed since the export", "u-1 4 WithdrawPolicies", both, "41", "p has changed since you exported it (generation 3, now 4)", "", ""},
+		{"deleted and made again", "u-2 1 WithdrawPolicies", both, "41", "p is not the profile you exported", "", ""},
+		{"reaching other clusters", "u-1 3 WithdrawPolicies", `SveltosCluster/projectsveltos/a\n`, "41", "p reaches SveltosCluster/projectsveltos/a now", "", ""},
+		{"policies edited", "u-1 3 WithdrawPolicies", both, "42", "ConfigMap default/policies has changed since you exported it", "", ""},
 	} {
 		log := filepath.Join(dir, c.name+".log")
 		cmd := exec.Command("bash", script)
 		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log,
-			"PROFILE_NOW="+c.profile, "CLUSTERS_NOW="+c.clusters, "POLICIES_NOW="+c.policies)
+			"PROFILE_NOW="+c.profile, "CLUSTERS_NOW="+c.clusters, "POLICIES_NOW="+c.policies, "COMPARED="+c.compared, "ACCEPT_DIFFERENCES="+c.accept, "SVELTOS=")
 		out, err := cmd.CombinedOutput()
 		changed, _ := os.ReadFile(log)
 		if c.stops == "" {
@@ -1239,10 +1246,10 @@ func TestStrayLinesAreDropped(t *testing.T) {
 			}
 			text, _ := u.Text()
 			rendering, _ := recorded(*u.Chart)
-			if strings.Contains(string(text), strayLine) {
+			if strings.Contains(string(text), chartrender.StrayLine) {
 				t.Errorf("%s: the base holds the stray line cub helm template prints", u.Slug)
 			}
-			want := strings.Count(string(rendering.Stdout), "\n"+strayLine+"\n")
+			want := strings.Count(string(rendering.Stdout), "\n"+chartrender.StrayLine+"\n")
 			if got := strings.Count(string(rendering.Stdout), "\n") - strings.Count(string(text), "\n"); got != want {
 				t.Errorf("%s: %d lines dropped, want the %d stray ones only", u.Slug, got, want)
 			}
@@ -1250,5 +1257,59 @@ func TestStrayLinesAreDropped(t *testing.T) {
 				t.Errorf("kyverno's recorded render has stray lines (%d), and all 71 objects stay (%d)", want, len(u.Objects))
 			}
 		}
+	}
+}
+
+// CompareLive reaches the cluster the way Sveltos does and compares Helm's
+// record there with what ConfigHub last released.
+func TestCompareLive(t *testing.T) {
+	record := func(manifest string) string {
+		var gz bytes.Buffer
+		w := gzip.NewWriter(&gz)
+		json.NewEncoder(w).Encode(map[string]string{"name": "p", "manifest": manifest})
+		w.Close()
+		return base64.StdEncoding.EncodeToString([]byte(base64.StdEncoding.EncodeToString(gz.Bytes())))
+	}
+	const installed = "---\n# Source: p/templates/d.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\nspec:\n  replicas: 2\n"
+	world := func(pullMode bool, releases string, stored string) Runner {
+		return func(name string, args ...string) ([]byte, error) {
+			all := name + " " + strings.Join(args, " ")
+			switch {
+			case strings.Contains(all, "get sveltoscluster -n projectsveltos a"):
+				if !strings.HasPrefix(all, "kubectl --context mgmt ") {
+					t.Errorf("the management cluster is read through its context: %s", all)
+				}
+				return []byte(fmt.Sprintf(`{"spec":{"kubeconfigKeyName":"","pullMode":%v}}`, pullMode)), nil
+			case strings.Contains(all, "get secret -n projectsveltos a-sveltos-kubeconfig"):
+				return []byte(`{"data":{"kubeconfig":"` + base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nkind: Config\n")) + `"}}`), nil
+			case strings.Contains(all, "--kubeconfig") && strings.Contains(all, "owner=helm,name=p,status=deployed"):
+				return []byte(releases), nil
+			case strings.Contains(all, "cub unit get --space s-a p"):
+				return []byte("3\n"), nil
+			case strings.Contains(all, "cub revision data --space s-a p 3"):
+				return []byte(stored), nil
+			}
+			t.Errorf("unexpected command: %s", all)
+			return nil, errors.New("unexpected")
+		}
+	}
+	check := LiveCheck{Context: "mgmt", ClusterKind: "SveltosCluster", ClusterNamespace: "projectsveltos", Cluster: "a", ReleaseNamespace: "p", Release: "p", Space: "s-a", Unit: "p"}
+	one := `{"items":[{"data":{"release":"` + record(installed) + `"}}]}`
+
+	r, err := CompareLive(world(false, one, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\n  namespace: p\nspec:\n  replicas: 2\n"), check)
+	if err != nil || r.Skipped != "" || r.Comparison.Same != 1 || len(r.Comparison.Differences) != 0 {
+		t.Errorf("the same Deployment compares the same: %+v %v", r, err)
+	}
+	r, err = CompareLive(world(false, one, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\nspec:\n  replicas: 1\n"), check)
+	if err != nil || len(r.Comparison.Differences) != 1 || !strings.Contains(r.Comparison.Differences[0], "spec.replicas is 2 on the cluster, 1 stored") {
+		t.Errorf("a different replica count is a difference: %+v %v", r, err)
+	}
+	r, err = CompareLive(world(false, `{"items":[]}`, ""), check)
+	if err != nil || !strings.Contains(r.Skipped, "no deployed record") {
+		t.Errorf("with no Helm record there is nothing to compare: %+v %v", r, err)
+	}
+	r, err = CompareLive(world(true, "", ""), check)
+	if err != nil || !strings.Contains(r.Skipped, "pull mode") {
+		t.Errorf("a cluster in pull mode cannot be read from the management cluster: %+v %v", r, err)
 	}
 }
