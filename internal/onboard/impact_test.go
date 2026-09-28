@@ -28,6 +28,8 @@ type impactBench struct {
 	ceilings map[string]int    // stage: ceiling
 	exempt   bool              // disallow-latest-tag exempts Kyverno's controllers
 	applies  int
+	leftover []string // policies the sandbox holds from an earlier run
+	deleted  []string
 }
 
 func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, []byte, error) {
@@ -65,7 +67,16 @@ func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, [
 	args = args[2:] // --kubeconfig <file>
 	all = name + " " + strings.Join(args, " ")
 	switch {
-	case strings.HasPrefix(all, "kubectl delete validatingadmissionpolicybindings"):
+	case all == "kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings -o json":
+		items := []map[string]any{}
+		for _, n := range b.leftover {
+			items = append(items, map[string]any{"kind": "ValidatingAdmissionPolicy", "metadata": map[string]any{"name": n}})
+		}
+		data, _ := json.Marshal(map[string]any{"items": items})
+		return data, nil, nil
+	case strings.HasPrefix(all, "kubectl delete validatingadmissionpolicy/"):
+		b.deleted = append(b.deleted, args[1])
+		b.leftover = nil
 		return nil, nil, nil
 	case all == "kubectl get --raw /apis/apps/v1":
 		return []byte(`{"resources":[{"name":"deployments","kind":"Deployment","namespaced":true},{"name":"deployments/scale","kind":"Scale","namespaced":true}]}`), nil, nil
@@ -217,10 +228,26 @@ spec:
 		t.Fatal(err)
 	}
 	row := rowFor(t, r, "eu-central-prod1")
-	if row.Verdict != Unknown || !strings.Contains(row.Why, "reads request.userInfo") {
-		t.Errorf("a policy that reads the requesting user cannot be judged from configuration: %+v", row)
+	if row.Verdict != Unknown || !strings.Contains(row.Why, "reads request.userInfo") || row.Current != "allowed" || row.Proposed != "unknown" {
+		t.Errorf("a candidate that reads the requesting user cannot be judged from configuration, while the policies in force can: %+v", row)
 	}
 	if _, err := Impact(b.exec, ImpactOptions{Component: "mer-kyverno", Policies: []string{policy("replica-limits.yaml")}}); err == nil {
 		t.Errorf("with neither a candidate nor --next there is nothing to compare")
+	}
+}
+
+// Policies are applied over what the sandbox holds; one neither set has is
+// removed, and the report says so, because a deleted policy can leave the
+// parameters the others read stale until the API server restarts.
+func TestImpactRemovesOnlyWhatNoSetHas(t *testing.T) {
+	b := newImpactBench(t)
+	b.leftover = []string{"an-old-policy"}
+	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Settle: 1,
+		Policies: []string{policy("replica-limits.yaml")}, Candidates: []string{policy("candidates/replica-limits-prod-2.yaml")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.deleted) != 1 || b.deleted[0] != "validatingadmissionpolicy/an-old-policy" || len(r.Removed) != 1 {
+		t.Errorf("only the leftover is deleted, and reported: deleted %v, reported %v", b.deleted, r.Removed)
 	}
 }

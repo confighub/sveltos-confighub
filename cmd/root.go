@@ -424,7 +424,7 @@ nothing releases a change this has not passed.
 	checkCmd.Flags().StringVar(&co.Worker, "worker", "", "the worker that runs the function, as <space>/<worker>")
 
 	var io_ onboard.ImpactOptions
-	var impactJSON bool
+	var impactJSON, impactAll bool
 	impactCmd := &cobra.Command{
 		Use:   "impact --sandbox-kubeconfig <file> --policy <file>... (--candidate <file>... | --next) [--component <c>] [--corpus <space>...]",
 		Short: "Preview what a policy change, or the next promotion, would do to each cluster, before anything ships",
@@ -465,17 +465,23 @@ the next create or update would be refused.`,
 			if len(r.Candidates) > 0 {
 				fmt.Fprintf(w, "candidate:         %s\n", strings.Join(r.Candidates, ", "))
 			}
+			if len(r.Removed) > 0 {
+				fmt.Fprintf(w, "note: removed %s from the sandbox. A deleted policy can leave the parameters other policies read stale until the sandbox's API server restarts; if a result looks wrong, restart it and run again.\n", strings.Join(r.Removed, ", "))
+			}
 			fmt.Fprintln(w)
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "TARGET\tSTAGE\tCONFIG\tOBJECT\tNOW\tTHEN\tVERDICT\tWHY")
 			counts := map[string]int{}
 			for _, row := range r.Rows {
+				counts[row.Verdict]++
+				if row.Verdict == onboard.Unchanged && !impactAll {
+					continue
+				}
 				config := row.Config
 				if row.Candidate != "" {
 					config += " -> " + row.Candidate
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Target, row.Stage, config, row.Object, row.Current, row.Proposed, row.Verdict, row.Why)
-				counts[row.Verdict]++
 			}
 			tw.Flush()
 			fmt.Fprintf(w, "\n%d newly denied, %d newly allowed, %d unchanged, %d unknown\n", counts[onboard.NewlyDenied], counts[onboard.NewlyAllowed], counts[onboard.Unchanged], counts[onboard.Unknown])
@@ -492,6 +498,7 @@ the next create or update would be refused.`,
 	impactCmd.Flags().StringArrayVar(&io_.Corpus, "corpus", nil, "a Space whose revisions recorded as failing a policy are evaluated too")
 	impactCmd.Flags().DurationVar(&io_.Settle, "settle", 5*time.Second, "how long to give the sandbox after its policies change")
 	impactCmd.Flags().BoolVar(&impactJSON, "json", false, "print the results as JSON, for an assistant to explain")
+	impactCmd.Flags().BoolVar(&impactAll, "all", false, "list unchanged objects too")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",

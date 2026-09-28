@@ -73,9 +73,13 @@ type ImpactRow struct {
 
 // ImpactReport is the whole preview.
 type ImpactReport struct {
-	Policies   []string    `json:"policies"`
-	Candidates []string    `json:"candidatePolicies,omitempty"`
-	Rows       []ImpactRow `json:"rows"`
+	Policies   []string `json:"policies"`
+	Candidates []string `json:"candidatePolicies,omitempty"`
+	// Removed are policies the sandbox held that neither set has. Their
+	// removal can leave the parameters other policies read stale until the
+	// sandbox's API server restarts.
+	Removed []string    `json:"removedFromSandbox,omitempty"`
+	Rows    []ImpactRow `json:"rows"`
 }
 
 const (
@@ -134,7 +138,8 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := sandbox{x: x, o: o}
+	var removed []string
+	s := sandbox{x: x, o: o, removed: &removed}
 	kinds, err := s.discover(append(append([]Doc{}, current...), candidate...), targets)
 	if err != nil {
 		return nil, err
@@ -150,7 +155,7 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 		return nil, err
 	}
 
-	report := &ImpactReport{Policies: o.Policies, Candidates: o.Candidates}
+	report := &ImpactReport{Policies: o.Policies, Candidates: o.Candidates, Removed: removed}
 	for _, t := range targets {
 		for key, b := range before[t.name] {
 			a, ok := after[t.name][key]
@@ -436,8 +441,9 @@ func revisionDocs(x Exec, space, unit string, rev int) ([]Doc, error) {
 
 // sandbox is the disposable API server the verdicts come from.
 type sandbox struct {
-	x Exec
-	o ImpactOptions
+	x       Exec
+	o       ImpactOptions
+	removed *[]string
 }
 
 func (s sandbox) kubectl(stdin []byte, args ...string) ([]byte, []byte, error) {
@@ -502,9 +508,6 @@ func (s sandbox) discover(policies []Doc, targets []target) (map[string]kindInfo
 // evaluate puts one set of policies in the sandbox, then submits every object
 // a policy matches, from each target, with a server-side dry run.
 func (s sandbox) evaluate(policies []Doc, targets []target, kinds map[string]kindInfo, rules []resourceRule, next bool) (map[string]map[string]admission, error) {
-	if _, errs, err := s.kubectl(nil, "delete", "validatingadmissionpolicybindings,validatingadmissionpolicies", "--all", "--wait=true"); err != nil {
-		return nil, fmt.Errorf("clearing the sandbox: %s", strings.TrimSpace(string(errs)))
-	}
 	namespaces := map[string]bool{}
 	for _, d := range policies {
 		if ns := str(obj(d.Value["metadata"])["namespace"]); ns != "" {
@@ -520,11 +523,41 @@ func (s sandbox) evaluate(policies []Doc, targets []target, kinds map[string]kin
 	for _, d := range policies {
 		docs = append(docs, d.Value)
 	}
+	// The policies are applied over what the sandbox holds, never deleted and
+	// made again: measured on Kubernetes v1.35, once a ValidatingAdmissionPolicy
+	// is deleted, the parameters its successors read stay as they were until the
+	// API server restarts. So only a policy the set does not have is removed, and
+	// the report says so.
 	if len(docs) > 0 {
 		data, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "List", "items": docs})
 		if _, errs, err := s.kubectl(data, "apply", "-f", "-"); err != nil {
 			return nil, fmt.Errorf("putting the policies in the sandbox: %s", strings.TrimSpace(string(errs)))
 		}
+	}
+	keep := map[string]bool{}
+	for _, d := range policies {
+		keep[strings.ToLower(str(d.Value["kind"]))+"/"+str(obj(d.Value["metadata"])["name"])] = true
+	}
+	held, _, err := s.kubectl(nil, "get", "validatingadmissionpolicies,validatingadmissionpolicybindings", "-o", "json")
+	if err != nil {
+		return nil, fmt.Errorf("reading the sandbox's policies: %w", err)
+	}
+	var heldList struct {
+		Items []struct {
+			Kind     string
+			Metadata struct{ Name string }
+		}
+	}
+	_ = json.Unmarshal(held, &heldList)
+	for _, item := range heldList.Items {
+		key := strings.ToLower(item.Kind) + "/" + item.Metadata.Name
+		if keep[key] {
+			continue
+		}
+		if _, errs, err := s.kubectl(nil, "delete", key); err != nil {
+			return nil, fmt.Errorf("removing %s from the sandbox: %s", key, strings.TrimSpace(string(errs)))
+		}
+		*s.removed = append(*s.removed, key)
 	}
 	if err := s.settle(); err != nil {
 		return nil, err
@@ -556,12 +589,15 @@ func (s sandbox) evaluate(policies []Doc, targets []target, kinds map[string]kin
 			if g, ver, ok := strings.Cut(apiVersion, "/"); ok {
 				group, version = g, ver
 			}
-			matched := matching(rules, group, version, info.resource)
-			if len(matched) == 0 {
+			// Every object either set's policies match is submitted in both
+			// evaluations, so the two can be compared; whether a verdict
+			// needs what configuration does not hold depends on this set's
+			// policies alone.
+			if len(matching(rules, group, version, info.resource)) == 0 {
 				continue
 			}
 			key := kind + " " + str(obj(v["metadata"])["name"])
-			for _, r := range matched {
+			for _, r := range matching(policyRules(policies), group, version, info.resource) {
 				if r.contextBound != "" {
 					out[t.name][key] = admission{"unknown", fmt.Sprintf("policy %s reads %s, which the configuration does not hold", r.policy, r.contextBound)}
 				}

@@ -68,6 +68,7 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 | `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. |
 | `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
 | `cub sveltos check` | Runs a policy check, such as Kyverno, on a change in one stage, and records the verdict in ConfigHub. Each stage's release can require a Pass. |
+| `cub sveltos impact` | Previews what a policy change, or a change's next promotion, would do to each cluster, before anything ships. Unreleased. |
 | `cub sveltos version` | Prints the version. The current release is **v0.7.0**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
@@ -218,6 +219,13 @@ On the Meridian kind fleet, a change that put Kyverno's cleanup controller on
 ```text
 unable to promote to stage 'test', Variant 'class-test' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server)
 ```
+
+Before a change or a policy ships, `cub sveltos impact` previews it: each
+cluster's configuration is evaluated under the policies in force and under the
+candidate, in a disposable API server, and each object comes out newly denied,
+newly allowed, unchanged or unknown. On the Meridian slice, lowering prod's
+replica ceiling to 2 was newly denied on all four prod clusters, before
+anything changed.
 
 A policy trigger alone can let a change through while its checker is away.
 In our test that happened at once, not after the six hours ConfigHub
