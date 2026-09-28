@@ -15,6 +15,33 @@ that joins for a person to approve.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## Unreleased
+
+**Check every change against your policies.** Three additions, all measured
+on the Meridian kind fleet with a Kyverno checker. See [Check every change
+against your policies](user/policy-checks.md).
+- **`--policy <space>/<filter>`** gives every base, class base and variant a
+  trigger Filter, such as a Kyverno check. It also adds `Validated` to each
+  stage that has a stage ahead. A change that fails is not promoted past its
+  stage, and not released.
+- **`--require <type>`** makes each stage's release wait for a Pass of that
+  attestation type, as well as the approval. This uses ConfigHub's
+  attestation requirements, and it never lets an unchecked change through.
+- **`cub sveltos check`** runs a validating function, such as
+  `vet-kyverno-server`, on exactly the revisions a change order marks in a
+  stage. It records a Pass, or a rejection that holds the release.
+
+`apply.sh` adds these gates to a workflow made before them, and keeps gates
+and stage settings made in ConfigHub since. A release refused for
+ValidationErrors is asked for again twice, because a check may still be
+running; then the script stops.
+
+**Measured, and worth knowing:** with the checker's worker stopped, ConfigHub
+still showed it `Ready` 25 minutes later, and never started its six-hour
+fail-open clock. A change made in that window was never checked and was
+released. Both gates read a missing result as a pass. A required check is the
+gate to rely on.
+
 ## 0.6.0, 2026-09-28
 
 **Live status from Sveltos: `cub sveltos status`** (#33). It tells ConfigHub

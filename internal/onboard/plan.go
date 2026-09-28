@@ -56,6 +56,9 @@ type Options struct {
 	// as plain objects; "all" keeps every chart's. Otherwise hooks are left
 	// out, as cub helm leaves them out.
 	IncludeHooks []string
+	// Gates are what each stage waits for beyond its approval: a policy's
+	// Triggers, and attestations.
+	Gates Gates
 	// Render renders a chart; CubHelm when nil.
 	Render Renderer
 }
@@ -193,6 +196,8 @@ type Plan struct {
 	Live         bool
 	Notes        []string
 	Problems     []string
+	// Gates are what each stage waits for beyond its approval.
+	Gates Gates
 }
 
 var slugInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -554,7 +559,8 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	if opts.StageLabel != "" {
 		stageOrder = opts.Stages
 	}
-	plan := &Plan{Prefix: prefix, StageLabel: opts.StageLabel, StageOrder: stageOrder, TargetsSpace: prefix + "-targets"}
+	plan := &Plan{Prefix: prefix, StageLabel: opts.StageLabel, StageOrder: stageOrder, TargetsSpace: prefix + "-targets", Gates: opts.Gates}
+	plan.Problems = append(plan.Problems, opts.Gates.problems()...)
 	render := opts.Render
 	if render == nil {
 		render = CubHelm
@@ -957,7 +963,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			Stages:       stages,
 			Variants:     variants,
 			ReleaseOrder: releaseOrder(variants, classes),
-			WorkflowText: workflowText(stages, len(classes) > 0),
+			WorkflowText: workflowText(stages, len(classes) > 0, opts.Gates),
 			Policies:     policies,
 			ClassLabel:   opts.ClassLabel,
 			Classes:      classes,
@@ -1191,39 +1197,4 @@ func familyName(members []profileDoc, classes []string) string {
 		}
 	}
 	return str(obj(members[0].value["metadata"])["name"])
-}
-
-// Every stage's releases wait for one approval of the change as it stands
-// there, and every stage after the first waits until the stage ahead has
-// released it.
-func workflowText(stages []string, bases bool) string {
-	lines := []string{
-		"# The order a change moves through this profile's clusters, and what each",
-		"# stage waits for. ConfigHub enforces both on the server.",
-		"#",
-		"# AllowAuthors: true lets the person who promoted a change also approve it,",
-		"# which one person trying this needs. Set it to false once a second person",
-		"# approves: ConfigHub then refuses an approval from the change's author.",
-		"AttestationPrerequisites:",
-		"  - Name: approval",
-		"    Type: Approval",
-		"    Count: 1",
-		"    AllowAuthors: true",
-		"Stages:",
-	}
-	if bases {
-		lines = append(lines,
-			"  # carries a change from the root base into every class base;",
-			"  # class bases are never released, so nothing waits on this stage",
-			"  - Name: "+basesStage,
-			fmt.Sprintf("    WhereSpace: \"Labels.Stage = '%s'\"", basesStage))
-	}
-	for i, stage := range stages {
-		lines = append(lines, "  - Name: "+stage, fmt.Sprintf("    WhereSpace: \"Labels.Stage = '%s'\"", stage))
-		if i > 0 {
-			lines = append(lines, "    Prerequisites:", "      - Released")
-		}
-		lines = append(lines, "    ReleasePrerequisites:", "      - approval")
-	}
-	return strings.Join(lines, "\n") + "\n"
 }

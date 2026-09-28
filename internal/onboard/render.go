@@ -1,7 +1,6 @@
 package onboard
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -211,30 +210,6 @@ func line(words ...string) string {
 	return strings.Join(quoted, " ")
 }
 
-type stageJSON struct {
-	Name                 string   `json:"Name"`
-	WhereSpace           string   `json:"WhereSpace"`
-	Prerequisites        []string `json:"Prerequisites,omitempty"`
-	ReleasePrerequisites []string `json:"ReleasePrerequisites,omitempty"`
-}
-
-// The workflow's stages as a patch, the same stages workflowText writes.
-func stagesJSON(stages []string, bases bool) string {
-	var out []stageJSON
-	if bases {
-		out = append(out, stageJSON{Name: basesStage, WhereSpace: fmt.Sprintf("Labels.Stage = '%s'", basesStage)})
-	}
-	for i, s := range stages {
-		st := stageJSON{Name: s, WhereSpace: fmt.Sprintf("Labels.Stage = '%s'", s), ReleasePrerequisites: []string{"approval"}}
-		if i > 0 {
-			st.Prerequisites = []string{"Released"}
-		}
-		out = append(out, st)
-	}
-	data, _ := json.Marshal(map[string]any{"Stages": out})
-	return string(data)
-}
-
 // ApplyScript is the one script apply writes: cub and kubectl steps to read,
 // then run, and safe to run again.
 func ApplyScript(plan *Plan) string {
@@ -296,6 +271,21 @@ func ApplyScript(plan *Plan) string {
 		"# A cluster that joins in a stage the workflow does not have yet adds that",
 		"# stage. Only the stages are patched, so approval settings made since stay.",
 		`stages_are() { [ "$(cub changeworkflow get --space "$1" "$2" -o 'jq=[.ChangeWorkflow.Stages[].Name] | join(",")')" = "$3" ]; }`,
+	}
+	if plan.Gates.Policy != "" || len(plan.Gates.Require) > 0 {
+		L = append(L,
+			"# gated <space> <workflow> <expression>: the workflow already has every gate",
+			"# the plan adds. When it lacks one, the gate is added beside what is there,",
+			"# so a gate or stage setting made in ConfigHub since stays.",
+			`gated() { [ "$(cub changeworkflow get --space "$1" "$2" -o "jq=$3")" = true ]; }`)
+	}
+	if plan.Gates.Policy != "" {
+		L = append(L,
+			"# policed <space> <filter>: the Space runs the Triggers the policy filter",
+			"# selects, such as a Kyverno check. A Space given a filter since keeps it.",
+			`policed() { [ -n "$(cub space get "$1" -o 'jq=.Space.TriggerFilterID // empty')" ] || cub space update --patch "$1" --trigger-filter "$2" --where-trigger=- --refresh-triggers --quiet; }`)
+	}
+	L = append(L,
 		"# A promotion takes each unit's change as one diff (--squash). Walked",
 		"# revision by revision, it replays the functions a change was made with,",
 		"# and a function run at the root then reaches a class's clusters although",
@@ -308,19 +298,30 @@ func ApplyScript(plan *Plan) string {
 		"  for i in 1 2 3; do",
 		`    out=$(cub variant promote --change-order "$1" --target-stage "$2" --squash --quiet 2>&1 >/dev/null) && return 0`,
 		`    case "$out" in *"nothing left to promote"*) return 0 ;; esac`,
-		"    sleep 15",
+		`    sleep "${RETRY_SECONDS:-15}"`,
 		"  done",
 		`  echo "$out" >&2; return 1`,
 		"}",
+		"# A release ConfigHub refuses for outstanding ValidationErrors may only be",
+		"# waiting for a check still running, so it is asked again; one refused",
+		"# three times is held by the policy, and the script stops.",
 		"publish() {",
-		"  local out",
+		"  local out i reason kind",
 		`  holds "$1" "$3" || return 1`,
-		`  out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0`,
-		`  case "$out" in`,
-		`    *"no changes were made since :latest bundle"*) echo "$1 already released" ;;`,
-		`    *"requires approval"*) [ -n "${PROPOSE_ONLY:-}" ] || { echo "$out" >&2; return 1; }; echo "$1 waits for approval"; waiting=$4 ;;`,
-		`    *) echo "$out" >&2; return 1 ;;`,
-		"  esac",
+		"  for i in 1 2 3; do",
+		`    out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0`,
+		`    case "$out" in`,
+		`      *"no changes were made since :latest bundle"*) echo "$1 already released"; return 0 ;;`,
+		`      *"requires "*"attestation(s)"*)`,
+		`        [ -n "${PROPOSE_ONLY:-}" ] || { echo "$out" >&2; return 1; }`,
+		`        reason=${out##*requires }; waitfor=${reason%%:*}; waiting=$4`,
+		`        if [ "$waitfor" = approval ]; then echo "$1 waits for approval"; else kind=${reason#*: }; kind=${kind#* }; echo "$1 waits for $waitfor: cub attestation create --space $1 --type ${kind%% *} --change-order $2"; fi`,
+		"        return 0 ;;",
+		`      *"outstanding ValidationErrors"*) sleep "${RETRY_SECONDS:-15}" ;;`,
+		`      *) echo "$out" >&2; return 1 ;;`,
+		"    esac",
+		"  done",
+		`  echo "$1 is held by its policy checks, so it is not released: $out" >&2; return 1`,
 		"}",
 		"# PROPOSE_ONLY=1 approves nothing. Each stage is promoted, and a release",
 		"# waits in ConfigHub until a person approves it; run the script again to",
@@ -328,7 +329,7 @@ func ApplyScript(plan *Plan) string {
 		"# no approval, so a joining cluster waits in its own stage only.",
 		"# cub sveltos watch runs the script this way when a cluster joins.",
 		`approve() { [ -n "${PROPOSE_ONLY:-}" ] || cub variant approve --change-order "$1" --stage "$2" --quiet; }`,
-		`awaits() { [ -z "$waiting" ] || echo "$1 waits for approval in stage $waiting: cub variant approve --change-order $2 --stage $waiting"; }`,
+		`awaits() { [ -z "$waiting" ] || [ "$waitfor" != approval ] || echo "$1 waits for approval in stage $waiting: cub variant approve --change-order $2 --stage $waiting"; }`,
 		"# deliver <profile> <variant Spaces>: apply the profile's delivery profiles.",
 		"# With PROPOSE_ONLY, only those whose variant has a release; the others",
 		"# follow on the run after their release is approved.",
@@ -357,7 +358,7 @@ func ApplyScript(plan *Plan) string {
 		"# A server-hosted worker has no process behind it and no role in the",
 		"# organization; it holds the Targets and is the credential Sveltos reads with.",
 		line("cub", "worker", "create", "--space", plan.TargetsSpace, workerSlug, "--is-server-worker", "--org-role", "none", "--allow-exists", "--quiet"),
-	}
+	)
 	for _, t := range plan.Targets {
 		L = append(L, line("cub", "target", "create", t.Target, "{}", workerSlug, "--space", plan.TargetsSpace, "--provider", "OCI", "--toolchain", "Any", "--allow-exists", "--quiet"))
 	}
@@ -374,10 +375,19 @@ func ApplyScript(plan *Plan) string {
 				line("cub", "unit", "create", "--space", p.BaseSpace, u.Slug, p.Name+"/"+u.Slug+".yaml", "--change-desc", fmt.Sprintf("Onboard %s: %s", p.Name, u.Source), "--allow-exists", "--quiet"),
 				line("stored", p.BaseSpace, u.Slug, p.Name+"/"+u.Slug+".yaml"))
 		}
+		if plan.Gates.Policy != "" {
+			L = append(L, line("policed", p.BaseSpace, plan.Gates.Policy))
+		}
 		L = append(L,
 			line("cub", "changeworkflow", "create", "--space", p.BaseSpace, workflowSlug, "--filename", p.Name+"/change-workflow.yaml", "--allow-exists", "--quiet"),
 			fmt.Sprintf("stages_are %s %s %s || %s | %s", p.BaseSpace, workflowSlug, strings.Join(workflowStages(p), ","),
-				line("echo", stagesJSON(p.Stages, len(p.Classes) > 0)), line("cub", "changeworkflow", "update", "--patch", "--space", p.BaseSpace, workflowSlug, "--from-stdin", "--quiet")))
+				line("echo", stagesJSON(p.Stages, len(p.Classes) > 0, plan.Gates)), line("cub", "changeworkflow", "update", "--patch", "--space", p.BaseSpace, workflowSlug, "--from-stdin", "--quiet")))
+		if plan.Gates.Policy != "" || len(plan.Gates.Require) > 0 {
+			has, merged := gatesJQ(p.Stages, len(p.Classes) > 0, plan.Gates)
+			L = append(L, fmt.Sprintf("gated %s %s %s || %s | %s", p.BaseSpace, workflowSlug, q(has),
+				line("cub", "changeworkflow", "get", "--space", p.BaseSpace, workflowSlug, "-o", "jq="+merged),
+				line("cub", "changeworkflow", "update", "--patch", "--space", p.BaseSpace, workflowSlug, "--from-stdin", "--quiet")))
+		}
 	}
 	L = append(L, "", `step "3/6 One variant per cluster, each holding what its base holds"`)
 	for _, p := range plan.Profiles {
@@ -403,11 +413,17 @@ func ApplyScript(plan *Plan) string {
 				}
 				L = append(L, "fi")
 			}
+			if plan.Gates.Policy != "" {
+				L = append(L, line("policed", c.Space, plan.Gates.Policy))
+			}
 		}
 		for _, v := range p.Variants {
 			L = append(L,
 				line("cub", "variant", "create", v.Cluster, v.Upstream, "--stage", v.Stage, "--space-pattern", "template:"+v.Space, "--target", plan.TargetsSpace+"/"+v.Target, "--space-label", "Role=deployment", "--space-label", "Cluster="+v.Cluster, "--allow-exists", "--quiet"),
 				line("holds", v.Space, fmt.Sprint(len(p.Units))))
+			if plan.Gates.Policy != "" {
+				L = append(L, line("policed", v.Space, plan.Gates.Policy))
+			}
 		}
 	}
 	if m := plan.Management; m != nil {
@@ -436,7 +452,7 @@ func ApplyScript(plan *Plan) string {
 			"  echo "+q(p.Name+": every variant in this plan is released"),
 			"else",
 			"  "+line("cub", "changeorder", "create", "--space", p.BaseSpace, p.ReleaseOrder, "--change-workflow", p.BaseSpace+"/"+workflowSlug, "--description", description, "--allow-exists", "--quiet"),
-			"  waiting=")
+			"  waiting= waitfor=")
 		if len(p.Classes) > 0 {
 			L = append(L, "  "+line("promote", order, basesStage))
 		}

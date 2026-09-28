@@ -34,6 +34,8 @@ type planFlags struct {
 	profiles     string
 	classLabel   string
 	includeHooks string
+	policy       string
+	require      string
 }
 
 func (f *planFlags) register(c *cobra.Command) {
@@ -44,6 +46,8 @@ func (f *planFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.profiles, "profiles", "", "onboard only these profiles, comma-separated")
 	c.Flags().StringVar(&f.classLabel, "class-label", "", "add a class base per value of this cluster label between each base and its clusters")
 	c.Flags().StringVar(&f.includeHooks, "include-hooks", "", "keep these charts' Helm hook manifests as plain objects, comma-separated release names or all")
+	c.Flags().StringVar(&f.policy, "policy", "", "a trigger Filter, <space>/<filter>, whose Triggers every base and variant runs; a change that fails one is not promoted or released")
+	c.Flags().StringVar(&f.require, "require", "", "attestation types each stage's release also waits for, comma-separated, such as PolicyCheck")
 }
 
 func split(s string) []string {
@@ -65,6 +69,7 @@ func (f *planFlags) options() onboard.Options {
 		Profiles:     split(f.profiles),
 		ClassLabel:   f.classLabel,
 		IncludeHooks: split(f.includeHooks),
+		Gates:        onboard.Gates{Policy: f.policy, Require: split(f.require)},
 	}
 }
 
@@ -124,6 +129,10 @@ func newRoot() *cobra.Command {
 
   watch  proposes variants for each cluster that joins, and releases them
          once a person approves them in ConfigHub.
+
+  check  runs a policy check, such as Kyverno, on a change as it stands in a
+         stage, and records the verdict as an attestation its release waits
+         for (plan with --require PolicyCheck).
 
 Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboard-your-sveltos-fleet.md`,
 		SilenceUsage:  true,
@@ -363,6 +372,57 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 	watchCmd.Flags().DurationVar(&every, "interval", time.Minute, "how often to look")
 	watchCmd.Flags().BoolVar(&once, "once", false, "look once, and stop")
 
+	var co onboard.CheckOptions
+	checkCmd := &cobra.Command{
+		Use:   "check --change-order <base>/<order> --stage <stage> [--worker <space>/<worker>] <function> [arguments...]",
+		Short: "Check a change as it stands in a stage, and record the verdict as an attestation its release waits for",
+		Long: `Check a change as it stands in a stage, and record the verdict as an attestation.
+
+For each variant the change order has reached in the stage, it runs a
+validating function on exactly the revisions the order marks there, and records
+the verdict as an attestation of --type (PolicyCheck by default): a Pass, or a
+rejection that holds the release until it is revoked.
+
+Plan with --require PolicyCheck and each stage's release waits for a Pass. Unlike
+a Trigger, which ConfigHub stops running if its worker is gone long enough,
+nothing releases a change this has not passed.
+
+  cub sveltos check --change-order sveltos-kyverno-base/owner-label --stage prod \
+    --worker platform-policies/kyverno-checker vet-kyverno-server`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			co.Function = args
+			results, err := onboard.Check(onboard.Run, co)
+			w := c.OutOrStdout()
+			failed := false
+			for _, r := range results {
+				switch {
+				case r.Skipped != "":
+					fmt.Fprintf(w, "%s: not checked: %s\n", r.Space, r.Skipped)
+				case r.Passed:
+					fmt.Fprintf(w, "%s: passed %s; recorded a Pass (%s)\n", r.Space, strings.Join(r.Revisions, ", "), r.Recorded)
+				default:
+					failed = true
+					fmt.Fprintf(w, "%s: FAILED on %s; recorded a rejection (%s), which holds its release:\n", r.Space, strings.Join(r.Revisions, ", "), r.Recorded)
+					for _, d := range r.Details {
+						fmt.Fprintf(w, "  - %s\n", d)
+					}
+				}
+			}
+			if err != nil {
+				return err
+			}
+			if failed {
+				return errProblems{}
+			}
+			return nil
+		},
+	}
+	checkCmd.Flags().StringVar(&co.ChangeOrder, "change-order", "", "the change order, as <base space>/<order>")
+	checkCmd.Flags().StringVar(&co.Stage, "stage", "", "the stage whose variants to check")
+	checkCmd.Flags().StringVar(&co.Type, "type", "PolicyCheck", "the attestation type to record, as planned with --require")
+	checkCmd.Flags().StringVar(&co.Worker, "worker", "", "the worker that runs the function, as <space>/<worker>")
+
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the plugin version",
@@ -371,7 +431,7 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 		},
 	}
 
-	root.AddCommand(plan, apply, compare, status, watchCmd, versionCmd)
+	root.AddCommand(plan, apply, compare, status, watchCmd, checkCmd, versionCmd)
 	return root
 }
 

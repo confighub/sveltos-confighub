@@ -63,19 +63,30 @@ promote() {
   for i in 1 2 3; do
     out=$(cub variant promote --change-order "$1" --target-stage "$2" --squash --quiet 2>&1 >/dev/null) && return 0
     case "$out" in *"nothing left to promote"*) return 0 ;; esac
-    sleep 15
+    sleep "${RETRY_SECONDS:-15}"
   done
   echo "$out" >&2; return 1
 }
+# A release ConfigHub refuses for outstanding ValidationErrors may only be
+# waiting for a check still running, so it is asked again; one refused
+# three times is held by the policy, and the script stops.
 publish() {
-  local out
+  local out i reason kind
   holds "$1" "$3" || return 1
-  out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0
-  case "$out" in
-    *"no changes were made since :latest bundle"*) echo "$1 already released" ;;
-    *"requires approval"*) [ -n "${PROPOSE_ONLY:-}" ] || { echo "$out" >&2; return 1; }; echo "$1 waits for approval"; waiting=$4 ;;
-    *) echo "$out" >&2; return 1 ;;
-  esac
+  for i in 1 2 3; do
+    out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0
+    case "$out" in
+      *"no changes were made since :latest bundle"*) echo "$1 already released"; return 0 ;;
+      *"requires "*"attestation(s)"*)
+        [ -n "${PROPOSE_ONLY:-}" ] || { echo "$out" >&2; return 1; }
+        reason=${out##*requires }; waitfor=${reason%%:*}; waiting=$4
+        if [ "$waitfor" = approval ]; then echo "$1 waits for approval"; else kind=${reason#*: }; kind=${kind#* }; echo "$1 waits for $waitfor: cub attestation create --space $1 --type ${kind%% *} --change-order $2"; fi
+        return 0 ;;
+      *"outstanding ValidationErrors"*) sleep "${RETRY_SECONDS:-15}" ;;
+      *) echo "$out" >&2; return 1 ;;
+    esac
+  done
+  echo "$1 is held by its policy checks, so it is not released: $out" >&2; return 1
 }
 # PROPOSE_ONLY=1 approves nothing. Each stage is promoted, and a release
 # waits in ConfigHub until a person approves it; run the script again to
@@ -83,7 +94,7 @@ publish() {
 # no approval, so a joining cluster waits in its own stage only.
 # cub sveltos watch runs the script this way when a cluster joins.
 approve() { [ -n "${PROPOSE_ONLY:-}" ] || cub variant approve --change-order "$1" --stage "$2" --quiet; }
-awaits() { [ -z "$waiting" ] || echo "$1 waits for approval in stage $waiting: cub variant approve --change-order $2 --stage $waiting"; }
+awaits() { [ -z "$waiting" ] || [ "$waitfor" != approval ] || echo "$1 waits for approval in stage $waiting: cub variant approve --change-order $2 --stage $waiting"; }
 # deliver <profile> <variant Spaces>: apply the profile's delivery profiles.
 # With PROPOSE_ONLY, only those whose variant has a release; the others
 # follow on the run after their release is approved.
@@ -172,7 +183,7 @@ if rolled_out sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-prod-us; then
   echo 'ingress-nginx: every variant in this plan is released'
 else
   cub changeorder create --space sveltos-ingress-nginx-base onboard-c3558924 --change-workflow sveltos-ingress-nginx-base/rollout --description 'First release of sveltos-ingress-nginx-prod-eu, sveltos-ingress-nginx-prod-us' --allow-exists --quiet
-  waiting=
+  waiting= waitfor=
   promote sveltos-ingress-nginx-base/onboard-c3558924 prod
   approve sveltos-ingress-nginx-base/onboard-c3558924 prod
   publish sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-base/onboard-c3558924 1 prod
@@ -183,7 +194,7 @@ if rolled_out sveltos-kyverno-staging-eu sveltos-kyverno-prod-eu sveltos-kyverno
   echo 'kyverno: every variant in this plan is released'
 else
   cub changeorder create --space sveltos-kyverno-base onboard-25e1c3f8 --change-workflow sveltos-kyverno-base/rollout --description 'First release of sveltos-kyverno-staging-eu, sveltos-kyverno-prod-eu, sveltos-kyverno-prod-us' --allow-exists --quiet
-  waiting=
+  waiting= waitfor=
   promote sveltos-kyverno-base/onboard-25e1c3f8 staging
   approve sveltos-kyverno-base/onboard-25e1c3f8 staging
   publish sveltos-kyverno-staging-eu sveltos-kyverno-base/onboard-25e1c3f8 1 staging
@@ -199,7 +210,7 @@ if rolled_out sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-prod-
   echo 'kyverno-policies: every variant in this plan is released'
 else
   cub changeorder create --space sveltos-kyverno-policies-base onboard-1b86298b --change-workflow sveltos-kyverno-policies-base/rollout --description 'First release of sveltos-kyverno-policies-staging-eu, sveltos-kyverno-policies-prod-eu, sveltos-kyverno-policies-prod-us' --allow-exists --quiet
-  waiting=
+  waiting= waitfor=
   promote sveltos-kyverno-policies-base/onboard-1b86298b staging
   approve sveltos-kyverno-policies-base/onboard-1b86298b staging
   publish sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-base/onboard-1b86298b 1 staging

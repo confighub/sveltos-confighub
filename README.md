@@ -52,6 +52,7 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 | `cub sveltos compare` | Checks that what ConfigHub will deliver to a cluster is exactly what Helm installed there. `handover.sh` runs it for you. |
 | `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. |
 | `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
+| `cub sveltos check` | Runs a policy check, such as Kyverno, on a change in one stage, and records the verdict in ConfigHub. Each stage's release can require a Pass. |
 | `cub sveltos version` | Prints the version. The current release is **v0.6.0**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
@@ -168,7 +169,41 @@ prod before staging has released the change:
 Failed: unable to promote to stage 'prod', Variant 'staging-eu' has taken change order 'replicas-4' but has not released it
 ```
 
-### 4. Upgrade a chart, and review exactly what changes
+### 4. Check every change against your policies
+
+Run your Kyverno policies on a change before it ships. Plan with a policy
+trigger and a required check:
+
+```bash
+cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod \
+  --policy platform-policies/policy-triggers --require PolicyCheck --out onboard
+```
+
+- `--policy` runs your Kyverno check on every change, in every base and
+  variant. A change that fails carries an error, and ConfigHub will not
+  promote it past its stage or release it.
+- `--require PolicyCheck` makes each stage's release wait for a recorded
+  Pass. Record one after each promotion:
+
+```bash
+cub sveltos check --change-order sveltos-kyverno-base/replicas-4 --stage staging \
+  --worker platform-policies/kyverno-checker vet-kyverno-server
+```
+
+On the Meridian kind fleet, a change that put Kyverno's cleanup controller on
+`:latest` was stopped before test:
+
+```text
+unable to promote to stage 'test', Variant 'class-test' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server)
+```
+
+A policy trigger alone can let a change through while its checker is away.
+In our test that happened at once, not after the six hours ConfigHub
+documents. So gate releases on the required check. [Check every change
+against your policies](docs/user/policy-checks.md) has the setup and what was
+measured.
+
+### 5. Upgrade a chart, and review exactly what changes
 
 `apply.sh` records the command each chart was rendered with. Render the new
 version the same way, and store it on the base:
@@ -197,7 +232,7 @@ Resource: apiextensions.k8s.io/v1/CustomResourceDefinition /gpuclusters.nvidia.c
 
 Then roll it out as in 3.
 
-### 5. Give each environment, or each kind of cluster, its own settings
+### 6. Give each environment, or each kind of cluster, its own settings
 
 If you keep one Sveltos profile per environment (say `kyverno-test`,
 `kyverno-uat`, `kyverno-prod`), onboard them as one add-on with a **class
@@ -214,7 +249,7 @@ The same works for GPU types: one class per accelerator.
 
 ![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds](docs/images/sveltos/sveltos-meridian-three-levels.svg)
 
-### 6. Add a new cluster
+### 7. Add a new cluster
 
 Register and label the new cluster as you always have. **Nothing ships
 yet**: in this setup, a label alone deploys nothing. Keep the watcher running
@@ -251,7 +286,7 @@ cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages
 MGMT_CONTEXT=<your management cluster context> bash onboard/apply.sh
 ```
 
-### 7. See what every cluster runs, whether it is healthy, and who changed it
+### 8. See what every cluster runs, whether it is healthy, and who changed it
 
 ```bash
 cub space list --where "Labels.Cluster = 'prod-eu'"                  # everything on prod-eu
@@ -275,7 +310,7 @@ Each change carries its author and a reason. Each stage's approval is
 recorded. ConfigHub's refusals come in its own words, and that's the
 record an audit needs.
 
-### 8. Run it at business size
+### 9. Run it at business size
 
 Sveltos brings the same three levels to a large fleet: a root base, class
 bases, and a variant per cluster. That's the shape of ConfigHub's
@@ -287,7 +322,7 @@ class, test before uat before prod, and each class kept its own settings.
 However big the fleet, a change costs the same: one edit, then one promotion
 and one approval per stage.
 
-### 9. Work with an AI assistant
+### 10. Work with an AI assistant
 
 Every step is a `cub` or `kubectl` command, so an assistant in your terminal
 can do the work:
@@ -298,6 +333,7 @@ can do the work:
 | "Upgrade Kyverno to 3.8.2, and show me what changes" | `cub helm template …`, `cub unit update …`, `cub unit diff … -o mutations` |
 | "Four replicas, for uat only" | `cub function set …` on uat's class base, then `cub unit set-protection …` |
 | "Roll it out" | `cub changeorder create …`, then `cub variant promote … --squash` into each stage |
+| "Does it pass our policies in staging?" | `cub sveltos check --change-order … --stage staging … vet-kyverno-server` |
 
 **Approval stays with people.**
 - Each stage's release waits for `cub variant approve`.
@@ -331,6 +367,9 @@ cluster: `npm run verify` and `go test ./...`.
 
 - [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md): the
   full guide, from plan to handover to changes afterwards.
+- [Check every change against your policies](docs/user/policy-checks.md):
+  Kyverno before anything ships, the two gates, and what happens when the
+  checker is away.
 - [What's new](docs/whats-new.md): what 0.5 and 0.6 changed, and how to move
   from 0.4.
 - [Run your own fleet on one variant per cluster](docs/user/run-your-own-fleet.md):
