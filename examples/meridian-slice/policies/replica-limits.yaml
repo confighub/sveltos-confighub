@@ -1,0 +1,100 @@
+# The Meridian slice's replica ceilings, one per class: test at most 4
+# replicas, uat 3, prod 5. One ValidatingAdmissionPolicy, one binding per class,
+# and each class's ceiling as a parameter.
+#
+# The bindings select namespaces by `impact.confighub.com/stage`, the label
+# `cub sveltos impact` puts on each target's namespace in the sandbox. On a real
+# cluster, bind by that cluster's own namespace labels instead.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: replica-limits
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+  variables:
+    - name: replicas
+      expression: "has(object.spec.replicas) ? object.spec.replicas : 1"
+  validations:
+    - expression: "variables.replicas <= int(params.data.max)"
+      messageExpression: "'replicas ' + string(variables.replicas) + ' is above the ceiling of ' + params.data.max + ' for this class'"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: replica-limits-test
+spec:
+  policyName: replica-limits
+  validationActions: ["Deny"]
+  paramRef:
+    name: replica-limits-test
+    namespace: policy-params
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        impact.confighub.com/stage: test
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: replica-limits-uat
+spec:
+  policyName: replica-limits
+  validationActions: ["Deny"]
+  paramRef:
+    name: replica-limits-uat
+    namespace: policy-params
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        impact.confighub.com/stage: uat
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: replica-limits-prod
+spec:
+  policyName: replica-limits
+  validationActions: ["Deny"]
+  paramRef:
+    name: replica-limits-prod
+    namespace: policy-params
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        impact.confighub.com/stage: prod
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: replica-limits-test
+  namespace: policy-params
+data:
+  max: "4"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: replica-limits-uat
+  namespace: policy-params
+data:
+  max: "3"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: replica-limits-prod
+  namespace: policy-params
+data:
+  max: "5"

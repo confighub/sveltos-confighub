@@ -423,6 +423,76 @@ nothing releases a change this has not passed.
 	checkCmd.Flags().StringVar(&co.Type, "type", "PolicyCheck", "the attestation type to record, as planned with --require")
 	checkCmd.Flags().StringVar(&co.Worker, "worker", "", "the worker that runs the function, as <space>/<worker>")
 
+	var io_ onboard.ImpactOptions
+	var impactJSON bool
+	impactCmd := &cobra.Command{
+		Use:   "impact --sandbox-kubeconfig <file> --policy <file>... (--candidate <file>... | --next) [--component <c>] [--corpus <space>...]",
+		Short: "Preview what a policy change, or the next promotion, would do to each cluster, before anything ships",
+		Long: `Preview what a policy change, or the next promotion, would do to each cluster.
+
+It evaluates each target twice in a sandbox: a disposable API server that holds
+policies and nothing else. Once under the policies in force, once under the
+candidate. Each object a policy matches is submitted with a server-side dry run,
+so the verdicts are the API server's own, and nothing is created.
+
+  --candidate   policy files that replace the objects of the same kind, namespace
+                and name: a proposed policy change, evaluated against every
+                configuration already running.
+  --next        each target's running configuration against what its next
+                promotion brings: a proposed change, evaluated against each
+                target's own policies.
+  --corpus      a Space whose revisions ConfigHub recorded as failing a policy.
+                They show what a weaker policy would newly allow, which the
+                running configurations cannot.
+
+Each object is newly denied, newly allowed, unchanged, or unknown when its
+verdict needs what the configuration does not hold, such as the requesting
+user. A ValidatingAdmissionPolicy does not evict what runs: newly denied means
+the next create or update would be refused.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			r, err := onboard.Impact(onboard.RunWithInput, io_)
+			if err != nil {
+				return err
+			}
+			w := c.OutOrStdout()
+			if impactJSON {
+				enc := json.NewEncoder(w)
+				enc.SetIndent("", "  ")
+				return enc.Encode(r)
+			}
+			fmt.Fprintf(w, "policies in force: %s\n", strings.Join(r.Policies, ", "))
+			if len(r.Candidates) > 0 {
+				fmt.Fprintf(w, "candidate:         %s\n", strings.Join(r.Candidates, ", "))
+			}
+			fmt.Fprintln(w)
+			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "TARGET\tSTAGE\tCONFIG\tOBJECT\tNOW\tTHEN\tVERDICT\tWHY")
+			counts := map[string]int{}
+			for _, row := range r.Rows {
+				config := row.Config
+				if row.Candidate != "" {
+					config += " -> " + row.Candidate
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Target, row.Stage, config, row.Object, row.Current, row.Proposed, row.Verdict, row.Why)
+				counts[row.Verdict]++
+			}
+			tw.Flush()
+			fmt.Fprintf(w, "\n%d newly denied, %d newly allowed, %d unchanged, %d unknown\n", counts[onboard.NewlyDenied], counts[onboard.NewlyAllowed], counts[onboard.Unchanged], counts[onboard.Unknown])
+			return nil
+		},
+	}
+	impactCmd.Flags().StringVar(&io_.SandboxKubeconfig, "sandbox-kubeconfig", "", "kubeconfig of the sandbox API server, which holds policies and nothing else")
+	impactCmd.Flags().StringVar(&io_.SandboxContext, "sandbox-context", "", "context in that kubeconfig")
+	impactCmd.Flags().StringVar(&io_.Component, "component", "", "the component whose cluster variants are the targets")
+	impactCmd.Flags().StringVar(&io_.StageLabel, "stage-label", "Stage", "the Space label that gives each target's stage, which bindings select by")
+	impactCmd.Flags().StringArrayVar(&io_.Policies, "policy", nil, "a policy file in force; repeat for more")
+	impactCmd.Flags().StringArrayVar(&io_.Candidates, "candidate", nil, "a candidate policy file; repeat for more")
+	impactCmd.Flags().BoolVar(&io_.Next, "next", false, "compare each target's running configuration with what its next promotion brings")
+	impactCmd.Flags().StringArrayVar(&io_.Corpus, "corpus", nil, "a Space whose revisions recorded as failing a policy are evaluated too")
+	impactCmd.Flags().DurationVar(&io_.Settle, "settle", 5*time.Second, "how long to give the sandbox after its policies change")
+	impactCmd.Flags().BoolVar(&impactJSON, "json", false, "print the results as JSON, for an assistant to explain")
+
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the plugin version",
@@ -431,7 +501,7 @@ nothing releases a change this has not passed.
 		},
 	}
 
-	root.AddCommand(plan, apply, compare, status, watchCmd, checkCmd, versionCmd)
+	root.AddCommand(plan, apply, compare, status, watchCmd, checkCmd, impactCmd, versionCmd)
 	return root
 }
 
