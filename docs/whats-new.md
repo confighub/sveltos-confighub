@@ -267,5 +267,5 @@ releases cannot read the gzipped layers ConfigHub's gateway serves.
 | Example | What it shows |
 | --- | --- |
 | [Onboarding example](../examples/onboard/README.md) | Three live label-selector profiles (Kyverno, its policies, ingress-nginx) handed over with nothing reinstalled. Kyverno 3.8.2 and 4 replicas in one change order, staging before prod. A joining cluster gets both. |
-| [The GPU operator, chapter seven](../examples/gpu-operator/README.md) | NVIDIA's operator on exactly the clusters approved for it; a mislabel ships nothing. The driver upgrade reaches staging first, and review lists the ClusterPolicy's `spec.driver.version` and what the chart changed besides. |
+| [The GPU operator](../examples/gpu-operator/README.md) | NVIDIA's operator on exactly the clusters approved for it; a mislabel ships nothing. The driver upgrade reaches staging first, and review lists the ClusterPolicy's `spec.driver.version` and what the chart changed besides. |
 | [A slice of Meridian](../examples/meridian-slice/README.md) | Three profiles, one per class, become a root base, three class bases and four deployments. One root change reaches every class, and uat and prod keep their replicas. Recorded on 0.5.1, with the handover's checks. A cluster that joins is proposed by `cub sveltos watch` and ships once approved, recorded on 0.6.0. |

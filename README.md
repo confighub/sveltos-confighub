@@ -401,20 +401,17 @@ cluster: `npm run verify` and `go test ./...`.
   checker is away.
 - [What's new](docs/whats-new.md): what 0.5 and 0.6 changed, and how to move
   from 0.4.
-- [Run your own fleet on one variant per cluster](docs/user/run-your-own-fleet.md):
-  the shape at any size, what a change costs, and the limits measured here.
 - [chartrender](chartrender/README.md): the chart rules, as a Go package for
   other tools.
-- [The recorded chapters](docs/chapters.md): six chapters recorded on the
-  first design of this integration, with their receipts.
+- [Before 0.5](docs/chapters.md): how this integration worked before it
+  rendered charts into objects, kept for reference.
 
 ## Status
 
 `cub sveltos` v0.6.0 is tested on kind with stock Sveltos v1.15.0. It has not
-run in a production fleet yet. Rollback here restores one
-cluster to an exact revision. There's no single action that halts and reverses
-a rollout across the fleet.
+run in a production fleet yet. The policy gates and `cub sveltos check` are on
+main, not released yet.
 
-This work was extracted from
-[confighub/helm-expt](https://github.com/confighub/helm-expt) with paths
-preserved, so every committed receipt verifies here unchanged.
+To stop a rollout part-way, abort its change order, then undo it in each Space
+it reached with `cub variant demote`. There is no single command that does
+this across the fleet yet.
