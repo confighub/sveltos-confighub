@@ -60,6 +60,9 @@ cub plugin install confighub/sveltos-confighub
 cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 ```
 
+Already installed? `cub plugin upgrade sveltos-confighub` moves you to the
+latest release. `cub sveltos version` prints which one you run.
+
 | Command | What it does |
 | --- | --- |
 | `cub sveltos plan` | Reads your Sveltos ClusterProfiles and clusters, and shows what ConfigHub would hold. **Changes nothing**, and needs no account or cluster. |

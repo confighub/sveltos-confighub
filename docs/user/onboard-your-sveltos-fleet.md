@@ -30,6 +30,9 @@ cub plugin install confighub/sveltos-confighub
 cub plugin install confighub/cub-helm
 ```
 
+If you installed them before, `cub plugin upgrade sveltos-confighub` and
+`cub plugin upgrade helm` bring them up to date.
+
 `cub sveltos` renders charts with `cub helm template`, ConfigHub's own Helm
 renderer, so a chart onboarded here holds the objects `cub helm` would.
 
