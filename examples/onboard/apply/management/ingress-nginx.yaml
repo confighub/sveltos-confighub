@@ -2,6 +2,8 @@ apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
   name: ingress-nginx-prod-eu
+  labels:
+    sveltos.confighub.com/variant: sveltos-ingress-nginx-prod-eu
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
@@ -59,6 +61,8 @@ apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
   name: ingress-nginx-prod-us
+  labels:
+    sveltos.confighub.com/variant: sveltos-ingress-nginx-prod-us
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1

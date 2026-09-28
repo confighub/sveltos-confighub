@@ -2,10 +2,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -116,6 +118,12 @@ func newRoot() *cobra.Command {
   compare  compares what ConfigHub released for a variant with what Helm
          installed on its cluster. handover.sh runs it before anything
          changes.
+
+  status reports what Sveltos delivered to each cluster as ConfigHub live
+         status, which a workflow's Healthy prerequisite reads.
+
+  watch  proposes variants for each cluster that joins, and releases them
+         once a person approves them in ConfigHub.
 
 Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboard-your-sveltos-fleet.md`,
 		SilenceUsage:  true,
@@ -277,6 +285,84 @@ than --refresh.`,
 	status.Flags().BoolVar(&watch, "watch", false, "keep reporting")
 	status.Flags().DurationVar(&interval, "interval", 30*time.Second, "how often to report, with --watch")
 
+	var wf planFlags
+	var wo onboard.WatchOptions
+	var once bool
+	var every time.Duration
+	watchCmd := &cobra.Command{
+		Use:   "watch <profiles.yaml> --out <dir> --context <management context> [the options you planned with]",
+		Short: "Propose variants for each cluster that joins, and release them once a person approves",
+		Long: `Propose variants for each cluster that joins, and release them once a person approves.
+
+It reads the SveltosClusters on the management cluster every --interval, and
+plans them against the profiles apply saved, with the options the fleet was
+planned with. For each cluster a profile newly selects, it writes the plan to
+--out again and runs its apply.sh with PROPOSE_ONLY=1: the cluster's variants
+are made, and its release waits in ConfigHub for a person to approve it.
+
+  cub variant approve --change-order <base>/<order> --stage <stage>
+
+It approves nothing itself. On its next look after the approval, it runs
+apply.sh again, which publishes the release and applies the cluster's delivery
+profile, and Sveltos delivers. A cluster no profile selects gets nothing, and is
+named. Each variant it proposes records why, in its Space's
+sveltos.confighub.com/joined annotation and in the release order's description;
+--out/watch.log keeps what each run of apply.sh printed.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if wo.Out == "" {
+				return fmt.Errorf("watch needs --out, the directory apply wrote for this fleet")
+			}
+			docs, err := readInputs(c.InOrStdin(), args)
+			if err != nil {
+				return err
+			}
+			wo.Profiles, wo.Plan = docs, wf.options()
+			w := onboard.NewWatcher(onboard.Run, wo)
+			out, errs := c.OutOrStdout(), c.ErrOrStderr()
+			last, told := "", ""
+			for {
+				r, err := w.Once()
+				stamp := time.Now().UTC().Format(time.RFC3339)
+				if err != nil {
+					if err.Error() != last {
+						fmt.Fprintf(errs, "%s %v\n", stamp, err)
+					}
+					last = err.Error()
+				} else {
+					last = ""
+				}
+				printWatch(out, stamp, r)
+				// Where the fleet stands, when that changes.
+				if err == nil && !r.Ran {
+					state := fmt.Sprintf("%d clusters selected, %d variants: nothing to propose", r.Clusters, r.Variants)
+					if len(r.Waiting) > 0 {
+						state = "waiting for approval in ConfigHub: " + strings.Join(r.Waiting, ", ")
+					}
+					if state != told {
+						fmt.Fprintf(out, "%s %s\n", stamp, state)
+					}
+					told = state
+				}
+				if r.Ran {
+					told = ""
+					if lerr := appendLog(filepath.Join(wo.Out, "watch.log"), stamp, r); lerr != nil {
+						fmt.Fprintln(errs, "Error:", lerr)
+					}
+				}
+				if once {
+					return err
+				}
+				time.Sleep(every)
+			}
+		},
+	}
+	wf.register(watchCmd)
+	watchCmd.Flags().StringVar(&wo.Out, "out", "", "the directory apply wrote for this fleet")
+	watchCmd.Flags().StringVar(&wo.Context, "context", "", "kubectl context of the management cluster")
+	watchCmd.Flags().DurationVar(&every, "interval", time.Minute, "how often to look")
+	watchCmd.Flags().BoolVar(&once, "once", false, "look once, and stop")
+
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the plugin version",
@@ -285,8 +371,51 @@ than --refresh.`,
 		},
 	}
 
-	root.AddCommand(plan, apply, compare, status, versionCmd)
+	root.AddCommand(plan, apply, compare, status, watchCmd, versionCmd)
 	return root
+}
+
+// printWatch says what one look found and did.
+func printWatch(w io.Writer, stamp string, r onboard.WatchReport) {
+	for _, j := range r.Joins {
+		labels := make([]string, 0, len(j.Labels))
+		for k, v := range j.Labels {
+			labels = append(labels, k+"="+v)
+		}
+		sort.Strings(labels)
+		fmt.Fprintf(w, "%s %s joined %s (%s): proposed %s in stage %s\n", stamp, j.Cluster, j.Profile, strings.Join(labels, ", "), j.Space, j.Stage)
+	}
+	for _, c := range r.Unmatched {
+		fmt.Fprintf(w, "%s %s: no profile selects it, so nothing is proposed\n", stamp, c)
+	}
+	for _, line := range strings.Split(string(r.Output), "\n") {
+		created := strings.HasPrefix(line, "clusterprofile.config.projectsveltos.io/") && !strings.HasSuffix(line, " unchanged")
+		if created || strings.Contains(line, "waits for approval in stage") || strings.Contains(line, "delivery profile waits") {
+			fmt.Fprintf(w, "%s %s\n", stamp, line)
+		}
+	}
+	for _, e := range r.Recorded {
+		fmt.Fprintf(w, "%s could not record why: %s\n", stamp, e)
+	}
+}
+
+// appendLog keeps what each run of apply.sh printed, with what it was run for.
+func appendLog(path, stamp string, r onboard.WatchReport) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "== %s PROPOSE_ONLY=1 bash apply.sh\n", stamp)
+	for _, j := range r.Joins {
+		doc, _ := json.Marshal(j)
+		fmt.Fprintf(f, "joined: %s\n", doc)
+	}
+	for _, o := range r.Waiting {
+		fmt.Fprintf(f, "release order: %s\n", o)
+	}
+	_, err = f.Write(r.Output)
+	return err
 }
 
 // printStatus shows each delivery profile's reading, one line each.

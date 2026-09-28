@@ -63,6 +63,7 @@ fleet from [kind-fleet.mjs](kind-fleet.mjs). The full output is
 | Before | Kyverno 3.8.1 on all four clusters from three profiles, one per class: test at 1 replica, uat at 2 and prod at 3, uat and prod with a PodDisruptionBudget. |
 | Onboard: plan, apply, handover | One component: a root base (test's rendering, 70 objects, 22 of them CRDs), three class bases and a deployment per cluster, in 10 Spaces with 7 Links. Before it changed anything, the handover found each profile as exported, reaching the clusters planned, and each cluster's Kyverno the same as what Helm had installed there, object for object (69 objects on test, 70 on uat and prod, their PodDisruptionBudget among them). Then it stepped the three profiles aside, and four delivery profiles took over with every pod the same: nothing was reinstalled. Meridian's queries (`Labels.Role = 'base'`, `'deployment'`) find the four bases and the four deployments. |
 | One change for every class | Kyverno 3.8.2 and 4 replicas, both made on the root, in one change order. After its first stage, `bases`, every class base held 3.8.2; test's took 4 replicas, and uat's and prod's kept 2 and 3. uat was refused while test had not taken the change. Test, uat and prod then took it in order, and the clusters ended at 3.8.2 with 4, 2, 3 and 3 replicas. The change order ended `Completed`, `Released`. |
+| A cluster joins, and ships once approved | Recorded later the same day with `cub sveltos watch` (v0.6.0), in [join-2026-09-28.log](join-2026-09-28.log). eu-central-prod4 registered with `class: prod` at 13:06. The watcher proposed its variant at 13:10, cloned from prod's class base, so it held 3.8.2 and prod's 3 replicas. The release order passed test and uat with no approval, since nothing was new there, and waited in prod. Nothing reached the cluster, and its delivery profile waited. A person approved at 13:16. The watcher's next look published the release and applied the delivery profile at 13:18, and Sveltos reported it `Provisioned` at 13:20, with the same Kyverno as eu-central-prod1. |
 
 ## The rule the three levels come with
 
@@ -83,11 +84,8 @@ plan says so when that happens, and here the root is chosen so it does not.
 
 ## What this slice is not
 
-It is four clusters of Meridian's 99 and one of its 19 components. Its
-deployments show "Not reported yet" where Meridian shows generated live
-status: nothing reports Sveltos's view to ConfigHub until the status reporter
-([#33](https://github.com/confighub/sveltos-confighub/issues/33)) exists. At
-full size the same shape needs about 1,200 Spaces, as the Meridian README
+It is four clusters of Meridian's 99, and one of its 19 components. Its
+deployments show live status once `cub sveltos status` runs. At full size the same shape needs about 1,200 Spaces, as the Meridian README
 says, so an organization onboarding at that scale asks for its quota to be
 raised first. `cub sveltos plan` prints the count.
 
@@ -106,3 +104,14 @@ node examples/meridian-slice/kind-fleet.mjs --delete
 
 `run.sh` keeps its ten `mer-` Spaces, so the tree above can be opened in
 ConfigHub.
+
+To see a cluster join, run the watcher with the options `run.sh` planned with,
+then register one more cluster:
+
+```bash
+cub sveltos watch onboard/profiles.yaml --out onboard --context kind-mer-mgmt \
+  --class-label class --stage-label class --stages test,uat,prod --prefix mer
+node examples/meridian-slice/kind-fleet.mjs --join prod4    # in another terminal
+```
+
+The watcher prints the `cub variant approve` command to run.

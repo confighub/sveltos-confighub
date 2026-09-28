@@ -548,12 +548,83 @@ flowchart LR
 ```
 
 The plan shows the new cluster's variants. The script leaves every existing
-variant as it is, clones the new one from the base as the base stands today,
-including every change made since onboarding, and releases it through its
-stages with an approval in each. So joining the fleet is one reviewed change
-rather than a side effect of a label. A watcher that proposes the variant as
-soon as a cluster registers is
-[#41](https://github.com/confighub/sveltos-confighub/issues/41).
+variant as it is. It clones the new one from the base as the base stands
+today, including every change made since onboarding, and releases it through
+its stages. So joining the fleet is one reviewed change rather than a side
+effect of a label.
+
+### Let `cub sveltos watch` propose it
+
+Run by hand as above, `apply.sh` approves the release itself. `cub sveltos
+watch` does the same work as each cluster registers, but approves nothing:
+
+```bash
+cub sveltos watch onboard/profiles.yaml --out onboard --context <management cluster context> \
+  --stage-label env --stages staging,prod --include-hooks ingress-nginx
+```
+
+Give it the options you planned with. Every minute it reads the
+SveltosClusters and plans them against the saved profiles. When a profile
+newly selects a cluster:
+
+1. It writes the plan to `onboard` again and runs `apply.sh` with
+   `PROPOSE_ONLY=1`. The cluster's variants are made, and the release order
+   is promoted stage by stage.
+2. A stage with nothing new for its variants needs no approval. So the order
+   stops at the new cluster's own stage, waiting for a person:
+
+   ```
+   kyverno waits for approval in stage prod: cub variant approve --change-order sveltos-kyverno-base/onboard-1a2b3c4d --stage prod
+   ```
+
+3. Nothing reaches the cluster yet. Its delivery profile is applied only once
+   its variant has a release.
+4. Once someone approves, the watcher's next look runs `apply.sh` again. That
+   publishes the release, finishes the order and applies the delivery
+   profile, and Sveltos delivers within a minute.
+
+While it waits, the watcher only looks. It runs `apply.sh` again only when the
+order has gained an approval.
+
+It records why it proposed each variant:
+- in the release order's description, for example `Proposed by cub sveltos
+  watch: prod-us joined (env=prod, region=us); selected by env in (staging,
+  prod)`;
+- on the variant's Space, as the annotation `sveltos.confighub.com/joined`
+  (the cluster, its labels, the profile, the selector, the stage and the
+  order);
+- in `onboard/watch.log`, with everything `apply.sh` printed.
+
+**What it refuses:**
+- A cluster no profile selects gets nothing. The watcher names it once.
+- A cluster the plan cannot place, such as one whose stage label is not one of
+  the stages, stops every proposal until it is fixed. The watcher shows the
+  plan's problem.
+- It will not run while a profile you onboarded is still live on the
+  management cluster: run `handover.sh` first.
+
+`--once` looks once and stops. `PROPOSE_ONLY=1 bash onboard/apply.sh` is the
+same behaviour by hand.
+
+Recorded on the Meridian kind fleet
+([join-2026-09-28.log](../../examples/meridian-slice/join-2026-09-28.log)):
+
+| Time (UTC) | What happened |
+| --- | --- |
+| 13:06 | eu-central-prod4 registered with Sveltos, labelled `class: prod` |
+| 13:10 | The watcher proposed `mer-kyverno-eu-central-prod4`. The order passed test and uat with no approval and waited in prod. Nothing reached the cluster. |
+| 13:16 | A person approved: `cub variant approve --change-order mer-kyverno-base/onboard-f68adc1c --stage prod` |
+| 13:18 | The watcher published the release and applied the delivery profile |
+| 13:20 | Sveltos reported it `Provisioned`, with the same Kyverno as the other prod clusters |
+
+**Two things ConfigHub does here:**
+- A release order promoted through stages with nothing new for their
+  variants needs no approval in them. Publishing reports no changes, the next
+  stage opens, and the order completes.
+- An order that carries no change for a freshly cloned variant is marked
+  resolved, although that variant still waits for its first release and its
+  approval. So the watcher and `apply.sh` decide what waits from the
+  published releases, not from the order's stage.
 
 ## What you will see
 

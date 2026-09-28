@@ -1,10 +1,13 @@
 // The Meridian slice on kind: a management cluster running stock Sveltos
 // v1.15.0 (which registers itself as mgmt/mgmt) and Meridian's four shared
 // eu-central clusters that Kyverno is placed on, registered as SveltosClusters
-// with Meridian's region, class and department labels.
+// with Meridian's region, class and department labels. --join registers one
+// more, eu-central-prod3 unless named, the way a new cluster joins.
 //
-//   node examples/meridian-slice/kind-fleet.mjs            build the fleet
-//   node examples/meridian-slice/kind-fleet.mjs --delete   remove it
+//   node examples/meridian-slice/kind-fleet.mjs               build the fleet
+//   node examples/meridian-slice/kind-fleet.mjs --join        register eu-central-prod3
+//   node examples/meridian-slice/kind-fleet.mjs --join uat2   register eu-central-uat2
+//   node examples/meridian-slice/kind-fleet.mjs --delete      remove it
 //
 // Kubeconfigs go to $MERIDIAN_SLICE_DIR (default: $TMPDIR/sveltos-meridian-slice).
 import { spawnSync } from "node:child_process";
@@ -25,6 +28,8 @@ const WORKLOADS = ["test1", "uat1", "prod1", "prod2"].map((n) => ({
   name: `eu-central-${n}`,
   labels: { region: "eu-central", class: n.replace(/[0-9]+$/, ""), department: "shared" },
 }));
+const joining = process.argv[2] === "--join" ? (process.argv[3] ?? "prod3") : "prod3";
+const JOINER = { kind: `mer-${joining}`, name: `eu-central-${joining}`, labels: { region: "eu-central", class: joining.replace(/[0-9]+$/, ""), department: "shared" } };
 
 function run(cmd, args, { timeout = 900_000, input } = {}) {
   const r = spawnSync(cmd, args, { encoding: "utf8", timeout, input, maxBuffer: 1 << 28 });
@@ -49,13 +54,14 @@ function waitReady(ns, name) {
 }
 mkdirSync(W, { recursive: true });
 if (process.argv[2] === "--delete") {
-  for (const name of [MGMT, ...WORKLOADS.map((w) => w.kind)]) spawnSync("kind", ["delete", "cluster", "--name", name]);
+  const joined = run("kind", ["get", "clusters"]).split("\n").filter((n) => /^mer-/.test(n));
+  for (const name of new Set([MGMT, ...WORKLOADS.map((w) => w.kind), ...joined])) spawnSync("kind", ["delete", "cluster", "--name", name]);
   console.log("deleted the fleet's kind clusters");
   process.exit(0);
 }
-const registerOnly = false;
+const registerOnly = process.argv[2] === "--join";
 const existing = run("kind", ["get", "clusters"]).split("\n");
-for (const name of registerOnly ? [] : [MGMT, ...WORKLOADS.map((w) => w.kind)]) {
+for (const name of registerOnly ? [JOINER.kind] : [MGMT, ...WORKLOADS.map((w) => w.kind)]) {
   if (existing.includes(name)) { log(`${name} exists`); continue; }
   log(`creating ${name}`);
   run("kind", ["create", "cluster", "--name", name, "--kubeconfig", kc(name), "--wait", "180s"]);

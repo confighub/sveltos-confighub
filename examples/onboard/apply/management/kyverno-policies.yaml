@@ -2,6 +2,8 @@ apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
   name: kyverno-policies-staging-eu
+  labels:
+    sveltos.confighub.com/variant: sveltos-kyverno-policies-staging-eu
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
@@ -24,6 +26,8 @@ apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
   name: kyverno-policies-prod-eu
+  labels:
+    sveltos.confighub.com/variant: sveltos-kyverno-policies-prod-eu
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1
@@ -46,6 +50,8 @@ apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
 metadata:
   name: kyverno-policies-prod-us
+  labels:
+    sveltos.confighub.com/variant: sveltos-kyverno-policies-prod-us
 spec:
   clusterRefs:
     - apiVersion: lib.projectsveltos.io/v1beta1

@@ -50,8 +50,9 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 | `cub sveltos plan` | Reads your Sveltos ClusterProfiles and clusters, and shows what ConfigHub would hold. **Changes nothing**, and needs no account or cluster. |
 | `cub sveltos apply` | Writes the plan out as files and a script, `apply.sh`, for you to read and then run. Writes `handover.sh` too, if your profiles are live. |
 | `cub sveltos compare` | Checks that what ConfigHub will deliver to a cluster is exactly what Helm installed there. `handover.sh` runs it for you. |
-| `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. New, not released yet. |
-| `cub sveltos version` | Prints the version. The current release is **v0.5.1**; see [what's new](docs/whats-new.md). |
+| `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. |
+| `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
+| `cub sveltos version` | Prints the version. The current release is **v0.6.0**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
 ConfigHub's own `cub` commands, shown below.
@@ -215,19 +216,40 @@ The same works for GPU types: one class per accelerator.
 
 ### 6. Add a new cluster
 
-Label the new cluster as you always have. **Nothing ships yet**: in this
-setup, a label alone deploys nothing. Plan and apply again, from the profiles
-`apply` saved:
+Register and label the new cluster as you always have. **Nothing ships
+yet**: in this setup, a label alone deploys nothing. Keep the watcher running
+against your management cluster, with the options you planned with:
+
+```bash
+cub sveltos watch onboard/profiles.yaml --out onboard --context <your management cluster context> --stage-label env --stages staging,prod
+```
+
+When a profile selects the new cluster, the watcher gives it its own variant,
+with every change made since onboarding, and approves nothing:
+
+```
+prod-us joined kyverno (env=prod, region=us): proposed sveltos-kyverno-prod-us in stage prod
+kyverno waits for approval in stage prod: cub variant approve --change-order sveltos-kyverno-base/onboard-1a2b3c4d --stage prod
+```
+
+Someone runs that `cub variant approve`. On its next look the watcher
+publishes the release and applies the cluster's delivery profile, and Sveltos
+delivers. Labels still decide what is proposed; a person decides what ships. A
+cluster labelled by mistake gets nothing until someone approves it, and a
+cluster no profile selects is named and gets nothing.
+
+On the Meridian kind fleet, a prod cluster registered at 13:06 was proposed
+at 13:10 and waited. After the approval at 13:16, it was delivered and healthy
+by 13:20 ([the recording](examples/meridian-slice/join-2026-09-28.log)).
+
+Without the watcher, plan and apply again from the profiles `apply` saved.
+`apply.sh` then approves the release itself:
 
 ```bash
 kubectl get sveltosclusters -A -o yaml > clusters.yaml
 cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod --out onboard
 MGMT_CONTEXT=<your management cluster context> bash onboard/apply.sh
 ```
-
-The new cluster gets its own variant, with every change made since
-onboarding, and is released through its stage with an approval. A cluster
-labelled by mistake gets nothing.
 
 ### 7. See what every cluster runs, whether it is healthy, and who changed it
 
@@ -247,7 +269,7 @@ ConfigHub, as its live status:
 
 A change workflow can then hold each stage until the one before it is
 healthy. On kind, ConfigHub refused to promote to uat while test's new
-release was not applied yet. (New since v0.5.1; not released yet.)
+release was not applied yet.
 
 Each change carries its author and a reason. Each stage's approval is
 recorded. ConfigHub's refusals come in its own words, and that's the
@@ -309,8 +331,8 @@ cluster: `npm run verify` and `go test ./...`.
 
 - [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md): the
   full guide, from plan to handover to changes afterwards.
-- [What's new in 0.5](docs/whats-new.md): what 0.5.0 and 0.5.1 changed, and
-  how to move from 0.4.
+- [What's new](docs/whats-new.md): what 0.5 and 0.6 changed, and how to move
+  from 0.4.
 - [Run your own fleet on one variant per cluster](docs/user/run-your-own-fleet.md):
   the shape at any size, what a change costs, and the limits measured here.
 - [chartrender](chartrender/README.md): the chart rules, as a Go package for
@@ -320,9 +342,8 @@ cluster: `npm run verify` and `go test ./...`.
 
 ## Status
 
-`cub sveltos` v0.5.1 is tested on kind with stock Sveltos v1.15.0. It has not
-run in a production fleet yet. `cub sveltos status`, which reports live status
-to ConfigHub, is on main and not released yet. Rollback here restores one
+`cub sveltos` v0.6.0 is tested on kind with stock Sveltos v1.15.0. It has not
+run in a production fleet yet. Rollback here restores one
 cluster to an exact revision. There's no single action that halts and reverses
 a rollout across the fleet.
 
