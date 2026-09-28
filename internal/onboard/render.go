@@ -256,6 +256,9 @@ func ApplyScript(plan *Plan) string {
 		"# is safe to re-run, which is also how a cluster that joined since gets its",
 		"# variants. Step 6 is the one change to your management cluster: a Secret",
 		"# holding the gateway credential, and one delivery profile per variant.",
+		"#",
+		"# PROPOSE_ONLY=1 bash apply.sh approves nothing: a release waits for a",
+		"# person to approve it in ConfigHub, and a delivery profile for its release.",
 		"set -euo pipefail",
 		`cd "$(dirname "$0")"`,
 		`k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }`,
@@ -309,7 +312,32 @@ func ApplyScript(plan *Plan) string {
 		"  local out",
 		`  holds "$1" "$3" || return 1`,
 		`  out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0`,
-		`  case "$out" in *"no changes were made since :latest bundle"*) echo "$1 already released" ;; *) echo "$out" >&2; return 1 ;; esac`,
+		`  case "$out" in`,
+		`    *"no changes were made since :latest bundle"*) echo "$1 already released" ;;`,
+		`    *"requires approval"*) [ -n "${PROPOSE_ONLY:-}" ] || { echo "$out" >&2; return 1; }; echo "$1 waits for approval"; waiting=$4 ;;`,
+		`    *) echo "$out" >&2; return 1 ;;`,
+		"  esac",
+		"}",
+		"# PROPOSE_ONLY=1 approves nothing. Each stage is promoted, and a release",
+		"# waits in ConfigHub until a person approves it; run the script again to",
+		"# publish what was approved. A stage with nothing new for its variants needs",
+		"# no approval, so a joining cluster waits in its own stage only.",
+		"# cub sveltos watch runs the script this way when a cluster joins.",
+		`approve() { [ -n "${PROPOSE_ONLY:-}" ] || cub variant approve --change-order "$1" --stage "$2" --quiet; }`,
+		`awaits() { [ -z "$waiting" ] || echo "$1 waits for approval in stage $waiting: cub variant approve --change-order $2 --stage $waiting"; }`,
+		"# deliver <profile> <variant Spaces>: apply the profile's delivery profiles.",
+		"# With PROPOSE_ONLY, only those whose variant has a release; the others",
+		"# follow on the run after their release is approved.",
+		"deliver() {",
+		`  local file=management/$1.yaml s; shift`,
+		`  [ -n "${PROPOSE_ONLY:-}" ] || { k apply -f "$file"; return; }`,
+		`  for s in "$@"; do`,
+		`    if [ "$(cub release list --space "$s" -o 'jq=[.[] | select(.Release.Published)] | length')" -gt 0 ]; then`,
+		fmt.Sprintf(`      k apply -f "$file" -l "%s=$s"`, VariantLabel),
+		"    else",
+		`      echo "$s has no release yet, so its delivery profile waits"`,
+		"    fi",
+		"  done",
 		"}",
 		"",
 		`step "0/6 Check before changing anything"`,
@@ -395,25 +423,40 @@ func ApplyScript(plan *Plan) string {
 		for _, v := range p.Variants {
 			spaces = append(spaces, v.Space)
 		}
+		description := p.Description
+		if description == "" {
+			description = "First release of " + strings.Join(spaces, ", ")
+		}
 		L = append(L,
-			line("cub", "changeorder", "create", "--space", p.BaseSpace, p.ReleaseOrder, "--change-workflow", p.BaseSpace+"/"+workflowSlug, "--description", "First release of "+strings.Join(spaces, ", "), "--allow-exists", "--quiet"),
+			line("cub", "changeorder", "create", "--space", p.BaseSpace, p.ReleaseOrder, "--change-workflow", p.BaseSpace+"/"+workflowSlug, "--description", description, "--allow-exists", "--quiet"),
 			"if rolled_out "+order+"; then",
 			"  echo "+q(p.Name+": every variant in this plan is released"),
-			"else")
+			"else",
+			"  waiting=")
 		if len(p.Classes) > 0 {
 			L = append(L, "  "+line("promote", order, basesStage))
 		}
-		for _, stage := range p.Stages {
+		// Each stage after the first waits for the stage ahead to release, so
+		// once a release waits for approval, the stages after it wait too.
+		for i, stage := range p.Stages {
+			indent := "  "
+			if i > 0 {
+				L = append(L, `  if [ -z "$waiting" ]; then`)
+				indent = "    "
+			}
 			L = append(L,
-				"  "+line("promote", order, stage),
-				"  "+line("cub", "variant", "approve", "--change-order", order, "--stage", stage, "--quiet"))
+				indent+line("promote", order, stage),
+				indent+line("approve", order, stage))
 			for _, v := range p.Variants {
 				if v.Stage == stage {
-					L = append(L, "  "+line("publish", v.Space, order, fmt.Sprint(len(p.Units))))
+					L = append(L, indent+line("publish", v.Space, order, fmt.Sprint(len(p.Units)), stage))
 				}
 			}
+			if i > 0 {
+				L = append(L, "  fi")
+			}
 		}
-		L = append(L, "fi")
+		L = append(L, "  "+line("awaits", p.Name, order), "fi")
 	}
 	if plan.Management != nil {
 		worker := fmt.Sprintf("cub worker get --space %s %s", plan.TargetsSpace, workerSlug)
@@ -432,7 +475,11 @@ func ApplyScript(plan *Plan) string {
 				live = append(live, p.Name)
 				continue
 			}
-			L = append(L, line("k", "apply", "-f", "management/"+p.Name+".yaml"))
+			words := []string{"deliver", p.Name}
+			for _, v := range p.Variants {
+				words = append(words, v.Space)
+			}
+			L = append(L, line(words...))
 		}
 		L = append(L, "", "echo", `echo "Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:"`, `echo "  kubectl get clustersummaries -A"`)
 		if len(live) > 0 {

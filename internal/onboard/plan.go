@@ -115,6 +115,9 @@ type Profile struct {
 	Stages       []string
 	Variants     []Variant
 	ReleaseOrder string
+	// Description is the release order's, when it says more than which
+	// variants it releases, such as why a cluster joined.
+	Description  string
 	WorkflowText string
 	// Policies are the ConfigMaps whose objects the base holds, which the
 	// delivery profiles no longer read.

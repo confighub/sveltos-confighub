@@ -11,6 +11,9 @@
 # is safe to re-run, which is also how a cluster that joined since gets its
 # variants. Step 6 is the one change to your management cluster: a Secret
 # holding the gateway credential, and one delivery profile per variant.
+#
+# PROPOSE_ONLY=1 bash apply.sh approves nothing: a release waits for a
+# person to approve it in ConfigHub, and a delivery profile for its release.
 set -euo pipefail
 cd "$(dirname "$0")"
 k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }
@@ -64,7 +67,32 @@ publish() {
   local out
   holds "$1" "$3" || return 1
   out=$(cub release publish "$1" --revision "ChangeOrder:$2" --quiet 2>&1) && return 0
-  case "$out" in *"no changes were made since :latest bundle"*) echo "$1 already released" ;; *) echo "$out" >&2; return 1 ;; esac
+  case "$out" in
+    *"no changes were made since :latest bundle"*) echo "$1 already released" ;;
+    *"requires approval"*) [ -n "${PROPOSE_ONLY:-}" ] || { echo "$out" >&2; return 1; }; echo "$1 waits for approval"; waiting=$4 ;;
+    *) echo "$out" >&2; return 1 ;;
+  esac
+}
+# PROPOSE_ONLY=1 approves nothing. Each stage is promoted, and a release
+# waits in ConfigHub until a person approves it; run the script again to
+# publish what was approved. A stage with nothing new for its variants needs
+# no approval, so a joining cluster waits in its own stage only.
+# cub sveltos watch runs the script this way when a cluster joins.
+approve() { [ -n "${PROPOSE_ONLY:-}" ] || cub variant approve --change-order "$1" --stage "$2" --quiet; }
+awaits() { [ -z "$waiting" ] || echo "$1 waits for approval in stage $waiting: cub variant approve --change-order $2 --stage $waiting"; }
+# deliver <profile> <variant Spaces>: apply the profile's delivery profiles.
+# With PROPOSE_ONLY, only those whose variant has a release; the others
+# follow on the run after their release is approved.
+deliver() {
+  local file=management/$1.yaml s; shift
+  [ -n "${PROPOSE_ONLY:-}" ] || { k apply -f "$file"; return; }
+  for s in "$@"; do
+    if [ "$(cub release list --space "$s" -o 'jq=[.[] | select(.Release.Published)] | length')" -gt 0 ]; then
+      k apply -f "$file" -l "sveltos.confighub.com/variant=$s"
+    else
+      echo "$s has no release yet, so its delivery profile waits"
+    fi
+  done
 }
 
 step "0/6 Check before changing anything"
@@ -140,34 +168,44 @@ cub changeorder create --space sveltos-ingress-nginx-base onboard-c3558924 --cha
 if rolled_out sveltos-ingress-nginx-base/onboard-c3558924; then
   echo 'ingress-nginx: every variant in this plan is released'
 else
+  waiting=
   promote sveltos-ingress-nginx-base/onboard-c3558924 prod
-  cub variant approve --change-order sveltos-ingress-nginx-base/onboard-c3558924 --stage prod --quiet
-  publish sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-base/onboard-c3558924 1
-  publish sveltos-ingress-nginx-prod-us sveltos-ingress-nginx-base/onboard-c3558924 1
+  approve sveltos-ingress-nginx-base/onboard-c3558924 prod
+  publish sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-base/onboard-c3558924 1 prod
+  publish sveltos-ingress-nginx-prod-us sveltos-ingress-nginx-base/onboard-c3558924 1 prod
+  awaits ingress-nginx sveltos-ingress-nginx-base/onboard-c3558924
 fi
 cub changeorder create --space sveltos-kyverno-base onboard-25e1c3f8 --change-workflow sveltos-kyverno-base/rollout --description 'First release of sveltos-kyverno-staging-eu, sveltos-kyverno-prod-eu, sveltos-kyverno-prod-us' --allow-exists --quiet
 if rolled_out sveltos-kyverno-base/onboard-25e1c3f8; then
   echo 'kyverno: every variant in this plan is released'
 else
+  waiting=
   promote sveltos-kyverno-base/onboard-25e1c3f8 staging
-  cub variant approve --change-order sveltos-kyverno-base/onboard-25e1c3f8 --stage staging --quiet
-  publish sveltos-kyverno-staging-eu sveltos-kyverno-base/onboard-25e1c3f8 1
-  promote sveltos-kyverno-base/onboard-25e1c3f8 prod
-  cub variant approve --change-order sveltos-kyverno-base/onboard-25e1c3f8 --stage prod --quiet
-  publish sveltos-kyverno-prod-eu sveltos-kyverno-base/onboard-25e1c3f8 1
-  publish sveltos-kyverno-prod-us sveltos-kyverno-base/onboard-25e1c3f8 1
+  approve sveltos-kyverno-base/onboard-25e1c3f8 staging
+  publish sveltos-kyverno-staging-eu sveltos-kyverno-base/onboard-25e1c3f8 1 staging
+  if [ -z "$waiting" ]; then
+    promote sveltos-kyverno-base/onboard-25e1c3f8 prod
+    approve sveltos-kyverno-base/onboard-25e1c3f8 prod
+    publish sveltos-kyverno-prod-eu sveltos-kyverno-base/onboard-25e1c3f8 1 prod
+    publish sveltos-kyverno-prod-us sveltos-kyverno-base/onboard-25e1c3f8 1 prod
+  fi
+  awaits kyverno sveltos-kyverno-base/onboard-25e1c3f8
 fi
 cub changeorder create --space sveltos-kyverno-policies-base onboard-1b86298b --change-workflow sveltos-kyverno-policies-base/rollout --description 'First release of sveltos-kyverno-policies-staging-eu, sveltos-kyverno-policies-prod-eu, sveltos-kyverno-policies-prod-us' --allow-exists --quiet
 if rolled_out sveltos-kyverno-policies-base/onboard-1b86298b; then
   echo 'kyverno-policies: every variant in this plan is released'
 else
+  waiting=
   promote sveltos-kyverno-policies-base/onboard-1b86298b staging
-  cub variant approve --change-order sveltos-kyverno-policies-base/onboard-1b86298b --stage staging --quiet
-  publish sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-base/onboard-1b86298b 1
-  promote sveltos-kyverno-policies-base/onboard-1b86298b prod
-  cub variant approve --change-order sveltos-kyverno-policies-base/onboard-1b86298b --stage prod --quiet
-  publish sveltos-kyverno-policies-prod-eu sveltos-kyverno-policies-base/onboard-1b86298b 1
-  publish sveltos-kyverno-policies-prod-us sveltos-kyverno-policies-base/onboard-1b86298b 1
+  approve sveltos-kyverno-policies-base/onboard-1b86298b staging
+  publish sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-base/onboard-1b86298b 1 staging
+  if [ -z "$waiting" ]; then
+    promote sveltos-kyverno-policies-base/onboard-1b86298b prod
+    approve sveltos-kyverno-policies-base/onboard-1b86298b prod
+    publish sveltos-kyverno-policies-prod-eu sveltos-kyverno-policies-base/onboard-1b86298b 1 prod
+    publish sveltos-kyverno-policies-prod-us sveltos-kyverno-policies-base/onboard-1b86298b 1 prod
+  fi
+  awaits kyverno-policies sveltos-kyverno-policies-base/onboard-1b86298b
 fi
 
 step "6/6 Point Sveltos at ConfigHub (your management cluster)"
@@ -179,9 +217,9 @@ k create secret generic confighub-sveltos-targets --namespace projectsveltos --t
   --from-file=username=<(cub worker get --space sveltos-targets server-worker -o jq=.BridgeWorker.BridgeWorkerID | tr -d '\n') \
   --from-file=password=<(cub worker get --space sveltos-targets server-worker --include-secret -o jq=.BridgeWorker.Secret | tr -d '\n') \
   --dry-run=client -o yaml | k apply -f -
-k apply -f management/ingress-nginx.yaml
-k apply -f management/kyverno.yaml
-k apply -f management/kyverno-policies.yaml
+deliver ingress-nginx sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-prod-us
+deliver kyverno sveltos-kyverno-staging-eu sveltos-kyverno-prod-eu sveltos-kyverno-prod-us
+deliver kyverno-policies sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-prod-eu sveltos-kyverno-policies-prod-us
 
 echo
 echo "Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:"

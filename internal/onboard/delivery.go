@@ -70,15 +70,28 @@ func policyUnitsOf(profile string, spec map[string]any, configMaps map[string]Do
 	return units, policies, carried, problems
 }
 
+// VariantLabel names, on each delivery profile, the variant Space whose
+// releases it delivers.
+const VariantLabel = "sveltos.confighub.com/variant"
+
 // deliveryProfile is the one profile on the management cluster that sends a
 // variant's releases to its cluster: addressed to that cluster alone, reading
 // the variant's latest release from the ConfigHub gateway, and keeping every
 // other setting of the profile it replaces, such as its syncMode.
 func deliveryProfile(v Variant, source *yaml.Node, secretName string, keptHooks bool, checks []*yaml.Node) *yaml.Node {
 	metadata := mapping(scalar("name"), scalar(v.ProfileName))
-	if labels := mapGet(mapGet(source, "metadata"), "labels"); labels != nil && len(labels.Content) > 0 {
-		metadata.Content = append(metadata.Content, scalar("labels"), deepCopy(labels))
+	// The profile's own labels, and the variant it delivers, so one cluster's
+	// delivery profile can be applied alone: kubectl apply -l.
+	labels := mapping()
+	if own := mapGet(mapGet(source, "metadata"), "labels"); own != nil {
+		for i := 0; i+1 < len(own.Content); i += 2 {
+			if own.Content[i].Value != VariantLabel {
+				labels.Content = append(labels.Content, deepCopy(own.Content[i]), deepCopy(own.Content[i+1]))
+			}
+		}
 	}
+	labels.Content = append(labels.Content, scalar(VariantLabel), scalar(v.Space))
+	metadata.Content = append(metadata.Content, scalar("labels"), labels)
 	ref := mapping(
 		scalar("apiVersion"), scalar(v.ClusterRef.APIVersion),
 		scalar("kind"), scalar(v.ClusterRef.Kind),
