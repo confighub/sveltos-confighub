@@ -16,6 +16,21 @@ your policies before it ships.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## Unreleased
+
+**Preview a change's impact before anything ships: `cub sveltos impact`.** It
+evaluates each cluster's configuration under the policies in force and under a
+candidate, in a disposable API server, by server-side dry run. Each object
+comes out newly denied, newly allowed, unchanged, or unknown.
+- `--candidate` previews a proposed policy against every configuration running.
+- `--next` previews what each cluster's next promotion brings against its own
+  policies.
+- `--corpus` adds the revisions ConfigHub recorded as failing, so a weaker
+  policy shows what it would newly allow.
+
+Recorded on the Meridian slice ([impact-2026-09-28.log](../examples/meridian-slice/impact-2026-09-28.log)).
+See [Before anything ships](user/policy-checks.md#before-anything-ships-preview-a-changes-impact).
+
 ## 0.7.0, 2026-09-28
 
 **Check every change against your policies.** Three additions, all measured

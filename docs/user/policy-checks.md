@@ -187,3 +187,93 @@ of each per variant.
 `cub sveltos watch` keeps working with a requirement: a joining cluster waits
 for its check as well as its approval, and the watcher prints the
 `cub attestation create` it needs.
+
+## Before anything ships: preview a change's impact
+
+The gates stop a change that breaks a policy. `cub sveltos impact` answers the
+question before that, in both directions:
+- **A proposed change against each cluster's own policies:** what will its
+  next promotion bring, and will that cluster's policies accept it?
+- **A proposed policy against every configuration already running:** what
+  would it refuse, and, with the changes ConfigHub refused before, what would
+  it newly let through?
+
+It evaluates each target twice in a **sandbox**: a disposable API server that
+holds policies and nothing else. It runs once under the policies in force, and
+once under the candidate. Each object a policy matches is submitted with a
+server-side dry run, so the verdict is the API server's own, and nothing is
+created. Each object comes out as one of four:
+- **newly denied:** passes today, refused under the candidate;
+- **newly allowed:** refused today, passes under the candidate;
+- **unchanged;**
+- **unknown:** the verdict needs what the configuration does not hold, such as
+  the requesting user.
+
+Each row names the target, the revision it runs (and, for a proposal, the
+revision it would take), the object, and the policy's own message.
+
+**The sandbox.** Any small cluster will do, for example kind:
+
+```bash
+kind create cluster --name policy-sandbox --kubeconfig sandbox.kubeconfig
+```
+
+The policies select each target's stage through the namespace label
+`impact.confighub.com/stage`, which the tool sets on the namespace it gives
+each target. The Meridian example's policies are in
+[examples/meridian-slice/policies](../../examples/meridian-slice/policies).
+
+**A policy change against the fleet.** Lowering prod's replica ceiling from 5
+to 2:
+
+```bash
+cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno \
+  --policy policies/replica-limits.yaml --policy policies/disallow-latest-tag.yaml \
+  --candidate policies/candidates/replica-limits-prod-2.yaml
+```
+
+```text
+TARGET            STAGE  CONFIG     OBJECT                                   NOW      THEN    VERDICT       WHY
+eu-central-prod1  prod   kyverno@6  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+...
+4 newly denied, 0 newly allowed, 20 unchanged, 0 unknown
+```
+
+A ValidatingAdmissionPolicy does not evict what runs. Newly denied means the
+cluster's next create or update of that object would be refused.
+
+**A proposed change against each cluster's policies.** Make the change, open
+its change order, and promote it into the class bases only. Then `--next`
+compares what each cluster runs with what its next promotion brings. On the
+Meridian slice, 6 admission controller replicas at the root reach test, whose
+class base does not protect replicas, and test's ceiling is 4. uat and prod
+protect theirs, so nothing changes there:
+
+```text
+TARGET            STAGE  CONFIG                                           OBJECT                                   NOW      THEN    VERDICT       WHY
+eu-central-test1  test   kyverno@10 -> mer-kyverno-class-test/kyverno@13  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-test): replicas 6 is above the ceiling of 4 for this class
+1 newly denied, 0 newly allowed, 23 unchanged, 0 unknown
+```
+
+**What a weaker policy lets through.** Everything running already passes, so
+the running configurations cannot show what a weaker policy would allow. The
+changes that were refused can. `--corpus <space>` adds the revisions ConfigHub
+recorded as failing a policy. Exempting Kyverno's controllers from
+`disallow-latest-tag` newly allows the two revisions that once put the cleanup
+controller on `:latest`. Newly allowed is only as complete as the corpus: add
+policy tests or proposed changes for anything the history does not hold.
+
+**Unknown.** A policy that reads the requesting user (`request.userInfo`), the
+previous object (`oldObject`), the namespace object, or the authorizer cannot
+be judged from configuration. The row says so and names what is missing.
+
+**One thing measured in the sandbox:** on Kubernetes v1.35, once a
+ValidatingAdmissionPolicy is deleted, the parameters its successors read stay
+as they were until the API server restarts. So the tool applies policies in
+place, removes only a policy neither set has, and says when it did. If a
+result looks wrong after that, restart the sandbox's API server
+(`docker restart <sandbox>-control-plane` for kind) and run again.
+
+Recorded on the Meridian slice:
+[impact-2026-09-28.log](../../examples/meridian-slice/impact-2026-09-28.log).
+The same preview inside ConfigHub itself is confighubai/confighub#5325.

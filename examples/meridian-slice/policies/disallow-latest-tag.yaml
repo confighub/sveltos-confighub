@@ -1,0 +1,26 @@
+# No container image on a mutable tag such as `latest`, in every namespace.
+# The same rule the Kyverno checker enforced on 2026-09-28, written as a
+# ValidatingAdmissionPolicy.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: disallow-latest-tag
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+  validations:
+    - expression: "object.spec.template.spec.containers.all(c, !c.image.endsWith(':latest'))"
+      message: "Using a mutable image tag such as 'latest' is not allowed."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: disallow-latest-tag
+spec:
+  policyName: disallow-latest-tag
+  validationActions: ["Deny"]

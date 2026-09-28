@@ -1,0 +1,105 @@
+# Previewing policy impact on the Meridian slice, before anything ships.
+# kind, stock Sveltos v1.15.0, ConfigHub v0.6.5, 2026-09-28. The sandbox is a
+# separate kind cluster (Kubernetes v1.35) that holds the policies and nothing
+# else; every verdict below is its API server's own, from a server-side dry run.
+# The policies are in policies/: replica-limits (a replica ceiling per class:
+# test 4, uat 3, prod 5) and disallow-latest-tag, with the candidates in
+# policies/candidates/. See docs/user/policy-checks.md.
+#
+# For case 1, a proposal was made at the root and promoted into the class bases
+# only, so that each cluster's next promotion would bring it. Nothing was
+# released. After the preview it was aborted and taken back out (case 5).
+#
+# During the recording: deleting a ValidatingAdmissionPolicy left the parameters
+# its successors read stale until the sandbox's API server restarted, so
+# `cub sveltos impact` now applies policies in place, and the sandbox was
+# restarted before this run.
+
+== 0. The proposal: 6 admission controller replicas at the root, promoted into the class bases only
+$ cub function set --space mer-kyverno-base --unit kyverno --change-desc "Proposal: 6 admission controller replicas" -- set-yq '(select(.kind == "Deployment" and .metadata.name == "kyverno-admission-controller") | .spec.replicas) = 6'
+$ cub changeorder create --space mer-kyverno-base six-replicas --change-workflow mer-kyverno-base/rollout
+ok
+$ cub variant promote --change-order mer-kyverno-base/six-replicas --target-stage bases --squash
+Failed: no response body from server for req 
+-- class-test admission replicas at head: 6
+-- class-uat admission replicas at head: 2
+-- class-prod admission replicas at head: 3
+
+== 1. Application to policies: the root's proposal (6 admission controller replicas, promoted into the class bases only) against each cluster's own policies
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --policy policies/replica-limits.yaml --policy policies/disallow-latest-tag.yaml --next
+policies in force: policies/replica-limits.yaml, policies/disallow-latest-tag.yaml
+
+TARGET            STAGE  CONFIG                                           OBJECT                                   NOW      THEN    VERDICT       WHY
+eu-central-test1  test   kyverno@10 -> mer-kyverno-class-test/kyverno@13  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-test): replicas 6 is above the ceiling of 4 for this class
+
+1 newly denied, 0 newly allowed, 23 unchanged, 0 unknown
+
+== 2. Policy to the fleet: prod's ceiling lowered from 5 to 2, against every configuration running
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --policy policies/replica-limits.yaml --policy policies/disallow-latest-tag.yaml --candidate policies/candidates/replica-limits-prod-2.yaml
+policies in force: policies/replica-limits.yaml, policies/disallow-latest-tag.yaml
+candidate:         policies/candidates/replica-limits-prod-2.yaml
+
+TARGET            STAGE  CONFIG     OBJECT                                   NOW      THEN    VERDICT       WHY
+eu-central-prod1  prod   kyverno@6  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+eu-central-prod2  prod   kyverno@6  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+eu-central-prod3  prod   kyverno@4  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+eu-central-prod4  prod   kyverno@4  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+
+4 newly denied, 0 newly allowed, 20 unchanged, 0 unknown
+
+== 3. What a weaker policy lets through: Kyverno's controllers exempt from disallow-latest-tag, against the revisions ConfigHub recorded as failing
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --corpus mer-kyverno-base --policy policies/replica-limits.yaml --policy policies/disallow-latest-tag.yaml --candidate policies/candidates/disallow-latest-tag-exempt-kyverno.yaml
+policies in force: policies/replica-limits.yaml, policies/disallow-latest-tag.yaml
+candidate:         policies/candidates/disallow-latest-tag-exempt-kyverno.yaml
+
+TARGET                      STAGE  CONFIG                           OBJECT                                 NOW     THEN     VERDICT        WHY
+mer-kyverno-base/kyverno@6         kyverno@6 (recorded as failing)  Deployment kyverno-cleanup-controller  denied  allowed  newly allowed  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+mer-kyverno-base/kyverno@8         kyverno@8 (recorded as failing)  Deployment kyverno-cleanup-controller  denied  allowed  newly allowed  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+
+0 newly denied, 2 newly allowed, 6 unchanged, 0 unknown
+
+== 4. Unknown: a candidate that depends on who makes the request, which no configuration holds
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --policy policies/replica-limits.yaml --policy policies/disallow-latest-tag.yaml --candidate policies/candidates/platform-team-only.yaml
+policies in force: policies/replica-limits.yaml, policies/disallow-latest-tag.yaml
+candidate:         policies/candidates/platform-team-only.yaml
+
+TARGET            STAGE  CONFIG      OBJECT                                    NOW      THEN     VERDICT  WHY
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-admission-controller   allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-background-controller  allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-reports-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-admission-controller   allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-background-controller  allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-reports-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-admission-controller   allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-background-controller  allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-reports-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-admission-controller   allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-background-controller  allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-reports-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@10  Deployment kyverno-admission-controller   allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@10  Deployment kyverno-background-controller  allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@10  Deployment kyverno-cleanup-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@10  Deployment kyverno-reports-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-admission-controller   allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-background-controller  allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-reports-controller     allowed  unknown  unknown  policy platform-team-only reads request.userInfo, which the configuration does not hold
+
+0 newly denied, 0 newly allowed, 0 unchanged, 24 unknown
+
+== 5. Not shipped: the proposal is given up and taken back out of the class bases
+aborted six-replicas
+$ cub variant demote mer-kyverno-class-test --change-order mer-kyverno-base/six-replicas
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-uat --change-order mer-kyverno-base/six-replicas
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-prod --change-order mer-kyverno-base/six-replicas
+  Success: 1 unit(s)
+-- mer-kyverno-base admission replicas at head: 4
+-- mer-kyverno-class-test admission replicas at head: 4
+-- mer-kyverno-class-uat admission replicas at head: 2
+-- mer-kyverno-class-prod admission replicas at head: 3

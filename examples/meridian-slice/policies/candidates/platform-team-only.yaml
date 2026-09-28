@@ -1,0 +1,30 @@
+# CANDIDATE: only the platform team may create or change Kyverno's
+# Deployments. The verdict depends on who makes the request, which no
+# configuration holds, so `cub sveltos impact` reports it as unknown rather
+# than guessing.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: platform-team-only
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    objectSelector:
+      matchLabels:
+        app.kubernetes.io/part-of: kyverno
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+  validations:
+    - expression: "request.userInfo.groups.exists(g, g == 'platform-team')"
+      message: "Only the platform team may change Kyverno."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: platform-team-only
+spec:
+  policyName: platform-team-only
+  validationActions: ["Deny"]
