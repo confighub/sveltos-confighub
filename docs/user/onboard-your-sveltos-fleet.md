@@ -33,6 +33,18 @@ cub plugin install confighub/cub-helm
 `cub sveltos` renders charts with `cub helm template`, ConfigHub's own Helm
 renderer, so a chart onboarded here holds the objects `cub helm` would.
 
+In this guide:
+- [The words you will meet](#the-words-you-will-meet)
+- [The journey](#the-journey), in three steps:
+  [export](#1-export-what-sveltos-knows), [plan](#2-see-the-plan),
+  [apply](#3-write-the-steps-read-them-run-them)
+- [If your profiles are live](#if-your-profiles-are-live): the handover, and its checks
+- [Kyverno policies, and other `policyRefs`](#kyverno-policies-and-other-policyrefs)
+- [Classes: a base per environment, or per accelerator](#classes-a-base-per-environment-or-per-accelerator)
+- [Making a change afterwards](#making-a-change-afterwards): a field, a chart upgrade, the rollout
+- [When a cluster joins](#when-a-cluster-joins)
+- [What this version leaves alone](#what-this-version-leaves-alone)
+
 ## The words you will meet
 
 - **Base**: what a profile's charts and policies render to, stored once. It
