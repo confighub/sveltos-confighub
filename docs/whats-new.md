@@ -4,7 +4,8 @@
 one variant per cluster, every change reviewed and released stage by stage,
 and Sveltos still delivering. Version 0.5 changes what ConfigHub holds.
 Version 0.6 tells ConfigHub what Sveltos delivered, and proposes each cluster
-that joins for a person to approve.
+that joins for a person to approve. Version 0.7 checks every change against
+your policies before it ships.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -15,7 +16,7 @@ that joins for a person to approve.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## Unreleased
+## 0.7.0, 2026-09-28
 
 **Check every change against your policies.** Three additions, all measured
 on the Meridian kind fleet with a Kyverno checker. See [Check every change

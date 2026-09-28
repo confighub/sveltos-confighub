@@ -68,7 +68,7 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 | `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. |
 | `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
 | `cub sveltos check` | Runs a policy check, such as Kyverno, on a change in one stage, and records the verdict in ConfigHub. Each stage's release can require a Pass. |
-| `cub sveltos version` | Prints the version. The current release is **v0.6.0**; see [what's new](docs/whats-new.md). |
+| `cub sveltos version` | Prints the version. The current release is **v0.7.0**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
 ConfigHub's own `cub` commands, shown below.
@@ -439,8 +439,8 @@ cluster: `npm run verify` and `go test ./...`.
 - [Check every change against your policies](docs/user/policy-checks.md):
   Kyverno before anything ships, the two gates, and what happens when the
   checker is away.
-- [What's new](docs/whats-new.md): what 0.5 and 0.6 changed, and how to move
-  from 0.4.
+- [What's new](docs/whats-new.md): what 0.5, 0.6 and 0.7 changed, and how to
+  move from 0.4.
 - [chartrender](chartrender/README.md): the chart rules, as a Go package for
   other tools.
 - [Before 0.5](docs/chapters.md): how this integration worked before it
@@ -448,9 +448,8 @@ cluster: `npm run verify` and `go test ./...`.
 
 ## Status
 
-`cub sveltos` v0.6.0 is tested on kind with stock Sveltos v1.15.0. It has not
-run in a production fleet yet. The policy gates and `cub sveltos check` are on
-main, not released yet.
+`cub sveltos` v0.7.0 is tested on kind with stock Sveltos v1.15.0. It has not
+run in a production fleet yet.
 
 To stop a rollout part-way, abort its change order, then undo it in each Space
 it reached with `cub variant demote`. There is no single command that does
