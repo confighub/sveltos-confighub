@@ -994,8 +994,9 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 					keptHooks = true
 				}
 			}
+			checks := healthChecks(p.Units)
 			for _, v := range p.Variants {
-				set.Profiles = append(set.Profiles, deliveryProfile(v, sources[v.Member], gatewaySecretName(plan.TargetsSpace), keptHooks))
+				set.Profiles = append(set.Profiles, deliveryProfile(v, sources[v.Member], gatewaySecretName(plan.TargetsSpace), keptHooks, checks))
 			}
 			m.ByProfile = append(m.ByProfile, set)
 		}

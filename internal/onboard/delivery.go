@@ -74,7 +74,7 @@ func policyUnitsOf(profile string, spec map[string]any, configMaps map[string]Do
 // variant's releases to its cluster: addressed to that cluster alone, reading
 // the variant's latest release from the ConfigHub gateway, and keeping every
 // other setting of the profile it replaces, such as its syncMode.
-func deliveryProfile(v Variant, source *yaml.Node, secretName string, keptHooks bool) *yaml.Node {
+func deliveryProfile(v Variant, source *yaml.Node, secretName string, keptHooks bool, checks []*yaml.Node) *yaml.Node {
 	metadata := mapping(scalar("name"), scalar(v.ProfileName))
 	if labels := mapGet(mapGet(source, "metadata"), "labels"); labels != nil && len(labels.Content) > 0 {
 		metadata.Content = append(metadata.Content, scalar("labels"), deepCopy(labels))
@@ -95,7 +95,7 @@ func deliveryProfile(v Variant, source *yaml.Node, secretName string, keptHooks 
 	if s := mapGet(source, "spec"); s != nil {
 		for i := 0; i+1 < len(s.Content); i += 2 {
 			switch s.Content[i].Value {
-			case "clusterSelector", "clusterRefs", "setRefs", "helmCharts", "dependsOn", "continueOnError":
+			case "clusterSelector", "clusterRefs", "setRefs", "helmCharts", "dependsOn", "continueOnError", "validateHealths":
 				continue
 			case "policyRefs":
 				for _, r := range s.Content[i+1].Content {
@@ -132,6 +132,16 @@ func deliveryProfile(v Variant, source *yaml.Node, secretName string, keptHooks 
 		spec.Content = append(spec.Content, scalar("dependsOn"), deps)
 	}
 	spec.Content = append(spec.Content, scalar("policyRefs"), refs)
+	// Sveltos holds the feature out of Provisioned until every check passes,
+	// so Provisioned means the delivered workloads are available: what cub
+	// sveltos status reports as healthy. The source's own checks come first.
+	all := carriedHealthChecks(source)
+	for _, c := range checks {
+		all = append(all, deepCopy(c))
+	}
+	if len(all) > 0 {
+		spec.Content = append(spec.Content, scalar("validateHealths"), seq(all...))
+	}
 	return mapping(
 		scalar("apiVersion"), scalar(profileAPIVersion),
 		scalar("kind"), scalar("ClusterProfile"),
