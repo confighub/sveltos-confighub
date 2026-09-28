@@ -40,6 +40,25 @@ Sveltos runs these checks when it applies a release, not continuously.
   into uat while test's new release was not applied yet;
 - the promotion went through once `status` reported test Synced and Healthy.
 
+**A cluster that joins is proposed, and ships once approved: `cub sveltos
+watch`** (#41). Each minute it plans the saved profiles against the
+SveltosClusters. For a cluster a profile newly selects, it runs `apply.sh` with
+`PROPOSE_ONLY=1`, which makes the cluster's variants and approves nothing. The
+release order waits in the new cluster's own stage, since a stage with nothing
+new needs no approval. Once a person approves, the next look publishes the
+release and applies the delivery profile. It records why it proposed each
+variant, on its Space and in the order's description. A cluster no profile
+selects gets nothing, and is named. See [When a cluster
+joins](user/onboard-your-sveltos-fleet.md#when-a-cluster-joins).
+
+**`PROPOSE_ONLY=1 bash apply.sh`** is the same by hand. A release that needs
+approval waits instead of failing. The stages after it wait too, and a
+delivery profile waits for its variant's first release.
+
+**Each delivery profile is labelled with its variant**:
+`sveltos.confighub.com/variant: <variant Space>`. So one cluster's profile can
+be applied alone (`kubectl apply -f management/<profile>.yaml -l …`) or listed.
+
 **Starting something new** is documented. Write the ClusterProfile you would
 have given Sveltos, and plan from it. It was measured with cert-manager on the
 Meridian slice's two prod clusters.

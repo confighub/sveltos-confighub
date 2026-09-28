@@ -58,6 +58,8 @@ type WatchReport struct {
 	Unmatched []string
 	// Waiting are the release orders not finished, as <base>/<order>.
 	Waiting []string
+	// Clusters and Variants count what the profiles select.
+	Clusters, Variants int
 	// Ran says apply.sh ran, and Output is what it printed.
 	Ran    bool
 	Output []byte
@@ -145,6 +147,14 @@ func (w *Watcher) Once() (WatchReport, error) {
 		w.plan, w.seen = plan, seen
 	}
 	plan := w.plan
+	governed := map[string]bool{}
+	for _, p := range plan.Profiles {
+		for _, v := range p.Variants {
+			governed[v.ClusterKey] = true
+			report.Variants++
+		}
+	}
+	report.Clusters = len(governed)
 	for _, c := range plan.Ungoverned {
 		if !w.told[c.Key] {
 			w.told[c.Key] = true

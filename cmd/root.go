@@ -320,7 +320,7 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 			wo.Profiles, wo.Plan = docs, wf.options()
 			w := onboard.NewWatcher(onboard.Run, wo)
 			out, errs := c.OutOrStdout(), c.ErrOrStderr()
-			last := ""
+			last, told := "", ""
 			for {
 				r, err := w.Once()
 				stamp := time.Now().UTC().Format(time.RFC3339)
@@ -333,7 +333,19 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 					last = ""
 				}
 				printWatch(out, stamp, r)
+				// Where the fleet stands, when that changes.
+				if err == nil && !r.Ran {
+					state := fmt.Sprintf("%d clusters selected, %d variants: nothing to propose", r.Clusters, r.Variants)
+					if len(r.Waiting) > 0 {
+						state = "waiting for approval in ConfigHub: " + strings.Join(r.Waiting, ", ")
+					}
+					if state != told {
+						fmt.Fprintf(out, "%s %s\n", stamp, state)
+					}
+					told = state
+				}
 				if r.Ran {
+					told = ""
 					if lerr := appendLog(filepath.Join(wo.Out, "watch.log"), stamp, r); lerr != nil {
 						fmt.Fprintln(errs, "Error:", lerr)
 					}

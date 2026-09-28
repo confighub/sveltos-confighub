@@ -51,6 +51,7 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 | `cub sveltos apply` | Writes the plan out as files and a script, `apply.sh`, for you to read and then run. Writes `handover.sh` too, if your profiles are live. |
 | `cub sveltos compare` | Checks that what ConfigHub will deliver to a cluster is exactly what Helm installed there. `handover.sh` runs it for you. |
 | `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. New, not released yet. |
+| `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. New, not released yet. |
 | `cub sveltos version` | Prints the version. The current release is **v0.5.1**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
@@ -229,6 +230,21 @@ The new cluster gets its own variant, with every change made since
 onboarding, and is released through its stage with an approval. A cluster
 labelled by mistake gets nothing.
 
+Or let the watcher propose it as the cluster registers. It approves nothing:
+
+```bash
+cub sveltos watch onboard/profiles.yaml --out onboard --context <your management cluster context> --stage-label env --stages staging,prod
+```
+
+```
+prod-us joined kyverno (env=prod, region=us): proposed sveltos-kyverno-prod-us in stage prod
+kyverno waits for approval in stage prod: cub variant approve --change-order sveltos-kyverno-base/onboard-1a2b3c4d --stage prod
+```
+
+Someone runs that `cub variant approve`. On its next look the watcher
+publishes the release and applies the cluster's delivery profile, and Sveltos
+delivers. Labels still decide what is proposed; a person decides what ships.
+
 ### 7. See what every cluster runs, whether it is healthy, and who changed it
 
 ```bash
@@ -322,7 +338,8 @@ cluster: `npm run verify` and `go test ./...`.
 
 `cub sveltos` v0.5.1 is tested on kind with stock Sveltos v1.15.0. It has not
 run in a production fleet yet. `cub sveltos status`, which reports live status
-to ConfigHub, is on main and not released yet. Rollback here restores one
+to ConfigHub, is on main and not released yet. So is `cub sveltos watch`,
+whose live join has not been recorded yet. Rollback here restores one
 cluster to an exact revision. There's no single action that halts and reverses
 a rollout across the fleet.
 
