@@ -18,10 +18,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }
 step() { printf '\n== %s\n' "$*"; }
-# Re-running picks up where ConfigHub says each first release stands: a
-# finished change order is skipped, and a variant with nothing new is kept.
-# A cluster that joined since makes a new change order, which releases it.
-rolled_out() { [ "$(cub changeorder get --space "${1%/*}" "${1#*/}" -o jq=.ChangeOrder.Stage)" = Completed ]; }
+# Re-running picks up where ConfigHub says each first release stands: once
+# every variant has a published release, there is nothing to release, and a
+# variant with nothing new is kept. A cluster that joined since has none, so
+# a new change order releases it. (The order's own stage cannot say this: an
+# order that carries no change for a freshly cloned variant is resolved
+# while that variant still waits for its first release.)
+released() { [ "$(cub release list --space "$1" -o 'jq=[.[] | select(.Release.Published)] | length')" -gt 0 ]; }
+rolled_out() { local s; for s in "$@"; do released "$s" || return 1; done; }
 # A class base takes its departures once, as a fresh clone (an empty
 # revision, then the clone), and they touch only their own fields and
 # objects. Later revisions are changes made in ConfigHub, which a re-run
@@ -87,7 +91,7 @@ deliver() {
   local file=management/$1.yaml s; shift
   [ -n "${PROPOSE_ONLY:-}" ] || { k apply -f "$file"; return; }
   for s in "$@"; do
-    if [ "$(cub release list --space "$s" -o 'jq=[.[] | select(.Release.Published)] | length')" -gt 0 ]; then
+    if released "$s"; then
       k apply -f "$file" -l "sveltos.confighub.com/variant=$s"
     else
       echo "$s has no release yet, so its delivery profile waits"
@@ -164,10 +168,10 @@ cub unit create --space sveltos-management delivery-kyverno-policies management/
 cub unit update --space sveltos-management delivery-kyverno-policies management/kyverno-policies.yaml --change-desc 'The delivery profiles for every kyverno-policies variant this plan holds' --quiet
 
 step "5/6 Release each variant, stage by stage: promote, approve, publish"
-cub changeorder create --space sveltos-ingress-nginx-base onboard-c3558924 --change-workflow sveltos-ingress-nginx-base/rollout --description 'First release of sveltos-ingress-nginx-prod-eu, sveltos-ingress-nginx-prod-us' --allow-exists --quiet
-if rolled_out sveltos-ingress-nginx-base/onboard-c3558924; then
+if rolled_out sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-prod-us; then
   echo 'ingress-nginx: every variant in this plan is released'
 else
+  cub changeorder create --space sveltos-ingress-nginx-base onboard-c3558924 --change-workflow sveltos-ingress-nginx-base/rollout --description 'First release of sveltos-ingress-nginx-prod-eu, sveltos-ingress-nginx-prod-us' --allow-exists --quiet
   waiting=
   promote sveltos-ingress-nginx-base/onboard-c3558924 prod
   approve sveltos-ingress-nginx-base/onboard-c3558924 prod
@@ -175,10 +179,10 @@ else
   publish sveltos-ingress-nginx-prod-us sveltos-ingress-nginx-base/onboard-c3558924 1 prod
   awaits ingress-nginx sveltos-ingress-nginx-base/onboard-c3558924
 fi
-cub changeorder create --space sveltos-kyverno-base onboard-25e1c3f8 --change-workflow sveltos-kyverno-base/rollout --description 'First release of sveltos-kyverno-staging-eu, sveltos-kyverno-prod-eu, sveltos-kyverno-prod-us' --allow-exists --quiet
-if rolled_out sveltos-kyverno-base/onboard-25e1c3f8; then
+if rolled_out sveltos-kyverno-staging-eu sveltos-kyverno-prod-eu sveltos-kyverno-prod-us; then
   echo 'kyverno: every variant in this plan is released'
 else
+  cub changeorder create --space sveltos-kyverno-base onboard-25e1c3f8 --change-workflow sveltos-kyverno-base/rollout --description 'First release of sveltos-kyverno-staging-eu, sveltos-kyverno-prod-eu, sveltos-kyverno-prod-us' --allow-exists --quiet
   waiting=
   promote sveltos-kyverno-base/onboard-25e1c3f8 staging
   approve sveltos-kyverno-base/onboard-25e1c3f8 staging
@@ -191,10 +195,10 @@ else
   fi
   awaits kyverno sveltos-kyverno-base/onboard-25e1c3f8
 fi
-cub changeorder create --space sveltos-kyverno-policies-base onboard-1b86298b --change-workflow sveltos-kyverno-policies-base/rollout --description 'First release of sveltos-kyverno-policies-staging-eu, sveltos-kyverno-policies-prod-eu, sveltos-kyverno-policies-prod-us' --allow-exists --quiet
-if rolled_out sveltos-kyverno-policies-base/onboard-1b86298b; then
+if rolled_out sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-prod-eu sveltos-kyverno-policies-prod-us; then
   echo 'kyverno-policies: every variant in this plan is released'
 else
+  cub changeorder create --space sveltos-kyverno-policies-base onboard-1b86298b --change-workflow sveltos-kyverno-policies-base/rollout --description 'First release of sveltos-kyverno-policies-staging-eu, sveltos-kyverno-policies-prod-eu, sveltos-kyverno-policies-prod-us' --allow-exists --quiet
   waiting=
   promote sveltos-kyverno-policies-base/onboard-1b86298b staging
   approve sveltos-kyverno-policies-base/onboard-1b86298b staging

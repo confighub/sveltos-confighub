@@ -174,6 +174,18 @@ func (w *Watcher) Once() (WatchReport, error) {
 	for _, s := range slugs {
 		exists[s] = true
 	}
+	out, err = w.run("cub", "release", "list", "--space", "*", "--where", fmt.Sprintf("Published = true AND Space.Slug LIKE '%s-%%'", plan.Prefix), "-o", "jq=[.[] | (.Release // .) | .SpaceSlug] | unique")
+	if err != nil {
+		return report, err
+	}
+	var releasedSlugs []string
+	if err := json.Unmarshal(out, &releasedSlugs); err != nil {
+		return report, fmt.Errorf("reading the releases: %w", err)
+	}
+	released := map[string]bool{}
+	for _, s := range releasedSlugs {
+		released[s] = true
+	}
 	now := w.opts.Now().UTC().Format(time.RFC3339)
 	// apply.sh runs for a join, for a release order not made yet, and when a
 	// waiting order has approvals it did not have when apply.sh last ran. An
@@ -199,18 +211,26 @@ func (w *Watcher) Once() (WatchReport, error) {
 			approvals[order], needed = 0, true
 			continue
 		}
-		out, err := w.run("cub", "changeorder", "get", "--space", p.BaseSpace, p.ReleaseOrder, "-o", "jq=[.ChangeOrder.Stage, .ChangeOrder.ChangeOrderID]")
-		var got []string
-		if err != nil || json.Unmarshal(out, &got) != nil || len(got) != 2 {
-			report.Waiting = append(report.Waiting, order)
-			approvals[order], needed = 0, true
-			continue
+		// A variant with no published release is still to be released. (The
+		// order's stage cannot say so: an order that carries no change for a
+		// freshly cloned variant is resolved while the variant waits.)
+		waits := false
+		for _, v := range p.Variants {
+			if !released[v.Space] {
+				waits = true
+			}
 		}
-		if got[0] == "Completed" {
+		if !waits {
 			continue
 		}
 		report.Waiting = append(report.Waiting, order)
-		out, err = w.run("cub", "attestation", "list", "--where", fmt.Sprintf("ChangeOrderID = '%s'", got[1]), "-o", "jq=length")
+		out, err := w.run("cub", "changeorder", "get", "--space", p.BaseSpace, p.ReleaseOrder, "-o", "jq=.ChangeOrder.ChangeOrderID")
+		if err != nil {
+			approvals[order], needed = 0, true
+			continue
+		}
+		id := strings.Trim(strings.TrimSpace(string(out)), `"`)
+		out, err = w.run("cub", "attestation", "list", "--where", fmt.Sprintf("ChangeOrderID = '%s'", id), "-o", "jq=length")
 		if err != nil {
 			return report, err
 		}

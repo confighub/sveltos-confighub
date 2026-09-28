@@ -606,15 +606,25 @@ It records why it proposed each variant:
 `--once` looks once and stops. `PROPOSE_ONLY=1 bash onboard/apply.sh` is the
 same behaviour by hand.
 
-The watcher is tested against a fake ConfigHub and management cluster, and
-`apply.sh` in this mode is run under bash with fake `cub` and `kubectl`. On
-the Meridian kind fleet it read four clusters and four variants, found their
-release order finished, and proposed nothing. A live join through it has not
-been recorded yet.
+Recorded on the Meridian kind fleet
+([join-2026-09-28.log](../../examples/meridian-slice/join-2026-09-28.log)):
 
-Measured on ConfigHub: a release order promoted through stages with nothing
-new for their variants needs no approval in them. Publishing reports no
-changes, the next stage opens, and the order completes.
+| Time (UTC) | What happened |
+| --- | --- |
+| 13:06 | eu-central-prod4 registered with Sveltos, labelled `class: prod` |
+| 13:10 | The watcher proposed `mer-kyverno-eu-central-prod4`. The order passed test and uat with no approval and waited in prod. Nothing reached the cluster. |
+| 13:16 | A person approved: `cub variant approve --change-order mer-kyverno-base/onboard-f68adc1c --stage prod` |
+| 13:18 | The watcher published the release and applied the delivery profile |
+| 13:20 | Sveltos reported it `Provisioned`, with the same Kyverno as the other prod clusters |
+
+**Two things ConfigHub does here:**
+- A release order promoted through stages with nothing new for their
+  variants needs no approval in them. Publishing reports no changes, the next
+  stage opens, and the order completes.
+- An order that carries no change for a freshly cloned variant is marked
+  resolved, although that variant still waits for its first release and its
+  approval. So the watcher and `apply.sh` decide what waits from the
+  published releases, not from the order's stage.
 
 ## What you will see
 

@@ -1,8 +1,10 @@
-# What's new in cub sveltos 0.5
+# What's new in cub sveltos
 
 `cub sveltos` onboards a fleet you already run with Sveltos into ConfigHub:
 one variant per cluster, every change reviewed and released stage by stage,
 and Sveltos still delivering. Version 0.5 changes what ConfigHub holds.
+Version 0.6 tells ConfigHub what Sveltos delivered, and proposes each cluster
+that joins for a person to approve.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -13,7 +15,7 @@ and Sveltos still delivering. Version 0.5 changes what ConfigHub holds.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## Unreleased
+## 0.6.0, 2026-09-28
 
 **Live status from Sveltos: `cub sveltos status`** (#33). It tells ConfigHub
 what Sveltos delivered to each cluster. For each delivery profile, it reads the
@@ -50,6 +52,16 @@ release and applies the delivery profile. It records why it proposed each
 variant, on its Space and in the order's description. A cluster no profile
 selects gets nothing, and is named. See [When a cluster
 joins](user/onboard-your-sveltos-fleet.md#when-a-cluster-joins).
+
+Recorded on the Meridian kind fleet: a prod cluster registered at 13:06 was
+proposed at 13:10 and waited. After the approval at 13:16 it was delivered, and
+reported `Provisioned` at 13:20.
+
+**`apply.sh` decides what to release from the published releases.** A re-run
+skips a profile once every variant has a published release, before it makes a
+change order. The order's own stage cannot say this: ConfigHub resolves an
+order that carries no change for a freshly cloned variant, while that variant
+still waits for its first release.
 
 **`PROPOSE_ONLY=1 bash apply.sh`** is the same by hand. A release that needs
 approval waits instead of failing. The stages after it wait too, and a
@@ -229,4 +241,4 @@ releases cannot read the gzipped layers ConfigHub's gateway serves.
 | --- | --- |
 | [Onboarding example](../examples/onboard/README.md) | Three live label-selector profiles (Kyverno, its policies, ingress-nginx) handed over with nothing reinstalled. Kyverno 3.8.2 and 4 replicas in one change order, staging before prod. A joining cluster gets both. |
 | [The GPU operator, chapter seven](../examples/gpu-operator/README.md) | NVIDIA's operator on exactly the clusters approved for it; a mislabel ships nothing. The driver upgrade reaches staging first, and review lists the ClusterPolicy's `spec.driver.version` and what the chart changed besides. |
-| [A slice of Meridian](../examples/meridian-slice/README.md) | Three profiles, one per class, become a root base, three class bases and four deployments. One root change reaches every class, and uat and prod keep their replicas. Recorded on 0.5.1, with the handover's checks. |
+| [A slice of Meridian](../examples/meridian-slice/README.md) | Three profiles, one per class, become a root base, three class bases and four deployments. One root change reaches every class, and uat and prod keep their replicas. Recorded on 0.5.1, with the handover's checks. A cluster that joins is proposed by `cub sveltos watch` and ships once approved, recorded on 0.6.0. |

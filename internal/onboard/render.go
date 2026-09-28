@@ -263,10 +263,14 @@ func ApplyScript(plan *Plan) string {
 		`cd "$(dirname "$0")"`,
 		`k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }`,
 		`step() { printf '\n== %s\n' "$*"; }`,
-		"# Re-running picks up where ConfigHub says each first release stands: a",
-		"# finished change order is skipped, and a variant with nothing new is kept.",
-		"# A cluster that joined since makes a new change order, which releases it.",
-		`rolled_out() { [ "$(cub changeorder get --space "${1%/*}" "${1#*/}" -o jq=.ChangeOrder.Stage)" = Completed ]; }`,
+		"# Re-running picks up where ConfigHub says each first release stands: once",
+		"# every variant has a published release, there is nothing to release, and a",
+		"# variant with nothing new is kept. A cluster that joined since has none, so",
+		"# a new change order releases it. (The order's own stage cannot say this: an",
+		"# order that carries no change for a freshly cloned variant is resolved",
+		"# while that variant still waits for its first release.)",
+		`released() { [ "$(cub release list --space "$1" -o 'jq=[.[] | select(.Release.Published)] | length')" -gt 0 ]; }`,
+		`rolled_out() { local s; for s in "$@"; do released "$s" || return 1; done; }`,
 		"# A class base takes its departures once, as a fresh clone (an empty",
 		"# revision, then the clone), and they touch only their own fields and",
 		"# objects. Later revisions are changes made in ConfigHub, which a re-run",
@@ -332,7 +336,7 @@ func ApplyScript(plan *Plan) string {
 		`  local file=management/$1.yaml s; shift`,
 		`  [ -n "${PROPOSE_ONLY:-}" ] || { k apply -f "$file"; return; }`,
 		`  for s in "$@"; do`,
-		`    if [ "$(cub release list --space "$s" -o 'jq=[.[] | select(.Release.Published)] | length')" -gt 0 ]; then`,
+		`    if released "$s"; then`,
 		fmt.Sprintf(`      k apply -f "$file" -l "%s=$s"`, VariantLabel),
 		"    else",
 		`      echo "$s has no release yet, so its delivery profile waits"`,
@@ -428,10 +432,10 @@ func ApplyScript(plan *Plan) string {
 			description = "First release of " + strings.Join(spaces, ", ")
 		}
 		L = append(L,
-			line("cub", "changeorder", "create", "--space", p.BaseSpace, p.ReleaseOrder, "--change-workflow", p.BaseSpace+"/"+workflowSlug, "--description", description, "--allow-exists", "--quiet"),
-			"if rolled_out "+order+"; then",
+			"if "+line(append([]string{"rolled_out"}, spaces...)...)+"; then",
 			"  echo "+q(p.Name+": every variant in this plan is released"),
 			"else",
+			"  "+line("cub", "changeorder", "create", "--space", p.BaseSpace, p.ReleaseOrder, "--change-workflow", p.BaseSpace+"/"+workflowSlug, "--description", description, "--allow-exists", "--quiet"),
 			"  waiting=")
 		if len(p.Classes) > 0 {
 			L = append(L, "  "+line("promote", order, basesStage))

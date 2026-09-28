@@ -21,9 +21,10 @@ type fleetBench struct {
 	t         *testing.T
 	clusters  string
 	spaces    map[string]bool
-	orders    map[string][2]string // base/order: stage, ID
-	approvals map[string]int       // change order ID: approvals
-	live      []string             // ClusterProfiles on the management cluster not from ConfigHub
+	released  map[string]bool   // variant Spaces with a published release
+	orders    map[string]string // base/order: its ID
+	approvals map[string]int    // change order ID: approvals
+	live      []string          // ClusterProfiles on the management cluster not from ConfigHub
 	renders   int
 	scripts   int
 	annotated map[string]string
@@ -31,9 +32,10 @@ type fleetBench struct {
 }
 
 func newBench(t *testing.T, clusters string) *fleetBench {
-	b := &fleetBench{t: t, clusters: clusters, orders: map[string][2]string{}, approvals: map[string]int{}, annotated: map[string]string{},
+	b := &fleetBench{t: t, clusters: clusters, orders: map[string]string{}, approvals: map[string]int{}, annotated: map[string]string{},
 		spaces: map[string]bool{"sveltos-targets": true, "sveltos-kyverno-base": true, "sveltos-management": true,
-			"sveltos-kyverno-staging-eu": true, "sveltos-kyverno-prod-eu": true}}
+			"sveltos-kyverno-staging-eu": true, "sveltos-kyverno-prod-eu": true},
+		released: map[string]bool{"sveltos-kyverno-staging-eu": true, "sveltos-kyverno-prod-eu": true}}
 	return b
 }
 
@@ -54,12 +56,18 @@ func (b *fleetBench) run(name string, args ...string) ([]byte, error) {
 			slugs = append(slugs, s)
 		}
 		return json.Marshal(slugs)
-	case strings.HasPrefix(all, "cub changeorder get --space "):
-		o, ok := b.orders[args[3]+"/"+args[4]]
+	case all == "cub release list --space * --where Published = true AND Space.Slug LIKE 'sveltos-%' -o jq=[.[] | (.Release // .) | .SpaceSlug] | unique":
+		var slugs []string
+		for s := range b.released {
+			slugs = append(slugs, s)
+		}
+		return json.Marshal(slugs)
+	case strings.HasPrefix(all, "cub changeorder get --space ") && strings.HasSuffix(all, " -o jq=.ChangeOrder.ChangeOrderID"):
+		id, ok := b.orders[args[3]+"/"+args[4]]
 		if !ok {
 			return nil, errors.New("not found")
 		}
-		return json.Marshal([]string{o[0], o[1]})
+		return json.Marshal(id)
 	case strings.HasPrefix(all, "cub attestation list --where ChangeOrderID = "):
 		id := strings.Trim(strings.TrimPrefix(args[3], "ChangeOrderID = "), "'")
 		return json.Marshal(b.approvals[id])
@@ -105,9 +113,6 @@ func TestWatchProposesAndWaitsForApproval(t *testing.T) {
 	b := newBench(t, fleetClusters(cluster("dev-1", "projectsveltos", "env", "dev")))
 	out := t.TempDir()
 	w := b.watcher(out)
-	first := mustPlan(t, append(parse(t, profile("kyverno", watchedProfile)), parse(t, b.clusters)...), watchOpts)
-	settled := "sveltos-kyverno-base/" + first.Profiles[0].ReleaseOrder
-	b.orders[settled] = [2]string{"Completed", "co-1"}
 
 	r, err := w.Once()
 	if err != nil || r.Ran || len(r.Joins) != 0 || len(r.Waiting) != 0 {
@@ -126,7 +131,7 @@ func TestWatchProposesAndWaitsForApproval(t *testing.T) {
 	order := "sveltos-kyverno-base/" + joined.Profiles[0].ReleaseOrder
 	b.afterRun = func() {
 		b.spaces["sveltos-kyverno-prod-us"] = true
-		b.orders[order] = [2]string{"prod", "co-2"}
+		b.orders[order] = "co-2"
 	}
 	r, err = w.Once()
 	if err != nil || !r.Ran || b.scripts != 1 || len(r.Joins) != 1 {
@@ -147,16 +152,18 @@ func TestWatchProposesAndWaitsForApproval(t *testing.T) {
 		t.Errorf("the release order says why it was made")
 	}
 
-	if r, _ = w.Once(); r.Ran || len(r.Waiting) != 1 {
+	// ConfigHub resolves an order that carries no change for a freshly cloned
+	// variant, so what waits is read from the releases: prod-us has none.
+	if r, _ = w.Once(); r.Ran || len(r.Waiting) != 1 || r.Waiting[0] != order {
 		t.Errorf("while the release waits for a person, apply.sh is not run again: %+v", r)
 	}
-	b.approvals["co-2"] = 1
-	b.afterRun = func() { b.orders[order] = [2]string{"Completed", "co-2"} }
+	b.approvals["co-2"] = 3
+	b.afterRun = func() { b.released["sveltos-kyverno-prod-us"] = true }
 	if r, _ = w.Once(); !r.Ran || b.scripts != 2 {
 		t.Errorf("once a person approves, apply.sh runs again, to publish and deliver: %+v", r)
 	}
 	if r, _ = w.Once(); r.Ran || len(r.Waiting) != 0 {
-		t.Errorf("a finished release order is left alone: %+v", r)
+		t.Errorf("once every variant has a release, the fleet is left alone: %+v", r)
 	}
 }
 
@@ -182,23 +189,25 @@ func TestWatchRefuses(t *testing.T) {
 }
 
 // fakeTools puts a cub and a kubectl on the PATH that log what they are asked
-// and answer as ConfigHub and the management cluster would: a release in
-// $WAITING waits for approval, and the others have nothing new.
+// and answer as ConfigHub and the management cluster would: a variant in
+// $UNRELEASED has no release yet: its release waits for approval while it
+// is in $WAITING, and is published once not. The others have nothing new.
 func fakeTools(t *testing.T, dir string) {
 	t.Helper()
 	cub := `#!/usr/bin/env bash
 echo "cub $*" >> "$LOG"
 case "$*" in
-  "changeorder get "*) echo InProgress ;;
   "unit get "*) echo 3 ;;
   "unit list "*) echo 99 ;;
   "changeworkflow get "*) echo staging,prod ;;
   "worker get "*) echo x ;;
   "release publish "*)
     for s in $WAITING; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
+    for s in $UNRELEASED; do [ "$3" = "$s" ] && { echo "$3" >> "$LOG.published"; exit 0; }; done
     echo "Failed: HTTP 400: no changes were made since :latest bundle" >&2; exit 1 ;;
   "release list "*)
-    for s in $WAITING; do [ "$4" = "$s" ] && { echo 0; exit 0; }; done
+    grep -qx "$4" "$LOG.published" 2>/dev/null && { echo 1; exit 0; }
+    for s in $UNRELEASED; do [ "$4" = "$s" ] && { echo 0; exit 0; }; done
     echo 1 ;;
 esac
 exit 0
@@ -235,10 +244,10 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	bin := t.TempDir()
 	fakeTools(t, bin)
 	order := "sveltos-kyverno-base/" + plan.Profiles[0].ReleaseOrder
-	run := func(waiting string, propose bool) (string, string, error) {
+	run := func(unreleased, waiting string, propose bool) (string, string, error) {
 		log := filepath.Join(t.TempDir(), "calls")
 		cmd := exec.Command("bash", filepath.Join(dir, "apply.sh"))
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "WAITING="+waiting)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "UNRELEASED="+unreleased, "WAITING="+waiting)
 		if propose {
 			cmd.Env = append(cmd.Env, "PROPOSE_ONLY=1")
 		}
@@ -247,7 +256,7 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		return string(out), string(calls), err
 	}
 
-	out, calls, err := run("sveltos-kyverno-prod-us", true)
+	out, calls, err := run("sveltos-kyverno-prod-us", "sveltos-kyverno-prod-us", true)
 	if err != nil {
 		t.Fatalf("a release waiting for approval is not a failure: %v\n%s", err, out)
 	}
@@ -263,13 +272,26 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		t.Errorf("only a variant with a release gets its delivery profile:\n%s", calls)
 	}
 
-	_, calls, err = run("sveltos-kyverno-staging-us", true)
+	_, calls, err = run("sveltos-kyverno-staging-us", "sveltos-kyverno-staging-us", true)
 	if err != nil || strings.Contains(calls, "--target-stage prod") {
 		t.Errorf("a stage waits behind the stage ahead of it: %v\n%s", err, calls)
 	}
 
-	out, calls, err = run("", false)
+	out, calls, err = run("sveltos-kyverno-prod-us", "", false)
 	if err != nil || strings.Count(calls, "cub variant approve") != 2 || !strings.Contains(calls, "apply -f management/kyverno.yaml\n") {
 		t.Errorf("without PROPOSE_ONLY, the script approves each stage and applies every delivery profile: %v\n%s\n%s", err, out, calls)
+	}
+
+	// Approved since: the order may already be resolved, so its promotions
+	// have nothing left to do, and the release goes out.
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err != nil || !strings.Contains(calls, "cub release publish sveltos-kyverno-prod-us") || strings.Contains(out, "waits for approval") ||
+		!strings.Contains(calls, "-l sveltos.confighub.com/variant=sveltos-kyverno-prod-us") {
+		t.Errorf("once approved, the next run publishes and delivers: %v\n%s", err, out)
+	}
+
+	out, calls, err = run("", "", true)
+	if err != nil || strings.Contains(calls, "changeorder create") || strings.Contains(calls, "release publish") || !strings.Contains(out, "every variant in this plan is released") {
+		t.Errorf("with every variant released, no order is made and nothing is published: %v\n%s", err, calls)
 	}
 }
