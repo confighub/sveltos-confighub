@@ -97,6 +97,10 @@ after Kyverno's (`dependsOn`), and it has no classes:
 - **A link's `MergeEnableSubtraction` did not keep an unprotected override.** The base's value won both when set by a function and when set by a full update.
 - **`cub variant create` makes one upgrade Link per unit.** A chart split into one unit per template file, as `cub helm install` does, costs a Link per file per cluster (Kyverno: 57), so onboarding holds one unit per chart.
 - **`upsert-resource` takes a JSON ResourceList,** the shape `get-resources` returns, not YAML.
+- **The whole handover, with its checks, rehearsed end to end on v0.5.1 as released** (the Meridian slice, 2026-09-28, [log](../../examples/meridian-slice/rehearsal-2026-09-28.log)):
+  - The three live class profiles passed the export checks: unchanged, reaching the clusters planned.
+  - On each of the four clusters, what ConfigHub released matched Helm's record object for object: 69 objects on test, 70 on uat and prod.
+  - Then the handover ran with nothing reinstalled, and the root change went through the classes as before.
 - **handover.sh's comparison with what Helm installed, measured on a real Sveltos Helm release** (podinfo 6.7.1, installed by a live ClusterProfile on kind):
   - Helm's record, read through the cluster's kubeconfig, compared the same with `cub helm template`'s rendering at the same values (two objects, and the release's Namespace as a note). This held once a null value counted as absent: `cub helm template` prints `resources.limits: null` where Helm's record leaves `limits` out.
   - A replica count and a chart version changed were each named by field.

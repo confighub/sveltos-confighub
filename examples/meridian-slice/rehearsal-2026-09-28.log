@@ -1,11 +1,11 @@
 
-##### 0. Meridian's eu-central slice today: Kyverno by class, one Sveltos profile per class  [18:17:02]
+##### 0. Meridian's eu-central slice today: Kyverno by class, one Sveltos profile per class  [04:54:24]
 NAMESPACE        NAME               READY   VERSION   AGE   SHARD   LABELS
-mgmt             mgmt               true    v1.35.0   35m           projectsveltos.io/k8s-version=v1.35.0,sveltos-agent=present
-projectsveltos   eu-central-prod1   true    v1.35.0   34m           class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos
-projectsveltos   eu-central-prod2   true    v1.35.0   34m           class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos
-projectsveltos   eu-central-test1   true    v1.35.0   35m           class=test,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos
-projectsveltos   eu-central-uat1    true    v1.35.0   34m           class=uat,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central,sveltos-
+mgmt             mgmt               true    v1.35.0   16s           projectsveltos.io/k8s-version=v1.35.0
+projectsveltos   eu-central-prod1   true    v1.35.0   1s            class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+projectsveltos   eu-central-prod2   true    v1.35.0   1s            class=prod,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+projectsveltos   eu-central-test1   true    v1.35.0   1s            class=test,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
+projectsveltos   eu-central-uat1    true    v1.35.0   1s            class=uat,department=shared,projectsveltos.io/k8s-version=v1.35.0,region=eu-central
 clusterprofile.config.projectsveltos.io/kyverno-test created
 clusterprofile.config.projectsveltos.io/kyverno-uat created
 clusterprofile.config.projectsveltos.io/kyverno-prod created
@@ -14,7 +14,7 @@ clusterprofile.config.projectsveltos.io/kyverno-prod created
   eu-central-prod1  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
   eu-central-prod2  reg.kyverno.io/kyverno/kyverno:v1.18.1   replicas 3  PodDisruptionBudget yes
 
-##### 1. Onboard: three profiles become one component, with a class base per class  [18:17:38]
+##### 1. Onboard: three profiles become one component, with a class base per class  [04:55:01]
 Onboarding plan: 1 component made from 3 profiles over 4 clusters, one variant per cluster per component (4 variants).
 Nothing has changed. This is what ConfigHub would hold.
 
@@ -65,6 +65,16 @@ secret/confighub-mer-targets created
 Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
   kubectl get clustersummaries -A
 The delivery profiles of kyverno wait for handover.sh, which steps your live profiles aside first, so no object has two profiles managing it.
+== what was planned is what is live
+== what ConfigHub releases is what Helm installed
+eu-central-prod1 kyverno: ConfigHub releases what Helm installed, 70 objects the same
+  (Namespace kyverno is the release's Namespace, which Helm makes outside the manifest)
+eu-central-prod2 kyverno: ConfigHub releases what Helm installed, 70 objects the same
+  (Namespace kyverno is the release's Namespace, which Helm makes outside the manifest)
+eu-central-test1 kyverno: ConfigHub releases what Helm installed, 69 objects the same
+  (Namespace kyverno is the release's Namespace, which Helm makes outside the manifest)
+eu-central-uat1 kyverno: ConfigHub releases what Helm installed, 70 objects the same
+  (Namespace kyverno is the release's Namespace, which Helm makes outside the manifest)
 == kyverno-prod
 clusterprofile.config.projectsveltos.io/kyverno-prod patched
 clusterprofile.config.projectsveltos.io "kyverno-prod" deleted
@@ -103,8 +113,8 @@ Done. Each delivery profile reports Provisioned within a minute:
     deployment mer-kyverno-eu-central-prod1
     deployment mer-kyverno-eu-central-prod2
 
-##### 2. One change for every class, at the root: Kyverno 3.8.2, and 4 replicas  [18:27:14]
-  the root was # kyverno is rendered with: cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --create-namespace -f kyverno/kyverno.values.yaml
+##### 2. One change for every class, at the root: Kyverno 3.8.2, and 4 replicas  [05:04:49]
+  the root was # kyverno is rendered with: cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --create-namespace -f kyverno/kyverno.values.yaml | grep -vxF '$comment$head$: ""'
   class base test  reg.kyverno.io/kyverno/kyverno:v1.18.2  replicas 4
   class base uat   reg.kyverno.io/kyverno/kyverno:v1.18.2  replicas 2
   class base prod  reg.kyverno.io/kyverno/kyverno:v1.18.2  replicas 3
@@ -131,4 +141,4 @@ Done. Each delivery profile reports Provisioned within a minute:
   "State": "Released"
 }
 
-##### MERIDIAN-SLICE-DONE  [18:35:22]
+##### MERIDIAN-SLICE-DONE  [05:11:58]

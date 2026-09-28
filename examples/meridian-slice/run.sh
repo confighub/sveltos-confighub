@@ -14,6 +14,11 @@ W=${W%/}
 BIN=${SVELTOS:-cub sveltos}
 U="$W/user"; rm -rf "$U"; mkdir -p "$U"; cd "$U"
 export KUBECONFIG="$W/mer-mgmt.kubeconfig" MGMT_CONTEXT=kind-mer-mgmt
+# Sveltos reaches the kind clusters at addresses only the management cluster
+# resolves, so handover.sh compares with what Helm installed through
+# kubeconfigs that reach them from here.
+export CLUSTER_KUBECONFIGS="$W/reachable"; mkdir -p "$CLUSTER_KUBECONFIGS"
+for c in test1 uat1 prod1 prod2; do ln -sf "$W/mer-$c.kubeconfig" "$CLUSTER_KUBECONFIGS/eu-central-$c.kubeconfig"; done
 OPTS="--class-label class --stage-label class --stages test,uat,prod --prefix mer"
 CLUSTERS="test1 uat1 prod1 prod2"
 say() { printf '\n##### %s  [%s]\n' "$*" "$(date -u +%H:%M:%S)"; }

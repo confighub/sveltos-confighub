@@ -53,15 +53,15 @@ root, the tree held this, and each cluster ran what its variant held:
 
 ## What was recorded
 
-Recorded on kind on 2026-09-27 with stock Sveltos v1.15.0 and Kyverno, by
-running [run.sh](run.sh) against a fleet from
-[kind-fleet.mjs](kind-fleet.mjs). The full output is
-[rehearsal-2026-09-27.log](rehearsal-2026-09-27.log).
+Recorded on kind on 2026-09-28 with stock Sveltos v1.15.0, Kyverno, and
+`cub sveltos` v0.5.1 as released, by running [run.sh](run.sh) against a
+fleet from [kind-fleet.mjs](kind-fleet.mjs). The full output is
+[rehearsal-2026-09-28.log](rehearsal-2026-09-28.log).
 
 | Step | Measured |
 | --- | --- |
 | Before | Kyverno 3.8.1 on all four clusters from three profiles, one per class: test at 1 replica, uat at 2 and prod at 3, uat and prod with a PodDisruptionBudget. |
-| Onboard: plan, apply, handover | One component: a root base (test's rendering, 70 objects, 22 of them CRDs), three class bases and a deployment per cluster, in 10 Spaces with 7 Links. The handover stepped the three profiles aside, and four delivery profiles took over with every pod the same: nothing was reinstalled. Meridian's queries (`Labels.Role = 'base'`, `'deployment'`) find the four bases and the four deployments. |
+| Onboard: plan, apply, handover | One component: a root base (test's rendering, 70 objects, 22 of them CRDs), three class bases and a deployment per cluster, in 10 Spaces with 7 Links. Before it changed anything, the handover found each profile as exported, reaching the clusters planned, and each cluster's Kyverno the same as what Helm had installed there, object for object (69 objects on test, 70 on uat and prod, their PodDisruptionBudget among them). Then it stepped the three profiles aside, and four delivery profiles took over with every pod the same: nothing was reinstalled. Meridian's queries (`Labels.Role = 'base'`, `'deployment'`) find the four bases and the four deployments. |
 | One change for every class | Kyverno 3.8.2 and 4 replicas, both made on the root, in one change order. After its first stage, `bases`, every class base held 3.8.2; test's took 4 replicas, and uat's and prod's kept 2 and 3. uat was refused while test had not taken the change. Test, uat and prod then took it in order, and the clusters ended at 3.8.2 with 4, 2, 3 and 3 replicas. The change order ended `Completed`, `Released`. |
 
 ## The rule the three levels come with
