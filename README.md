@@ -38,6 +38,21 @@ flowchart LR
 You keep Sveltos. You gain a review of every change, a record of which
 revision each cluster runs, and a rollout order that ConfigHub enforces.
 
+## What it answers
+
+| You want to | What you do | Section |
+| --- | --- | --- |
+| Put one platform stack on every production cluster, without repeating its config | Change its base once; every cluster's variant takes the change, staging first | [3](#3-roll-a-change-out-to-every-cluster-staging-first) |
+| Keep choosing clusters by label, as you do with Sveltos | `cub sveltos plan` reads your profiles' label selectors as they are | [1](#1-bring-the-fleet-you-already-run-into-confighub) |
+| Have a new cluster with the right labels pick up its stack | `cub sveltos watch` proposes it, a person approves, Sveltos delivers | [8](#8-add-a-new-cluster) |
+| Stop a change that breaks your policies before it reaches a cluster | Your Kyverno policies check every change, and each stage's release waits for a pass | [4](#4-check-every-change-against-your-policies) |
+| Put the GPU operator only on clusters approved for it, and upgrade drivers safely | Labels propose, people approve, and the driver version is a field you review | [7](#7-run-a-gpu-fleet-the-operator-only-where-it-is-approved) |
+| Upgrade a chart and see exactly what changes | Render the new version, and review it object by object | [5](#5-upgrade-a-chart-and-review-exactly-what-changes) |
+| Know what each cluster runs, whether it is healthy, and who changed it | ConfigHub holds each cluster's objects, its live status from Sveltos, and every change's author and reason | [9](#9-see-what-every-cluster-runs-whether-it-is-healthy-and-who-changed-it) |
+| Run it for a business-sized fleet | Root, class and cluster levels, tried on a slice of a 99-cluster fleet | [10](#10-run-it-at-business-size) |
+| Let an AI assistant make changes safely | Every step is a `cub` command, and people approve each stage | [11](#11-work-with-an-ai-assistant) |
+| Keep Argo CD, Flux or Helm where they apply profiles | The handover stops while such a profile is still there, and says what to do first | [guide](docs/user/onboard-your-sveltos-fleet.md#if-your-profiles-are-live) |
+
 ## The plugin: `cub sveltos`
 
 ```bash
@@ -272,7 +287,32 @@ Sveltos and how far behind a rollout it is.
 
 ![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](docs/images/sveltos/sveltos-meridian-tree.png)
 
-### 7. Add a new cluster
+### 7. Run a GPU fleet: the operator only where it is approved
+
+Many GPU fleets install NVIDIA's GPU operator on every cluster labelled for
+it, as the ECMWF platform team described at ISGC 2026. A label edit then
+decides where drivers go, and nothing records who decided.
+
+Onboarded with `cub sveltos`, the same profile and labels keep working, but a
+label only proposes a cluster:
+- The operator is held as the objects its chart renders to, so the driver
+  version you approve is a field, `spec.driver.version` on the ClusterPolicy.
+- A cluster labelled by mistake gets nothing until someone approves it.
+- A driver upgrade reaches staging first, and review lists every object it
+  changes (see section 5).
+- Each GPU type can have its own class base (`--class-label accelerator`), so
+  H100 and A100 clusters keep their own driver settings.
+
+[The GPU operator example](examples/gpu-operator/README.md) runs this on kind.
+kind has no GPUs, so it shows the operator's objects, not drivers loading; a
+run on real GPU nodes has not been done yet.
+
+To build a whole GPU inference platform, from the cluster to the workloads,
+see the ConfigHub Workshop's [eks-inference
+stack](https://github.com/confighub/cub-workshop/blob/main/stacks/eks-inference.yaml).
+`cub stack sandbox eks-inference` renders all of it with no infrastructure.
+
+### 8. Add a new cluster
 
 Register and label the new cluster as you always have. **Nothing ships
 yet**: in this setup, a label alone deploys nothing. Keep the watcher running
@@ -309,7 +349,7 @@ cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages
 MGMT_CONTEXT=<your management cluster context> bash onboard/apply.sh
 ```
 
-### 8. See what every cluster runs, whether it is healthy, and who changed it
+### 9. See what every cluster runs, whether it is healthy, and who changed it
 
 ```bash
 cub space list --where "Labels.Cluster = 'prod-eu'"                  # everything on prod-eu
@@ -339,7 +379,7 @@ marked 1). Author names are hidden here.
 
 ![A unit's revisions in ConfigHub: thirteen revisions with their change-order tags, descriptions, author and validation errors; two probe revisions show one validation error each](docs/images/sveltos/sveltos-unit-revisions.png)
 
-### 9. Run it at business size
+### 10. Run it at business size
 
 Sveltos brings the same three levels to a large fleet: a root base, class
 bases, and a variant per cluster. That's the shape of ConfigHub's
@@ -351,7 +391,7 @@ class, test before uat before prod, and each class kept its own settings.
 However big the fleet, a change costs the same: one edit, then one promotion
 and one approval per stage.
 
-### 10. Work with an AI assistant
+### 11. Work with an AI assistant
 
 Every step is a `cub` or `kubectl` command, so an assistant in your terminal
 can do the work:

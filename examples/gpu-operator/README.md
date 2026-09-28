@@ -1,4 +1,4 @@
-# Chapter seven: the GPU operator on exactly the clusters approved for it
+# The GPU operator on exactly the clusters approved for it
 
 Many GPU fleets install NVIDIA's GPU operator the way the ECMWF platform team
 described theirs at ISGC 2026: one Sveltos profile, and every cluster
@@ -6,7 +6,7 @@ labelled `addons.gpu-operator: enabled` gets the operator and its drivers. A
 label edit decides where GPU drivers go, and nothing records who decided. One
 mislabelled cluster gets drivers it should not have.
 
-This chapter takes that fleet onto one ConfigHub variant per cluster with
+This example takes that fleet onto one ConfigHub variant per cluster with
 `cub sveltos`, then does the three things a GPU fleet does: it enables the
 operator on one more cluster, survives a mislabel, and upgrades the operator
 and its driver on staging before prod. ConfigHub holds the operator as the
@@ -38,7 +38,7 @@ and values are NVIDIA's AI Cluster Runtime recipe `h100-any`, from
 136 lines of reviewed values including DCGM metrics, MIG and GPUDirect. The
 operator and driver start pinned to the previous release pair that AICR's
 EKS H100 recipes carry, chart `v26.3.1` with driver `580.126.20`. The
-chapter's change moves them to `h100-any` as published, chart `v26.7.0` with
+example's change moves them to `h100-any` as published, chart `v26.7.0` with
 driver `580.173.02`. Every version in it is NVIDIA's.
 
 | Cluster | Labels | GPU operator today |
@@ -76,13 +76,13 @@ flowchart LR
 kind nodes have no GPUs. The operator ran and reconciled, and its
 ClusterPolicy reported `ready` with the driver version the variant asked for.
 But no node is labelled `nvidia.com/gpu.present`, so the operator created no
-GPU daemonsets, and no driver, toolkit or device plugin ran. The chapter
+GPU daemonsets, and no driver, toolkit or device plugin ran. The example
 proves governance, delivery, the handover of a live GPU profile, and a staged
 operator and driver upgrade. Proving that the drivers come up needs real GPU
 nodes. That lane is the eks-inference stack, and it costs cloud money, so it
 waits for a go-ahead ([#48](https://github.com/confighub/sveltos-confighub/issues/48)).
 
-## Two things this chapter teaches
+## Two things this example teaches
 
 **Different accelerators are classes.** An H100 cluster and an RTX Pro 6000
 cluster run different AICR recipes. Keep one profile per recipe, each
@@ -97,7 +97,7 @@ renders the new chart version with the new driver in its values, the way
 a reviewer approves shows the ClusterPolicy's `spec.driver.version` and the
 operator's image as fields of their own. It also shows what the chart itself
 changed between versions: new RBAC rules for the operator and three new
-CRDs. An earlier version of this chapter stored the profile itself in
+CRDs. An earlier version of this example stored the profile itself in
 ConfigHub, and review showed 136 lines of values as one block with the
 driver change inside it; the chart's own changes did not show at all.
 
