@@ -169,6 +169,13 @@ prod before staging has released the change:
 Failed: unable to promote to stage 'prod', Variant 'staging-eu' has taken change order 'replicas-4' but has not released it
 ```
 
+This is a rollout in ConfigHub once it is done. Here it is a label added to
+every Kyverno Deployment on the Meridian kind fleet. It was promoted through
+the class bases, then test, uat and prod, and released in each stage after an
+approval:
+
+![A finished rollout in ConfigHub: the promotion path from source through bases, test, uat and prod, each marked promoted and released, four of four stages taken](docs/images/sveltos/sveltos-rollout-complete.png)
+
 ### 4. Check every change against your policies
 
 Run your Kyverno policies on a change before it ships. Plan with a policy
@@ -202,6 +209,16 @@ In our test that happened at once, not after the six hours ConfigHub
 documents. So gate releases on the required check. [Check every change
 against your policies](docs/user/policy-checks.md) has the setup and what was
 measured.
+
+A rollout part-way through, with test released and uat waiting on its gates.
+`check/validated` is the policy gate: ConfigHub checks it when you promote.
+
+![A rollout in ConfigHub part-way through: test is promoted and released, uat is gated, and its gates list check/promoted and check/released as satisfied and check/validated, the policy gate](docs/images/sveltos/sveltos-rollout-gated.png)
+
+Every rollout, with what holds each one. The ones marked "blocked by the
+Kyverno policy" are changes the policy stopped before they reached a cluster:
+
+![ConfigHub's Rollouts page: one rollout needs a release, finished rollouts are complete, and aborted probe rollouts read closed, not promoted, blocked by the Kyverno policy](docs/images/sveltos/sveltos-rollouts-policy.png)
 
 ### 5. Upgrade a chart, and review exactly what changes
 
@@ -248,6 +265,12 @@ once at the root reaches every class, and each class keeps what it protects.
 The same works for GPU types: one class per accelerator.
 
 ![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds](docs/images/sveltos/sveltos-meridian-three-levels.svg)
+
+In ConfigHub the same tree is the component's map: the root base, a class
+base per class, and a variant per cluster, each with its live status from
+Sveltos and how far behind a rollout it is.
+
+![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](docs/images/sveltos/sveltos-meridian-tree.png)
 
 ### 7. Add a new cluster
 
@@ -309,6 +332,12 @@ release was not applied yet.
 Each change carries its author and a reason. Each stage's approval is
 recorded. ConfigHub's refusals come in its own words, and that's the
 record an audit needs.
+
+Every revision of the root's Kyverno unit, with the change order that carried
+it, its reason, who made it and whether it failed a policy check (the two
+marked 1). Author names are hidden here.
+
+![A unit's revisions in ConfigHub: thirteen revisions with their change-order tags, descriptions, author and validation errors; two probe revisions show one validation error each](docs/images/sveltos/sveltos-unit-revisions.png)
 
 ### 9. Run it at business size
 

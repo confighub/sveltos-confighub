@@ -51,6 +51,10 @@ root, the tree held this, and each cluster ran what its variant held:
 
 ![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds. Promote with --squash](../../docs/images/sveltos/sveltos-meridian-three-levels.svg)
 
+In ConfigHub, after two more clusters joined:
+
+![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](../../docs/images/sveltos/sveltos-meridian-tree.png)
+
 ## What was recorded
 
 Recorded on kind on 2026-09-28 with stock Sveltos v1.15.0, Kyverno, and
@@ -63,6 +67,7 @@ fleet from [kind-fleet.mjs](kind-fleet.mjs). The full output is
 | Before | Kyverno 3.8.1 on all four clusters from three profiles, one per class: test at 1 replica, uat at 2 and prod at 3, uat and prod with a PodDisruptionBudget. |
 | Onboard: plan, apply, handover | One component: a root base (test's rendering, 70 objects, 22 of them CRDs), three class bases and a deployment per cluster, in 10 Spaces with 7 Links. Before it changed anything, the handover found each profile as exported, reaching the clusters planned, and each cluster's Kyverno the same as what Helm had installed there, object for object (69 objects on test, 70 on uat and prod, their PodDisruptionBudget among them). Then it stepped the three profiles aside, and four delivery profiles took over with every pod the same: nothing was reinstalled. Meridian's queries (`Labels.Role = 'base'`, `'deployment'`) find the four bases and the four deployments. |
 | One change for every class | Kyverno 3.8.2 and 4 replicas, both made on the root, in one change order. After its first stage, `bases`, every class base held 3.8.2; test's took 4 replicas, and uat's and prod's kept 2 and 3. uat was refused while test had not taken the change. Test, uat and prod then took it in order, and the clusters ended at 3.8.2 with 4, 2, 3 and 3 replicas. The change order ended `Completed`, `Released`. |
+| Policies gate every change | Recorded the same day in [policy-2026-09-28.log](policy-2026-09-28.log), with a Kyverno checker on the management cluster. A change that put the cleanup controller on `:latest` was refused entry to test, and its release was refused once it reached test1. With the checker's worker stopped, a change went out unchecked. Two rollouts then passed an approval and a recorded PolicyCheck in every stage. See [Check every change against your policies](../../docs/user/policy-checks.md). |
 | A cluster joins, and ships once approved | Recorded later the same day with `cub sveltos watch` (v0.6.0), in [join-2026-09-28.log](join-2026-09-28.log). eu-central-prod4 registered with `class: prod` at 13:06. The watcher proposed its variant at 13:10, cloned from prod's class base, so it held 3.8.2 and prod's 3 replicas. The release order passed test and uat with no approval, since nothing was new there, and waited in prod. Nothing reached the cluster, and its delivery profile waited. A person approved at 13:16. The watcher's next look published the release and applied the delivery profile at 13:18, and Sveltos reported it `Provisioned` at 13:20, with the same Kyverno as eu-central-prod1. |
 
 ## The rule the three levels come with

@@ -83,6 +83,12 @@ cub trigger update --space platform-policies --worker platform-policies/kyverno-
 A Space that uses a trigger from another Space does not see it change until
 you refresh it: `cub space update --patch --refresh-triggers <space>`.
 
+Each change is followed by the check. In the root unit's activity, every
+change made by a person ("ConfigHub Invoke") is followed by an automated
+function invocation, the Kyverno check (author names hidden):
+
+![A unit's activity in ConfigHub: each change a person made, with its reason, followed by an automated function invocation that ran the Kyverno check](../images/sveltos/sveltos-unit-activity.png)
+
 **Measured on the Meridian kind fleet.** A change at the root set the Kyverno
 cleanup controller's image to `:latest`, which `disallow-latest-tag` forbids:
 
@@ -96,6 +102,20 @@ cleanup controller's image to `:latest`, which `disallow-latest-tag` forbids:
 - With no entry gate on test, the change reached test1 and was approved, but
   its release was refused: `HTTP 422: outstanding ValidationErrors; triggers
   re-queued for evaluation`. The cluster kept its image.
+
+In ConfigHub, a rollout waiting on its gates. `check/validated` is the policy
+gate on uat, which ConfigHub checks when you promote:
+
+![A rollout in ConfigHub part-way through: test is promoted and released, uat is gated, and its gates list check/promoted and check/released as satisfied and check/validated, the policy gate](../images/sveltos/sveltos-rollout-gated.png)
+
+The root unit's history keeps each change with the change order that carried
+it, and marks the two that failed the policy (author names hidden):
+
+![A unit's revisions in ConfigHub: thirteen revisions with their change-order tags, descriptions, author and validation errors; two probe revisions show one validation error each](../images/sveltos/sveltos-unit-revisions.png)
+
+The Rollouts page lists the orders the policy stopped as closed, not promoted:
+
+![ConfigHub's Rollouts page: one rollout needs a release, finished rollouts are complete, and aborted probe rollouts read closed, not promoted, blocked by the Kyverno policy](../images/sveltos/sveltos-rollouts-policy.png)
 
 **Three things to know:**
 - **An order keeps the gates it started with.** A change order copies its
