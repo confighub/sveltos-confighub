@@ -4,7 +4,8 @@
 one variant per cluster, every change reviewed and released stage by stage,
 and Sveltos still delivering. Version 0.5 changes what ConfigHub holds.
 Version 0.6 tells ConfigHub what Sveltos delivered, and proposes each cluster
-that joins for a person to approve.
+that joins for a person to approve. Version 0.7 checks every change against
+your policies before it ships.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -14,6 +15,33 @@ that joins for a person to approve.
 
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
+
+## 0.7.0, 2026-09-28
+
+**Check every change against your policies.** Three additions, all measured
+on the Meridian kind fleet with a Kyverno checker. See [Check every change
+against your policies](user/policy-checks.md).
+- **`--policy <space>/<filter>`** gives every base, class base and variant a
+  trigger Filter, such as a Kyverno check. It also adds `Validated` to each
+  stage that has a stage ahead. A change that fails is not promoted past its
+  stage, and not released.
+- **`--require <type>`** makes each stage's release wait for a Pass of that
+  attestation type, as well as the approval. This uses ConfigHub's
+  attestation requirements, and it never lets an unchecked change through.
+- **`cub sveltos check`** runs a validating function, such as
+  `vet-kyverno-server`, on exactly the revisions a change order marks in a
+  stage. It records a Pass, or a rejection that holds the release.
+
+`apply.sh` adds these gates to a workflow made before them, and keeps gates
+and stage settings made in ConfigHub since. A release refused for
+ValidationErrors is asked for again twice, because a check may still be
+running; then the script stops.
+
+**Measured, and worth knowing:** with the checker's worker stopped, ConfigHub
+still showed it `Ready` 25 minutes later, and never started its six-hour
+fail-open clock. A change made in that window was never checked and was
+released. Both gates read a missing result as a pass. A required check is the
+gate to rely on. Reported to ConfigHub as confighubai/confighub#5530.
 
 ## 0.6.0, 2026-09-28
 
@@ -240,5 +268,5 @@ releases cannot read the gzipped layers ConfigHub's gateway serves.
 | Example | What it shows |
 | --- | --- |
 | [Onboarding example](../examples/onboard/README.md) | Three live label-selector profiles (Kyverno, its policies, ingress-nginx) handed over with nothing reinstalled. Kyverno 3.8.2 and 4 replicas in one change order, staging before prod. A joining cluster gets both. |
-| [The GPU operator, chapter seven](../examples/gpu-operator/README.md) | NVIDIA's operator on exactly the clusters approved for it; a mislabel ships nothing. The driver upgrade reaches staging first, and review lists the ClusterPolicy's `spec.driver.version` and what the chart changed besides. |
+| [The GPU operator](../examples/gpu-operator/README.md) | NVIDIA's operator on exactly the clusters approved for it; a mislabel ships nothing. The driver upgrade reaches staging first, and review lists the ClusterPolicy's `spec.driver.version` and what the chart changed besides. |
 | [A slice of Meridian](../examples/meridian-slice/README.md) | Three profiles, one per class, become a root base, three class bases and four deployments. One root change reaches every class, and uat and prod keep their replicas. Recorded on 0.5.1, with the handover's checks. A cluster that joins is proposed by `cub sveltos watch` and ships once approved, recorded on 0.6.0. |

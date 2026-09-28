@@ -203,6 +203,8 @@ case "$*" in
   "worker get "*) echo x ;;
   "release publish "*)
     for s in $WAITING; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
+    for s in $NEEDS; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
+    for s in $HELD; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: outstanding ValidationErrors; triggers re-queued for evaluation" >&2; exit 1; }; done
     for s in $UNRELEASED; do [ "$3" = "$s" ] && { echo "$3" >> "$LOG.published"; exit 0; }; done
     echo "Failed: HTTP 400: no changes were made since :latest bundle" >&2; exit 1 ;;
   "release list "*)
@@ -244,10 +246,11 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	bin := t.TempDir()
 	fakeTools(t, bin)
 	order := "sveltos-kyverno-base/" + plan.Profiles[0].ReleaseOrder
+	needs, held := "", ""
 	run := func(unreleased, waiting string, propose bool) (string, string, error) {
 		log := filepath.Join(t.TempDir(), "calls")
 		cmd := exec.Command("bash", filepath.Join(dir, "apply.sh"))
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "UNRELEASED="+unreleased, "WAITING="+waiting)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "UNRELEASED="+unreleased, "WAITING="+waiting, "RETRY_SECONDS=0", "NEEDS="+needs, "HELD="+held)
 		if propose {
 			cmd.Env = append(cmd.Env, "PROPOSE_ONLY=1")
 		}
@@ -293,5 +296,22 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	out, calls, err = run("", "", true)
 	if err != nil || strings.Contains(calls, "changeorder create") || strings.Contains(calls, "release publish") || !strings.Contains(out, "every variant in this plan is released") {
 		t.Errorf("with every variant released, no order is made and nothing is published: %v\n%s", err, calls)
+	}
+
+	// A stage that also requires a PolicyCheck waits for it, and says how to
+	// record one.
+	needs = "sveltos-kyverno-prod-us"
+	out, _, err = run("sveltos-kyverno-prod-us", "", true)
+	if err != nil || !strings.Contains(out, "sveltos-kyverno-prod-us waits for policycheck: cub attestation create --space sveltos-kyverno-prod-us --type PolicyCheck --change-order "+order) {
+		t.Errorf("a release waiting for a required attestation names it: %v\n%s", err, out)
+	}
+	needs = ""
+
+	// A release ConfigHub refuses for ValidationErrors is asked again, since
+	// a check may still be running, and then stops the script.
+	held = "sveltos-kyverno-prod-us"
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err == nil || strings.Count(calls, "release publish sveltos-kyverno-prod-us") != 3 || !strings.Contains(out, "is held by its policy checks, so it is not released") {
+		t.Errorf("a release held by a policy stops the script after three tries: %v\n%s", err, out)
 	}
 }

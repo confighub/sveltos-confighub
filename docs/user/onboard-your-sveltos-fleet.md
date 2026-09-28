@@ -396,6 +396,12 @@ flowchart LR
   pd -.->|"Sveltos, within a minute"| cp["prod clusters"]
 ```
 
+In ConfigHub's Rollouts view, each change order shows its promotion path and
+what it waits for. This one is finished: promoted through the class bases, and
+promoted and released in test, uat and prod.
+
+![A finished rollout in ConfigHub: the promotion path from source through bases, test, uat and prod, each marked promoted and released, four of four stages taken](../images/sveltos/sveltos-rollout-complete.png)
+
 **A field**, for every cluster, on the base:
 
 ```bash
@@ -488,6 +494,12 @@ CLUSTER           SPACE                          SYNC       HEALTH       REVISIO
 eu-central-test1  mer-kyverno-eu-central-test1   OutOfSync  Progressing  sha256:3e39eaa74376  yes      release 3, published 2026-09-28T11:03:43Z, not applied yet
 eu-central-uat1   mer-kyverno-eu-central-uat1    Synced     Healthy      sha256:e2b3ed3756b1  yes
 ```
+
+ConfigHub's component map shows the same readings on each cluster's variant.
+Each is marked Live and Synced, and is marked behind while a rollout still
+has a release to bring it:
+
+![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](../images/sveltos/sveltos-meridian-tree.png)
 
 - **Synced and Healthy:** Sveltos applied the latest release, and the
   Deployments, StatefulSets and DaemonSets it delivers were available. The
@@ -625,6 +637,9 @@ Recorded on the Meridian kind fleet
   resolved, although that variant still waits for its first release and its
   approval. So the watcher and `apply.sh` decide what waits from the
   published releases, not from the order's stage.
+
+eu-central-prod3 and eu-central-prod4 in the component map above are the two
+clusters that joined this way.
 
 ## What you will see
 

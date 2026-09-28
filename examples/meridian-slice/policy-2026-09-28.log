@@ -1,0 +1,362 @@
+# Kyverno policies gating the Meridian slice's rollouts, on kind, stock Sveltos
+# v1.15.0 and ConfigHub v0.6.5, 2026-09-28. See docs/user/policy-checks.md.
+#
+# The checker: Kyverno 3.8.2 on the management cluster in namespace
+# policy-checker, holding one ClusterPolicy, disallow-latest-tag (Enforce,
+# Pods and, through Kyverno's autogen, Deployments). A local cub worker
+# (v0.6.5, built from github.com/confighub/sdk) ran vet-kyverno-server against
+# it through a port-forward. The trigger `kyverno` lives in the Space
+# mer-policies; the Filter mer-policies/policy-triggers selects it, and every
+# Meridian base, class base and variant was given that filter.
+#
+# 1-5 make a change the policy forbids (the cleanup controller on :latest)
+# and show both gates holding it. 6-9 stop the checker's worker and show a
+# change going out unchecked. 10 onwards adds a required PolicyCheck and
+# rolls a real change out through every stage with approvals and checks.
+# Probe change orders were aborted and undone with cub variant demote; the
+# fleet ends as it began, plus two owner and cost-centre labels. In the
+# owner-label rollout, the recording's own shell loop first passed the four
+# prod Spaces as one word ("not found"); that pass was run again, below it.
+
+== warn mode: a change at the root that the policy forbids
+$ cub function set --space mer-kyverno-base --unit kyverno --change-desc "Probe: cleanup controller on :latest" -- set-yq '(select(.kind == "Deployment" and .metadata.name == "kyverno-cleanup-controller") | .spec.template.spec.containers[0].image) = "reg.kyverno.io/kyverno/cleanup-controller:latest"'
+{
+  "ValidationTriggerIDs": {
+    "mer-policies/kyverno/vet-kyverno-server": "de095c99-0bb3-4bf2-b097-95cce8b01c0f"
+  }
+}
+
+$ cub trigger update --space mer-policies --worker mer-policies/kyverno-checker --unwarn kyverno Mutation Kubernetes/YAML vet-kyverno-server
+ok
+{
+  "Disabled": null,
+  "FailOpenAfter": 0,
+  "Slug": "kyverno",
+  "Warn": null
+}
+refreshed
+
+== 1. the entry gate: Validated on every stage after bases
+workflow: test [Validated], uat and prod [Released, Validated]
+$ cub changeorder create --space mer-kyverno-base probe-latest-tag --change-workflow mer-kyverno-base/rollout
+ok
+$ cub variant promote --change-order mer-kyverno-base/probe-latest-tag --target-stage bases --squash
+Failed: no response body from server for req 
+exit 0
+-- class bases now:
+   mer-kyverno-class-test: {"mer-policies/kyverno/vet-kyverno-server":true}
+   mer-kyverno-class-uat: {"mer-policies/kyverno/vet-kyverno-server":true}
+   mer-kyverno-class-prod: {"mer-policies/kyverno/vet-kyverno-server":true}
+$ cub variant promote --change-order mer-kyverno-base/probe-latest-tag --target-stage test --squash
+Failed: unable to promote to stage 'test', Variant 'class-prod' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server); unable to promote to stage 'test', Variant 'class-test' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server); unable to promote to stage 'test', Variant 'class-uat' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server)
+
+== 2. the release gate: test without Validated, so the change lands in test1
+workflow: test has no entry gate
+$ cub variant promote --change-order mer-kyverno-base/probe-latest-tag --target-stage test --squash
+Failed: unable to promote to stage 'test', Variant 'class-prod' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server); unable to promote to stage 'test', Variant 'class-test' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server); unable to promote to stage 'test', Variant 'class-uat' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server)
+exit 0
+-- mer-kyverno-eu-central-test1: null
+$ cub variant approve --change-order mer-kyverno-base/probe-latest-tag --stage test
+  skipped kyverno: no revision found with tag
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/probe-latest-tag
+Failed: HTTP 500 for req ezjPddTDWiBwkmuhAZGyEVRpKfbSEGkR: no Revision found for Unit kyverno with the specified TagID 7142d8ed-f11d-47a2-8c8e-009d17ec2ccc
+
+exit 0
+-- releases of test1: 3
+-- cleanup controller image on eu-central-test1: reg.kyverno.io/kyverno/cleanup-controller:v1.18.2
+
+== 2b. a fresh order, made after the workflow lost test's entry gate
+$ cub changeorder create --space mer-kyverno-base probe-latest-tag-2 --change-workflow mer-kyverno-base/rollout
+ok
+$ cub variant promote --change-order mer-kyverno-base/probe-latest-tag-2 --target-stage bases --squash
+Marked 1 unit(s) the change order covers and carries no changes for
+Adding 0 unit(s) from upstream at the change order's start
+$ cub variant promote --change-order mer-kyverno-base/probe-latest-tag-2 --target-stage test --squash
+Adding 0 unit(s) from upstream at the change order's start
+Failed: promoted 0 of 1 Variant(s) of stage 'test': failed to promote unit kyverno of mer-kyverno-eu-central-test1: unit kyverno: change order probe-latest-tag-2 starts at revision 5 of the source, but this unit last merged revision 4; take the intervening changes first, or promote a change order that starts where this unit is
+-- mer-kyverno-eu-central-test1: null
+$ cub variant approve --change-order mer-kyverno-base/probe-latest-tag-2 --stage test
+  skipped kyverno: no revision found with tag
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/probe-latest-tag-2
+Failed: HTTP 500 for req HIKNisnlFtIKvLBCkdzHbTdipiirdjVF: no Revision found for Unit kyverno with the specified TagID 67adcc54-8ba8-429c-8393-58354458025f
+
+-- latest release of test1: 3
+-- cleanup controller image on eu-central-test1: reg.kyverno.io/kyverno/cleanup-controller:v1.18.2
+
+== 3. fix forward in the blocked order: the image back to v1.18.2 at the root
+$ cub function set --space mer-kyverno-base --unit kyverno --change-desc "Probe: cleanup controller back to v1.18.2" -- set-yq ...
+-- the root: null
+$ cub variant promote --change-order mer-kyverno-base/probe-latest-tag --target-stage bases --squash
+Upgraded 0 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+$ cub variant promote --change-order mer-kyverno-base/probe-latest-tag --target-stage test --squash
+Failed: unable to promote to stage 'test', Variant 'class-prod' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server); unable to promote to stage 'test', Variant 'class-test' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server); unable to promote to stage 'test', Variant 'class-uat' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server)
+-- mer-kyverno-class-test: errors {"mer-policies/kyverno/vet-kyverno-server":true}
+-- mer-kyverno-class-uat: errors {"mer-policies/kyverno/vet-kyverno-server":true}
+-- mer-kyverno-class-prod: errors {"mer-policies/kyverno/vet-kyverno-server":true}
+-- mer-kyverno-eu-central-test1: errors null
+
+== 4. give up on the blocked orders, and take the change back out of the class bases
+$ cub changeorder update --space mer-kyverno-base probe-latest-tag --patch --aborted-reason "..."
+ok
+$ cub changeorder update --space mer-kyverno-base probe-latest-tag-2 --patch --aborted-reason "..."
+ok
+$ cub variant demote mer-kyverno-class-test --change-order mer-kyverno-base/probe-latest-tag
+Bulk restore operation completed:
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-uat --change-order mer-kyverno-base/probe-latest-tag
+Bulk restore operation completed:
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-prod --change-order mer-kyverno-base/probe-latest-tag
+Bulk restore operation completed:
+  Success: 1 unit(s)
+-- mer-kyverno-class-test: errors null, image cleanup-controller:
+-- mer-kyverno-class-uat: errors null, image cleanup-controller:
+-- mer-kyverno-class-prod: errors null, image cleanup-controller:
+{
+  "AbortedReason": "Probe: blocked by the Kyverno policy",
+  "Stage": "bases",
+  "State": "Aborted"
+}
+
+== 5. the release gate: a fresh order, no entry gate on test
+$ cub changeorder create --space mer-kyverno-base probe-release-gate --change-workflow mer-kyverno-base/rollout
+ok
+$ cub function set --space mer-kyverno-base --unit kyverno --change-desc "Probe: cleanup controller on :latest" -- set-yq ...
+$ cub variant promote --change-order mer-kyverno-base/probe-release-gate --target-stage bases --squash
+Upgraded 1 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+$ cub variant promote --change-order mer-kyverno-base/probe-release-gate --target-stage test --squash
+Marked 1 unit(s) the change order covers and carries no changes for
+Adding 0 unit(s) from upstream at the change order's start
+-- mer-kyverno-eu-central-test1: errors null
+$ cub variant approve --change-order mer-kyverno-base/probe-release-gate --stage test
+Recorded pass Approval attestation 274d3d45-d3ad-4b80-af33-7b98e1f59c87 in mer-kyverno-eu-central-test1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/probe-release-gate
+Failed: HTTP 400 for req StwcqcWxfASWRFyorYFFviKzWfilieVN: no changes were made since :latest bundle
+
+-- latest release of test1: 3
+-- cleanup controller image on eu-central-test1: reg.kyverno.io/kyverno/cleanup-controller:v1.18.2
+aborted probe-release-gate
+
+== 5b. the release gate: the change is at the root; the order is made after it
+$ cub changeorder create --space mer-kyverno-base probe-release-gate-2 --change-workflow mer-kyverno-base/rollout
+ok
+$ cub variant promote --change-order mer-kyverno-base/probe-release-gate-2 --target-stage bases --squash
+Failed: no response body from server for req 
+$ cub variant promote --change-order mer-kyverno-base/probe-release-gate-2 --target-stage test --squash
+Upgraded 1 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+-- mer-kyverno-eu-central-test1: cleanup-controller:latest, errors {"mer-policies/kyverno/vet-kyverno-server":true}
+$ cub variant approve --change-order mer-kyverno-base/probe-release-gate-2 --stage test
+Recorded pass Approval attestation 6ee0d8ed-9bf9-4842-a400-115001e1e69e in mer-kyverno-eu-central-test1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/probe-release-gate-2
+Metadata:
+  Validation Errors: mer-policies/kyverno/vet-kyverno-server
+
+-- latest release of test1: 3
+-- cleanup controller image on eu-central-test1: reg.kyverno.io/kyverno/cleanup-controller:v1.18.2
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/probe-release-gate-2
+Failed: HTTP 422 for req HgoTLcyLBPrQPSWKeXjAhfMovqBFaRdZ: outstanding ValidationErrors; triggers re-queued for evaluation
+Metadata:
+  Validation Errors: mer-policies/kyverno/vet-kyverno-server
+
+exit 1
+
+== 6. fail open: the checker's worker goes away
+$ cub trigger update --space mer-policies --worker mer-policies/kyverno-checker --fail-open-after 2m kyverno Mutation Kubernetes/YAML vet-kyverno-server
+ok
+{"Disabled":null,"FailOpenAfter":120000000000,"Warn":null}
+-- worker stopped at 14:06:25
+14:06:27 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:06:59 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:07:31 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:08:03 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:08:35 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:09:07 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:09:39 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:10:11 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:10:42 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:11:14 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:11:46 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:12:18 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:12:50 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:13:22 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:13:54 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:14:25 worker=Ready trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+
+== 7. clean up: abort the release-gate order, undo it where it reached, and put the root back
+aborted probe-release-gate-2
+$ cub variant demote mer-kyverno-eu-central-test1 --change-order mer-kyverno-base/probe-release-gate-2
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-test --change-order mer-kyverno-base/probe-release-gate-2
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-uat --change-order mer-kyverno-base/probe-release-gate-2
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-prod --change-order mer-kyverno-base/probe-release-gate-2
+  Success: 1 unit(s)
+-- mer-kyverno-base: cleanup-controller:v1.18.2, errors null
+-- mer-kyverno-class-test: cleanup-controller:v1.18.2, errors null
+-- mer-kyverno-class-uat: cleanup-controller:v1.18.2, errors null
+-- mer-kyverno-class-prod: cleanup-controller:v1.18.2, errors null
+-- mer-kyverno-eu-central-test1: cleanup-controller:v1.18.2, errors null
+
+== 8. a new change while the checker's worker is gone (14:24:57)
+14:25:35 root: {"ValidationErrors":null,"ValidationWarnings":null,"gates":[]}
+14:25:55 root: {"ValidationErrors":null,"ValidationWarnings":null,"gates":[]}
+14:26:16 root: {"ValidationErrors":null,"ValidationWarnings":null,"gates":[]}
+14:26:37 root: {"ValidationErrors":null,"ValidationWarnings":null,"gates":[]}
+$ cub changeorder create --space mer-kyverno-base probe-checker-away --change-workflow mer-kyverno-base/rollout
+ok
+$ cub variant promote --change-order mer-kyverno-base/probe-checker-away --target-stage bases --squash
+Failed: no response body from server for req 
+$ cub variant promote --change-order mer-kyverno-base/probe-checker-away --target-stage test --squash
+Upgraded 1 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+-- test1 head: [7,null], annotation in data: 1
+Recorded pass Approval attestation 782b9ede-e17e-41b3-ac07-495fcdee966a in mer-kyverno-eu-central-test1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/probe-checker-away
+Successfully created release a221aa7a-354a-4d42-bedc-bbf07e1a3f81 (a221aa7a-354a-4d42-bedc-bbf07e1a3f81)
+exit 0
+-- latest release of test1: 4
+$ cub variant promote --change-order mer-kyverno-base/probe-checker-away --target-stage uat --squash   (uat waits for Released and Validated)
+Upgraded 1 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+exit 0
+-- uat1 has the annotation: 1
+
+== 9. clean up the unchecked change
+aborted probe-checker-away
+$ cub variant demote mer-kyverno-eu-central-uat1 --change-order mer-kyverno-base/probe-checker-away
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-eu-central-test1 --change-order mer-kyverno-base/probe-checker-away
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-test --change-order mer-kyverno-base/probe-checker-away
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-uat --change-order mer-kyverno-base/probe-checker-away
+  Success: 1 unit(s)
+$ cub variant demote mer-kyverno-class-prod --change-order mer-kyverno-base/probe-checker-away
+  Success: 1 unit(s)
+$ cub release publish mer-kyverno-eu-central-test1   (the restored revision, so the cluster drops the annotation)
+Successfully created release 2adcf631-f105-4ab4-a212-ea44c3d086d4 (2adcf631-f105-4ab4-a212-ea44c3d086d4)
+-- mer-kyverno-base annotation: 0
+-- mer-kyverno-class-test annotation: 0
+-- mer-kyverno-eu-central-test1 annotation: 0
+-- mer-kyverno-eu-central-uat1 annotation: 0
+-- on eu-central-test1: (empty = gone)
+
+== 10. apply.sh's gate lines, run against the live workflow
+13
+gate lines ran
+{"req":["approval","policycheck"],"stages":[{"bases":["|"]},{"test":["Validated","|","approval","policycheck"]},{"uat":["Released","Validated","|","approval","policycheck"]},{"prod":["Released","Validated","|","approval","policycheck"]}]}
+has every gate now: true
+
+== the fail-open watch: worker, trigger and test1's gate each minute after the worker stopped at 14:06:25
+14:15:18 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:16:20 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:17:24 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:18:26 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:19:28 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:20:30 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors={"mer-policies/kyverno/vet-kyverno-server":true}
+14:21:32 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:22:33 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:23:35 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:24:37 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:25:39 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:26:41 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:27:43 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:28:46 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:29:47 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:30:49 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:31:51 worker=Ready 2026-09-28T14:06:16.029858Z trigger-disabled=null test1-errors=null
+14:32:53 worker=Ready 2026-09-28T14:32:51.86903Z trigger-disabled=null test1-errors=null
+14:33:54 worker=Ready 2026-09-28T14:33:53.730139Z trigger-disabled=null test1-errors=null
+14:34:57 worker=Ready 2026-09-28T14:34:55.856913Z trigger-disabled=null test1-errors=null
+
+== a governed rollout: approval and a recorded policy check in every stage (14:36:48)
+$ cub function set --space mer-kyverno-base --unit kyverno --change-desc "Label every Kyverno Deployment with its owner" -- set-yq '(select(.kind == "Deployment") | .metadata.labels["meridian.io/owner"]) = "platform"'
+$ cub changeorder create --space mer-kyverno-base owner-label --change-workflow mer-kyverno-base/rollout
+ok
+$ cub variant promote --change-order mer-kyverno-base/owner-label --target-stage bases --squash
+Failed: no response body from server for req 
+$ cub variant promote --change-order mer-kyverno-base/owner-label --target-stage test --squash
+Adding 0 unit(s) from upstream at the change order's start
+$ cub variant approve --change-order mer-kyverno-base/owner-label --stage test
+Recorded pass Approval attestation 2acaa1c4-496e-450b-b344-b1f3cf3fb918 in mer-kyverno-eu-central-test1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/owner-label   (approved, but no policy check recorded)
+Failed: HTTP 422 for req YrxqGKibCFzUMuzUaZgiffMVuvHzDrut: unable to publish a release of change order 'owner-label' in stage 'test': requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 9 has 0 of 1
+
+$ cub function vet vet-kyverno-server --space mer-kyverno-eu-central-test1 --unit kyverno --worker mer-policies/kyverno-checker
+  Passed: true  Function: vet-kyverno-server
+$ cub attestation create --space mer-kyverno-eu-central-test1 --type PolicyCheck --change-order mer-kyverno-base/owner-label --note "vet-kyverno-server passed"
+Recorded pass PolicyCheck attestation 761ec119-55a8-4deb-a843-00db1ef0a068 in mer-kyverno-eu-central-test1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/owner-label
+Successfully created release 5004edd0-0813-477b-afd4-334f87e73c98 (5004edd0-0813-477b-afd4-334f87e73c98)
+$ cub variant promote --change-order mer-kyverno-base/owner-label --target-stage uat --squash
+Adding 0 unit(s) from upstream at the change order's start
+$ cub variant approve --change-order mer-kyverno-base/owner-label --stage uat
+1 approvals recorded
+$ cub function vet vet-kyverno-server --space mer-kyverno-eu-central-uat1 --unit kyverno --worker mer-policies/kyverno-checker
+  Passed: true  Function: vet-kyverno-server
+$ cub attestation create --space mer-kyverno-eu-central-uat1 --type PolicyCheck --change-order mer-kyverno-base/owner-label --note "vet-kyverno-server passed"
+Recorded pass PolicyCheck attestation 1d6d581e-48dd-4c57-ba1b-b55c3c1cab91 in mer-kyverno-eu-central-uat1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-uat1 --revision ChangeOrder:mer-kyverno-base/owner-label
+Successfully created release f3c72ebc-ce36-42a6-8a8e-95ca9f6d99f2 (f3c72ebc-ce36-42a6-8a8e-95ca9f6d99f2)
+$ cub variant promote --change-order mer-kyverno-base/owner-label --target-stage prod --squash
+Failed: no response body from server for req 
+$ cub variant approve --change-order mer-kyverno-base/owner-label --stage prod
+4 approvals recorded
+$ cub function vet vet-kyverno-server --space mer-kyverno-eu-central-prod1 mer-kyverno-eu-central-prod2 mer-kyverno-eu-central-prod3 mer-kyverno-eu-central-prod4 --unit kyverno --worker mer-policies/kyverno-checker
+Failed: space "mer-kyverno-eu-central-prod1 mer-kyverno-eu-central-prod2 mer-kyverno-eu-central-prod3 mer-kyverno-eu-central-prod4" not found in any space
+$ cub release publish mer-kyverno-eu-central-prod1 mer-kyverno-eu-central-prod2 mer-kyverno-eu-central-prod3 mer-kyverno-eu-central-prod4 --revision ChangeOrder:mer-kyverno-base/owner-label
+Failed: space "mer-kyverno-eu-central-prod1 mer-kyverno-eu-central-prod2 mer-kyverno-eu-central-prod3 mer-kyverno-eu-central-prod4" not found in any space
+-- the order: Completed Resolved
+-- attestations on it: {"Approval":6,"PolicyCheck":2}
+$ cub function vet vet-kyverno-server --space mer-kyverno-eu-central-prod1 --unit kyverno --worker mer-policies/kyverno-checker
+  Passed: true  Function: vet-kyverno-server
+$ cub attestation create --space mer-kyverno-eu-central-prod1 --type PolicyCheck --change-order mer-kyverno-base/owner-label --note "vet-kyverno-server passed"
+Recorded pass PolicyCheck attestation 6d9b8270-6655-4ca8-b560-f63537b0a5b9 in mer-kyverno-eu-central-prod1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-prod1 --revision ChangeOrder:mer-kyverno-base/owner-label
+Successfully created release 54af36fd-1bfe-4441-ab25-2a1cd0fbd8b0 (54af36fd-1bfe-4441-ab25-2a1cd0fbd8b0)
+$ cub function vet vet-kyverno-server --space mer-kyverno-eu-central-prod2 --unit kyverno --worker mer-policies/kyverno-checker
+  Passed: true  Function: vet-kyverno-server
+$ cub attestation create --space mer-kyverno-eu-central-prod2 --type PolicyCheck --change-order mer-kyverno-base/owner-label --note "vet-kyverno-server passed"
+Recorded pass PolicyCheck attestation c0cd695c-332b-4aeb-907d-88a316464b25 in mer-kyverno-eu-central-prod2, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-prod2 --revision ChangeOrder:mer-kyverno-base/owner-label
+Successfully created release b3d8d395-d807-4869-8c26-60793609f378 (b3d8d395-d807-4869-8c26-60793609f378)
+$ cub function vet vet-kyverno-server --space mer-kyverno-eu-central-prod3 --unit kyverno --worker mer-policies/kyverno-checker
+  Passed: true  Function: vet-kyverno-server
+$ cub attestation create --space mer-kyverno-eu-central-prod3 --type PolicyCheck --change-order mer-kyverno-base/owner-label --note "vet-kyverno-server passed"
+Recorded pass PolicyCheck attestation 5678253c-ee2d-4b6d-95b0-c7b976e9af3c in mer-kyverno-eu-central-prod3, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-prod3 --revision ChangeOrder:mer-kyverno-base/owner-label
+Successfully created release efc992c6-3137-4685-b1be-b935ce62f8d3 (efc992c6-3137-4685-b1be-b935ce62f8d3)
+$ cub function vet vet-kyverno-server --space mer-kyverno-eu-central-prod4 --unit kyverno --worker mer-policies/kyverno-checker
+  Passed: true  Function: vet-kyverno-server
+$ cub attestation create --space mer-kyverno-eu-central-prod4 --type PolicyCheck --change-order mer-kyverno-base/owner-label --note "vet-kyverno-server passed"
+Recorded pass PolicyCheck attestation d5cfeea2-5bb3-4c60-8ff0-9075dce753c4 in mer-kyverno-eu-central-prod4, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-prod4 --revision ChangeOrder:mer-kyverno-base/owner-label
+Successfully created release cf114b9b-3a31-452c-900b-fa1560580ccf (cf114b9b-3a31-452c-900b-fa1560580ccf)
+-- the order: Completed Released
+-- attestations on it: {"Approval":6,"PolicyCheck":6}
+-- eu-central-test1: owner label on 4 Deployments
+-- eu-central-uat1: owner label on 4 Deployments
+-- eu-central-prod1: owner label on 4 Deployments
+-- eu-central-prod2: owner label on 4 Deployments
+-- eu-central-prod3: owner label on 4 Deployments
+-- eu-central-prod4: owner label on 4 Deployments
+
+== cub sveltos check, live (14:49:47)
+$ cub function set --space mer-kyverno-base --unit kyverno --change-desc "Give every Kyverno Deployment its cost centre" -- set-yq ...
+$ cub changeorder create --space mer-kyverno-base cost-center --change-workflow mer-kyverno-base/rollout
+ok
+$ cub variant promote --change-order mer-kyverno-base/cost-center --target-stage bases --squash
+Failed: no response body from server for req 
+$ cub variant promote --change-order mer-kyverno-base/cost-center --target-stage test --squash
+Adding 0 unit(s) from upstream at the change order's start
+$ cub sveltos check --change-order mer-kyverno-base/cost-center --stage test --worker mer-policies/kyverno-checker vet-kyverno-server
+mer-kyverno-eu-central-test1: passed kyverno/10; recorded a Pass (dae879e6-f5bf-453a-ad41-bc5678096878)
+exit 0
+$ cub variant approve --change-order mer-kyverno-base/cost-center --stage test
+Recorded pass Approval attestation a0d1461f-1bf3-44e3-8340-9de46f0d6ebf in mer-kyverno-eu-central-test1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/cost-center
+Successfully created release 40ca75d2-f9c1-4e12-8d76-4ddc9b144d77 (40ca75d2-f9c1-4e12-8d76-4ddc9b144d77)

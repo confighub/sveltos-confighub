@@ -38,6 +38,21 @@ flowchart LR
 You keep Sveltos. You gain a review of every change, a record of which
 revision each cluster runs, and a rollout order that ConfigHub enforces.
 
+## What it answers
+
+| You want to | What you do | Section |
+| --- | --- | --- |
+| Put one platform stack on every production cluster, without repeating its config | Change its base once; every cluster's variant takes the change, staging first | [3](#3-roll-a-change-out-to-every-cluster-staging-first) |
+| Keep choosing clusters by label, as you do with Sveltos | `cub sveltos plan` reads your profiles' label selectors as they are | [1](#1-bring-the-fleet-you-already-run-into-confighub) |
+| Have a new cluster with the right labels pick up its stack | `cub sveltos watch` proposes it, a person approves, Sveltos delivers | [8](#8-add-a-new-cluster) |
+| Stop a change that breaks your policies before it reaches a cluster | Your Kyverno policies check every change, and each stage's release waits for a pass | [4](#4-check-every-change-against-your-policies) |
+| Put the GPU operator only on clusters approved for it, and upgrade drivers safely | Labels propose, people approve, and the driver version is a field you review | [7](#7-run-a-gpu-fleet-the-operator-only-where-it-is-approved) |
+| Upgrade a chart and see exactly what changes | Render the new version, and review it object by object | [5](#5-upgrade-a-chart-and-review-exactly-what-changes) |
+| Know what each cluster runs, whether it is healthy, and who changed it | ConfigHub holds each cluster's objects, its live status from Sveltos, and every change's author and reason | [9](#9-see-what-every-cluster-runs-whether-it-is-healthy-and-who-changed-it) |
+| Run it for a business-sized fleet | Root, class and cluster levels, tried on a slice of a 99-cluster fleet | [10](#10-run-it-at-business-size) |
+| Let an AI assistant make changes safely | Every step is a `cub` command, and people approve each stage | [11](#11-work-with-an-ai-assistant) |
+| Keep Argo CD, Flux or Helm where they apply profiles | The handover stops while such a profile is still there, and says what to do first | [guide](docs/user/onboard-your-sveltos-fleet.md#if-your-profiles-are-live) |
+
 ## The plugin: `cub sveltos`
 
 ```bash
@@ -52,7 +67,8 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 | `cub sveltos compare` | Checks that what ConfigHub will deliver to a cluster is exactly what Helm installed there. `handover.sh` runs it for you. |
 | `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. |
 | `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
-| `cub sveltos version` | Prints the version. The current release is **v0.6.0**; see [what's new](docs/whats-new.md). |
+| `cub sveltos check` | Runs a policy check, such as Kyverno, on a change in one stage, and records the verdict in ConfigHub. Each stage's release can require a Pass. |
+| `cub sveltos version` | Prints the version. The current release is **v0.7.0**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
 ConfigHub's own `cub` commands, shown below.
@@ -168,7 +184,58 @@ prod before staging has released the change:
 Failed: unable to promote to stage 'prod', Variant 'staging-eu' has taken change order 'replicas-4' but has not released it
 ```
 
-### 4. Upgrade a chart, and review exactly what changes
+This is a rollout in ConfigHub once it is done. Here it is a label added to
+every Kyverno Deployment on the Meridian kind fleet. It was promoted through
+the class bases, then test, uat and prod, and released in each stage after an
+approval:
+
+![A finished rollout in ConfigHub: the promotion path from source through bases, test, uat and prod, each marked promoted and released, four of four stages taken](docs/images/sveltos/sveltos-rollout-complete.png)
+
+### 4. Check every change against your policies
+
+Run your Kyverno policies on a change before it ships. Plan with a policy
+trigger and a required check:
+
+```bash
+cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod \
+  --policy platform-policies/policy-triggers --require PolicyCheck --out onboard
+```
+
+- `--policy` runs your Kyverno check on every change, in every base and
+  variant. A change that fails carries an error, and ConfigHub will not
+  promote it past its stage or release it.
+- `--require PolicyCheck` makes each stage's release wait for a recorded
+  Pass. Record one after each promotion:
+
+```bash
+cub sveltos check --change-order sveltos-kyverno-base/replicas-4 --stage staging \
+  --worker platform-policies/kyverno-checker vet-kyverno-server
+```
+
+On the Meridian kind fleet, a change that put Kyverno's cleanup controller on
+`:latest` was stopped before test:
+
+```text
+unable to promote to stage 'test', Variant 'class-test' has ValidationErrors on the Revisions change order 'probe-latest-tag' marks: kyverno (mer-policies/kyverno/vet-kyverno-server)
+```
+
+A policy trigger alone can let a change through while its checker is away.
+In our test that happened at once, not after the six hours ConfigHub
+documents. So gate releases on the required check. [Check every change
+against your policies](docs/user/policy-checks.md) has the setup and what was
+measured.
+
+A rollout part-way through, with test released and uat waiting on its gates.
+`check/validated` is the policy gate: ConfigHub checks it when you promote.
+
+![A rollout in ConfigHub part-way through: test is promoted and released, uat is gated, and its gates list check/promoted and check/released as satisfied and check/validated, the policy gate](docs/images/sveltos/sveltos-rollout-gated.png)
+
+Every rollout, with what holds each one. The ones marked "blocked by the
+Kyverno policy" are changes the policy stopped before they reached a cluster:
+
+![ConfigHub's Rollouts page: one rollout needs a release, finished rollouts are complete, and aborted probe rollouts read closed, not promoted, blocked by the Kyverno policy](docs/images/sveltos/sveltos-rollouts-policy.png)
+
+### 5. Upgrade a chart, and review exactly what changes
 
 `apply.sh` records the command each chart was rendered with. Render the new
 version the same way, and store it on the base:
@@ -197,7 +264,7 @@ Resource: apiextensions.k8s.io/v1/CustomResourceDefinition /gpuclusters.nvidia.c
 
 Then roll it out as in 3.
 
-### 5. Give each environment, or each kind of cluster, its own settings
+### 6. Give each environment, or each kind of cluster, its own settings
 
 If you keep one Sveltos profile per environment (say `kyverno-test`,
 `kyverno-uat`, `kyverno-prod`), onboard them as one add-on with a **class
@@ -214,7 +281,38 @@ The same works for GPU types: one class per accelerator.
 
 ![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds](docs/images/sveltos/sveltos-meridian-three-levels.svg)
 
-### 6. Add a new cluster
+In ConfigHub the same tree is the component's map: the root base, a class
+base per class, and a variant per cluster, each with its live status from
+Sveltos and how far behind a rollout it is.
+
+![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](docs/images/sveltos/sveltos-meridian-tree.png)
+
+### 7. Run a GPU fleet: the operator only where it is approved
+
+Many GPU fleets install NVIDIA's GPU operator on every cluster labelled for
+it, as the ECMWF platform team described at ISGC 2026. A label edit then
+decides where drivers go, and nothing records who decided.
+
+Onboarded with `cub sveltos`, the same profile and labels keep working, but a
+label only proposes a cluster:
+- The operator is held as the objects its chart renders to, so the driver
+  version you approve is a field, `spec.driver.version` on the ClusterPolicy.
+- A cluster labelled by mistake gets nothing until someone approves it.
+- A driver upgrade reaches staging first, and review lists every object it
+  changes (see section 5).
+- Each GPU type can have its own class base (`--class-label accelerator`), so
+  H100 and A100 clusters keep their own driver settings.
+
+[The GPU operator example](examples/gpu-operator/README.md) runs this on kind.
+kind has no GPUs, so it shows the operator's objects, not drivers loading; a
+run on real GPU nodes has not been done yet.
+
+To build a whole GPU inference platform, from the cluster to the workloads,
+see the ConfigHub Workshop's [eks-inference
+stack](https://github.com/confighub/cub-workshop/blob/main/stacks/eks-inference.yaml).
+`cub stack sandbox eks-inference` renders all of it with no infrastructure.
+
+### 8. Add a new cluster
 
 Register and label the new cluster as you always have. **Nothing ships
 yet**: in this setup, a label alone deploys nothing. Keep the watcher running
@@ -251,7 +349,7 @@ cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages
 MGMT_CONTEXT=<your management cluster context> bash onboard/apply.sh
 ```
 
-### 7. See what every cluster runs, whether it is healthy, and who changed it
+### 9. See what every cluster runs, whether it is healthy, and who changed it
 
 ```bash
 cub space list --where "Labels.Cluster = 'prod-eu'"                  # everything on prod-eu
@@ -275,7 +373,13 @@ Each change carries its author and a reason. Each stage's approval is
 recorded. ConfigHub's refusals come in its own words, and that's the
 record an audit needs.
 
-### 8. Run it at business size
+Every revision of the root's Kyverno unit, with the change order that carried
+it, its reason, who made it and whether it failed a policy check (the two
+marked 1). Author names are hidden here.
+
+![A unit's revisions in ConfigHub: thirteen revisions with their change-order tags, descriptions, author and validation errors; two probe revisions show one validation error each](docs/images/sveltos/sveltos-unit-revisions.png)
+
+### 10. Run it at business size
 
 Sveltos brings the same three levels to a large fleet: a root base, class
 bases, and a variant per cluster. That's the shape of ConfigHub's
@@ -287,7 +391,7 @@ class, test before uat before prod, and each class kept its own settings.
 However big the fleet, a change costs the same: one edit, then one promotion
 and one approval per stage.
 
-### 9. Work with an AI assistant
+### 11. Work with an AI assistant
 
 Every step is a `cub` or `kubectl` command, so an assistant in your terminal
 can do the work:
@@ -298,6 +402,7 @@ can do the work:
 | "Upgrade Kyverno to 3.8.2, and show me what changes" | `cub helm template …`, `cub unit update …`, `cub unit diff … -o mutations` |
 | "Four replicas, for uat only" | `cub function set …` on uat's class base, then `cub unit set-protection …` |
 | "Roll it out" | `cub changeorder create …`, then `cub variant promote … --squash` into each stage |
+| "Does it pass our policies in staging?" | `cub sveltos check --change-order … --stage staging … vet-kyverno-server` |
 
 **Approval stays with people.**
 - Each stage's release waits for `cub variant approve`.
@@ -331,22 +436,21 @@ cluster: `npm run verify` and `go test ./...`.
 
 - [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md): the
   full guide, from plan to handover to changes afterwards.
-- [What's new](docs/whats-new.md): what 0.5 and 0.6 changed, and how to move
-  from 0.4.
-- [Run your own fleet on one variant per cluster](docs/user/run-your-own-fleet.md):
-  the shape at any size, what a change costs, and the limits measured here.
+- [Check every change against your policies](docs/user/policy-checks.md):
+  Kyverno before anything ships, the two gates, and what happens when the
+  checker is away.
+- [What's new](docs/whats-new.md): what 0.5, 0.6 and 0.7 changed, and how to
+  move from 0.4.
 - [chartrender](chartrender/README.md): the chart rules, as a Go package for
   other tools.
-- [The recorded chapters](docs/chapters.md): six chapters recorded on the
-  first design of this integration, with their receipts.
+- [Before 0.5](docs/chapters.md): how this integration worked before it
+  rendered charts into objects, kept for reference.
 
 ## Status
 
-`cub sveltos` v0.6.0 is tested on kind with stock Sveltos v1.15.0. It has not
-run in a production fleet yet. Rollback here restores one
-cluster to an exact revision. There's no single action that halts and reverses
-a rollout across the fleet.
+`cub sveltos` v0.7.0 is tested on kind with stock Sveltos v1.15.0. It has not
+run in a production fleet yet.
 
-This work was extracted from
-[confighub/helm-expt](https://github.com/confighub/helm-expt) with paths
-preserved, so every committed receipt verifies here unchanged.
+To stop a rollout part-way, abort its change order, then undo it in each Space
+it reached with `cub variant demote`. There is no single command that does
+this across the fleet yet.
