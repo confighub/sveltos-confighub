@@ -63,7 +63,9 @@ available.
 - A check it ran after its Helm charts now runs after the delivered
   Resources.
 
-Sveltos runs these checks when it applies a release, not continuously.
+Sveltos runs these checks when it applies a release, not continuously, like
+Helm's post-install hooks. Its ClusterHealthCheck watches continuously;
+reading it is #71.
 
 **Measured on kind:**
 - with a `Healthy` prerequisite in the workflow, ConfigHub refused to promote

@@ -516,7 +516,10 @@ older than `--refresh` (ten minutes by default).
 Sveltos reports the profile `Provisioned` only once they are available.
 Sveltos checks this when it applies a release, not continuously. Measured on
 kind: a Deployment that went down after its release was applied still showed
-as healthy. So Healthy means that the release came up healthy. A delivery
+as healthy. The Sveltos project confirms it: these checks are like Helm's
+post-install and post-upgrade hooks. So Healthy means that the release came up
+healthy. Sveltos's ClusterHealthCheck watches continuously; reading it is
+[#71](https://github.com/confighub/sveltos-confighub/issues/71). A delivery
 profile written by 0.5 or earlier has no health checks, and `status` says so,
 with health `Unknown`. Run `apply` again and apply the new
 `management/<profile>.yaml` to add them.
