@@ -94,6 +94,51 @@ A file you wrote by hand works too; [my-fleet.yaml](../../examples/onboard/my-fl
 is an example with three profiles and five clusters. If a profile names
 ConfigMaps in `policyRefs`, the plan asks for them too.
 
+**Starting something new.** You don't need a profile that already runs.
+Write the ClusterProfile you would have given Sveltos, which selects clusters
+by label and names a chart, and plan from it with a list of your clusters. You
+never apply that profile to the management cluster; it is only the
+description. `apply.sh` builds the base and a variant for each cluster it
+selects, and puts one delivery profile per cluster in place:
+
+```yaml
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: cert-manager
+spec:
+  clusterSelector:
+    matchLabels:
+      env: prod
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://charts.jetstack.io
+      repositoryName: jetstack
+      chartName: jetstack/cert-manager
+      chartVersion: v1.21.2
+      releaseName: cert-manager
+      releaseNamespace: cert-manager
+      helmChartAction: Install
+      values: |
+        crds:
+          enabled: true
+        startupapicheck:
+          enabled: false
+```
+
+```bash
+kubectl get sveltosclusters -A -o yaml > clusters.yaml
+cub sveltos plan cert-manager.yaml clusters.yaml --stage-label env --stages staging,prod
+```
+
+Measured on kind, with this profile selecting the two prod clusters of the
+[Meridian slice](../../examples/meridian-slice/README.md): `apply.sh` made the
+base (47 objects, 6 of them CRDs) and two variants, released them, and
+Sveltos had cert-manager on both clusters about 75 seconds after `apply.sh`
+started. It put nothing on the test and uat clusters. The startup check Job
+is turned off in the values because it is a Helm hook that runs at install.
+The plan would otherwise stop and ask for `--include-hooks cert-manager`.
+
 ## 2. See the plan
 
 ```bash

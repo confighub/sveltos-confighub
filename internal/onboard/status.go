@@ -1,11 +1,12 @@
 package onboard
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -57,6 +58,18 @@ type StatusOptions struct {
 	// is this old, so a reader can tell the reporter is still running.
 	Refresh time.Duration
 	Now     func() time.Time
+	// Write writes a Space's annotations patch; cub space update when nil.
+	Write func(space string, patch []byte) error
+}
+
+// writeSpacePatch patches a Space's fields from JSON, with cub.
+func writeSpacePatch(space string, patch []byte) error {
+	cmd := exec.Command("cub", "space", "update", "--patch", space, "--from-stdin", "--quiet")
+	cmd.Stdin = bytes.NewReader(patch)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("cub space update %s: %s", space, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // statusSource names the reporter to ConfigHub.
@@ -284,21 +297,16 @@ func writeStatus(run Runner, r *StatusReport, opts StatusOptions, now time.Time)
 	if err != nil {
 		return err
 	}
-	if _, err := runStdin(run, patch, "cub", "space", "update", "--patch", r.Space, "--from-stdin", "--quiet"); err != nil {
+	write := opts.Write
+	if write == nil {
+		write = writeSpacePatch
+	}
+	if err := write(r.Space, patch); err != nil {
 		return err
 	}
 	r.Wrote = true
 	return nil
 }
-
-// runStdin runs a command with input, through the runner: the runner takes
-// the input as a first argument "<stdin>" followed by the text, which Run
-// turns back into standard input.
-func runStdin(run Runner, input []byte, name string, args ...string) ([]byte, error) {
-	return run(name, append([]string{stdinMarker, string(input)}, args...)...)
-}
-
-const stdinMarker = "\x00stdin"
 
 // ShortDigest is a digest as a person reads it.
 func ShortDigest(d string) string {
@@ -307,5 +315,3 @@ func ShortDigest(d string) string {
 	}
 	return d
 }
-
-var _ = strconv.Itoa

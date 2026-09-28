@@ -25,6 +25,35 @@ spec:
         secretRef:
           name: confighub-sveltos-targets
           namespace: projectsveltos
+  validateHealths:
+    - name: deployments-ingress-nginx
+      featureID: Resources
+      group: apps
+      version: v1
+      kind: Deployment
+      namespace: ingress-nginx
+      script: |
+        function evaluate()
+          hs = {}
+          hs.healthy = true
+          hs.message = ""
+          local delivered = { ["ingress-nginx-controller"] = true }
+          if delivered[obj.metadata.name] then
+            local want = obj.spec.replicas or 1
+            local status = obj.status or {}
+            if (status.observedGeneration or 0) < (obj.metadata.generation or 0) then
+              hs.healthy = false
+              hs.message = obj.metadata.name .. ": rolling out"
+            elseif (status.updatedReplicas or 0) < want then
+              hs.healthy = false
+              hs.message = obj.metadata.name .. ": " .. (status.updatedReplicas or 0) .. " of " .. want .. " updated"
+            elseif (status.availableReplicas or 0) < want then
+              hs.healthy = false
+              hs.message = obj.metadata.name .. ": " .. (status.availableReplicas or 0) .. " of " .. want .. " available"
+            end
+          end
+          return hs
+        end
 ---
 apiVersion: config.projectsveltos.io/v1beta1
 kind: ClusterProfile
@@ -53,3 +82,32 @@ spec:
         secretRef:
           name: confighub-sveltos-targets
           namespace: projectsveltos
+  validateHealths:
+    - name: deployments-ingress-nginx
+      featureID: Resources
+      group: apps
+      version: v1
+      kind: Deployment
+      namespace: ingress-nginx
+      script: |
+        function evaluate()
+          hs = {}
+          hs.healthy = true
+          hs.message = ""
+          local delivered = { ["ingress-nginx-controller"] = true }
+          if delivered[obj.metadata.name] then
+            local want = obj.spec.replicas or 1
+            local status = obj.status or {}
+            if (status.observedGeneration or 0) < (obj.metadata.generation or 0) then
+              hs.healthy = false
+              hs.message = obj.metadata.name .. ": rolling out"
+            elseif (status.updatedReplicas or 0) < want then
+              hs.healthy = false
+              hs.message = obj.metadata.name .. ": " .. (status.updatedReplicas or 0) .. " of " .. want .. " updated"
+            elseif (status.availableReplicas or 0) < want then
+              hs.healthy = false
+              hs.message = obj.metadata.name .. ": " .. (status.availableReplicas or 0) .. " of " .. want .. " available"
+            end
+          end
+          return hs
+        end
