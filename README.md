@@ -1,34 +1,22 @@
 # Sveltos on ConfigHub
 
-If you run more than a handful of Kubernetes clusters and want every change
-to them reviewed, approved, and answerable afterwards, this repository is a
-working, recorded example of exactly that.
+Run your Kubernetes add-ons with Sveltos, and have every change to them
+reviewed, approved stage by stage, and answerable afterwards.
 
-It joins two tools. [ConfigHub](https://confighub.com) is a configuration
-database: governed records with revision history and approval gates, where a
-fleet is one shared base plus per-cluster variants, clones of that base
-carrying only their declared differences. [Sveltos](https://projectsveltos.io)
-is an open-source Kubernetes add-on controller: it runs on one management
-cluster, delivers to the others, and keeps them converged, repairing drift
-without being asked. The join is short: every approved revision is published
-as an OCI image on ConfigHub's gateway, and Sveltos fetches that image and
-delivers it to the one cluster its record addresses.
+[Sveltos](https://projectsveltos.io) delivers add-ons from one management
+cluster to many clusters and repairs drift. [ConfigHub](https://confighub.com)
+holds, for each cluster, the Kubernetes objects that cluster runs:
+- every chart rendered with its values;
+- every policy as the object it is.
 
-Sixty seconds to watch it check itself, with no account, no cluster, and no
-network:
+A change is made once, reviewed as fields, and released to staging before
+prod. Sveltos delivers each cluster's approved release to that cluster, and
+keeps it there.
 
-```bash
-git clone https://github.com/confighub/sveltos-confighub
-cd sveltos-confighub
-npm run verify
-```
+`cub sveltos` gets you there from the fleet you already run. It is at
+**v0.5.1**; see [what's new](docs/whats-new.md).
 
-**Already running Sveltos?** Point the onboarding plan at what your
-management cluster already knows. With no account and no cluster, it shows
-the fleet ConfigHub would govern: each profile's charts rendered to the
-Kubernetes objects they install, held once as a base, and one variant per
-cluster the profile selects today, holding exactly the objects that cluster
-runs.
+## Start with the fleet you already run
 
 ```bash
 cub plugin install confighub/sveltos-confighub
@@ -37,53 +25,156 @@ kubectl get clusterprofiles,sveltosclusters -A -o yaml > my-fleet.yaml
 cub sveltos plan my-fleet.yaml --stage-label env --stages staging,prod
 ```
 
+**`plan` changes nothing, and needs no account and no cluster.** It renders
+each chart, and shows what ConfigHub would hold:
+- a base per profile;
+- a variant for each cluster the profile selects today;
+- the stages a change moves through.
+
+**`cub sveltos apply` writes the steps as a script to read, then run.** If
+your profiles are live, `handover.sh` moves each cluster over with nothing
+reinstalled. Before it changes anything, it checks two things:
+- each profile is still what you exported;
+- each cluster runs exactly what ConfigHub will deliver.
+
 ![Before and after the handover: one label-selector profile installing Kyverno on three clusters becomes a ConfigHub base with one variant per cluster, delivered by one Sveltos delivery profile per variant to the same clusters, with nothing reinstalled](docs/images/sveltos/sveltos-handover-before-after.svg)
 
-[Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md) takes it
-from there: one more command writes the steps as a script to read and run,
-live profiles hand over to one delivery profile per cluster without
-reinstalling anything, and Kyverno policies come with them. From then on a
-change, a chart upgrade included, is a reviewed change to the objects,
-released stage by stage.
+[Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md) is the
+whole walkthrough: plan, apply, the handover, Kyverno policies, classes, and
+making a change afterwards. Its first section defines the words used here
+(base, variant, class base, delivery profile, change order) in a few lines.
+
+## What you get
+
+- **A change is made once, and reaches every cluster through the stages.**
+  One change order carries it.
+  - ConfigHub refuses to promote into prod until staging has released the
+    change.
+  - It refuses each release until the change is approved in that stage.
+  - Both refusals come from the server, in its own words.
+- **Review sees fields, not a values string.** A chart upgrade is reviewed
+  object by object: `cub unit diff -o mutations`. You see the images, and
+  what the chart changed besides your values: new RBAC rules, CRD schema,
+  whole new objects.
+- **Every cluster has its own variant.** ConfigHub answers which revision
+  each cluster runs. One cluster can be approved, held, or rolled back alone.
+- **A label no longer ships anything by itself.** A new cluster joins by one
+  reviewed change, and a mislabelled cluster gets nothing.
+- **Classes are real bases.** With `--class-label`, test, uat and prod (or
+  one class per GPU accelerator) each get a class base. It holds what that
+  class differs in, as protected fields and whole objects. A change at the
+  root reaches every class and keeps what each protects.
+- **Sveltos keeps doing what it does well:** delivery, drift repair, and your
+  profiles' `syncMode`, `tier`, `patches` and Secret references.
+
+## How it works
+
+1. **ConfigHub holds the objects.** Each chart in a profile is rendered with
+   `cub helm template`, ConfigHub's own Helm renderer, into one unit on a
+   base. Each policy ConfigMap becomes a unit of its objects.
+2. **One variant per cluster** is cloned from the base, or from its class
+   base. It holds exactly the objects that cluster runs.
+3. **A change order moves a change through the stages.** In each stage a
+   person approves it, and each variant's release is published on
+   ConfigHub's OCI gateway.
+4. **One delivery profile per variant,** on the management cluster, names its
+   one cluster and reads that variant's latest approved release from the
+   gateway. Sveltos delivers it, and puts back anything changed by hand.
+
+![A delivery profile as apply writes it, annotated: one per variant, addressed to one cluster by clusterRefs, drift put back, continueOnError always on, and one policyRefs entry reading the variant's latest approved release from ConfigHub's OCI gateway with the Targets' worker credential](docs/images/sveltos/sveltos-delivery-profile.svg)
+
+No GitOps controller and no extra registry take part. Publishing an approved
+release moves the gateway's tag, and the cluster follows within a minute.
+
+## Recorded on kind
+
+Each example has a script that builds its own kind fleet, and a recorded log
+of a real run on stock Sveltos v1.15.0.
+
+- **[Onboarding example](examples/onboard/README.md).**
+  - Three live label-selector profiles (Kyverno, its policies, ingress-nginx)
+    over three clusters, handed over with nothing reinstalled.
+  - Kyverno 3.8.2 and 4 replicas moved in one change order, staging before
+    prod.
+  - A cluster that joins later gets both.
+- **[The GPU operator on exactly the clusters approved for it](examples/gpu-operator/README.md).**
+  NVIDIA's GPU operator starts where GPU fleets are today, on every cluster
+  with a label.
+  - A second cluster gets it by approval; a mislabelled cluster gets nothing.
+  - The operator and driver upgrade reaches staging before prod. The review
+    lists the ClusterPolicy's `spec.driver.version` as a field, beside the RBAC
+    rules and CRDs the chart changed.
+  - kind has no GPUs, so it proves the governance and delivery, not a driver
+    coming up.
+- **[A slice of Meridian](examples/meridian-slice/README.md),** ConfigHub's
+  demo fleet, delivered for real by Sveltos.
+  - Three profiles, one per class, become a root base, three class bases and
+    four deployments.
+  - One root change (Kyverno 3.8.2 and 4 replicas) reached every class, and
+    uat and prod kept their own replicas.
+  - Recorded on v0.5.1, with the handover's checks.
+
+![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds. Promote with --squash](docs/images/sveltos/sveltos-meridian-three-levels.svg)
+
+## Working with an AI assistant
+
+Every step is a `cub` or `kubectl` command, so an assistant in your terminal
+can do the work. For example:
+
+| You ask | It runs |
+| --- | --- |
+| "What would ConfigHub hold for my fleet?" | `cub sveltos plan my-fleet.yaml …`, which changes nothing |
+| "Upgrade Kyverno to 3.8.2, and show me what changes" | The `cub helm template` command `apply.sh` recorded, at the new version, then `cub unit update` on the base, then `cub unit diff … -o mutations`, explained object by object |
+| "Four replicas for uat only" | `cub function set … set-yq` on uat's class base, then `cub unit set-protection` on the field |
+| "Roll it out" | `cub changeorder create`, then `cub variant promote … --squash` into each stage in turn |
+
+**What stays with people is approval.**
+- Each stage's release waits for `cub variant approve`.
+- ConfigHub refuses a stage out of order, and a release before approval.
+- Set `AllowAuthors: false` in the change workflow, and the author of a
+  change, person or assistant, cannot approve it.
+- `handover.sh` stops, with its reasons, rather than guess.
+
+Those refusals are what make a change an assistant prepared safe to accept.
+
+## Check it yourself, offline
+
+Every check in this repository runs with no account, no cluster and no
+network, and there are no npm dependencies:
+
+```bash
+git clone https://github.com/confighub/sveltos-confighub
+cd sveltos-confighub
+npm run verify
+go test ./...          # needs Go 1.25
+```
+
+For a fleet of your own at any size, [Run your own fleet on one variant per
+cluster](docs/user/run-your-own-fleet.md) covers:
+- the shape;
+- what a change costs at N clusters;
+- adding and removing a cluster;
+- the operational limits measured here.
 
 This is the fleet companion to
 [kubara-confighub](https://github.com/confighub/kubara-confighub), which
 governs a platform one cluster at a time. This repository governs one change
 across many clusters.
 
-## What the delivery path is
+## The recorded chapters: the first design
 
-1. Config comes from ConfigHub, where a reviewed record is stored, checked,
-   and held until someone approves it.
-2. A named person approves one exact revision, and ConfigHub publishes it as
-   an OCI image on its OCI gateway. In chapter three the approval is an
-   attestation, `cub variant approve`, and ConfigHub refuses the release
-   until it is recorded.
-3. Sveltos on the management cluster fetches that image and sends the
-   reviewed profile to the one cluster its clusterRefs entry names.
-4. Sveltos keeps that cluster aligned and repairs drift.
+Before `cub sveltos`, this repository recorded six chapters on an earlier
+design. There, each cluster's variant held a Sveltos ClusterProfile itself,
+with a chart's settings as a Helm values string, and Sveltos installed the
+chart with Helm. The shape is the same:
+- one variant per cluster, over a shared base;
+- one `clusterRefs` address;
+- an approval per stage.
 
-Each cluster's lane runs the whole way on its own variant, its own approval,
-its own gateway address, and its own digest. Sveltos on the management
-cluster is the carrier for every lane:
+Their receipts remain valid records of what happened. A fleet onboarded
+today holds rendered objects instead, as above.
 
-```mermaid
-flowchart LR
-  b["base"] -->|"change made once"| p["pilot variant"]
-  b --> s["staging variant"]
-  b --> pa["prod-a variant"]
-  b --> pb["prod-b variant"]
-  p -->|"approve, publish"| gp["gateway address"] -->|"Sveltos fetches"| cp["pilot cluster"]
-  s --> gs["gateway address"] --> cs["staging cluster"]
-  pa --> ga["gateway address"] --> ca["prod-a cluster"]
-  pb --> gb["gateway address"] --> cb["prod-b cluster"]
-```
-
-No GitOps controller and no intermediate registry take part. Promotion does
-not change the delivery wiring at all: publishing the approved release moves
-the tag, and the fleet follows, so approval alone moves the fleet.
-
-## Why we did this
+### Why one variant per cluster
 
 Fleet tools can move configuration to many clusters. The harder question is
 what reached them and who agreed to it. Three answers here are unusual
@@ -117,7 +208,7 @@ enough to be the point of the repository.
   into one green tick: which revision each cluster should run, which release
   was published, what the controller fetched, and what Kubernetes reports.
 
-## See the result first
+### The recorded fleet in ConfigHub
 
 Three ConfigHub words appear below. A **Space** holds one variant or the
 base, a **Target** is a named destination (one per cluster), and a
@@ -237,7 +328,7 @@ The [fleet rehearsal](examples/sveltos/fleet-rehearsal/README.md) proves the
 delivery machinery on a five-cluster fleet with no ConfigHub account at all,
 and records its phase timings.
 
-## The six chapters
+### The six chapters
 
 1. **[Kyverno across the fleet](examples/sveltos/kyverno-fleet/README.md)**
    installs admission policy through one reviewed variant per cluster, each
@@ -286,47 +377,7 @@ attestations next
 ([#34](https://github.com/confighub/sveltos-confighub/issues/34)). Their
 offline self-tests keep walking the old path against their own fakes.
 
-**Chapter seven, [the GPU operator on exactly the clusters approved for it](examples/gpu-operator/README.md),**
-starts where GPU fleets are today: NVIDIA's operator on every cluster
-labelled `addons.gpu-operator: enabled`. It onboards that fleet with
-`cub sveltos`, enables the operator on one more cluster by approval rather
-than by label, shows a mislabel shipping nothing, and upgrades operator and
-driver on staging before prod, using NVIDIA's own AI Cluster Runtime recipe.
-ConfigHub holds the operator as the objects its chart renders to, so the
-driver version a reviewer approves is the ClusterPolicy's
-`spec.driver.version`, a field of its own. It is recorded on kind as a run
-log rather than a receipt, and kind has no GPUs, so it proves the governance
-and delivery, not a driver coming up.
-
-**[A slice of Meridian](examples/meridian-slice/README.md)**, ConfigHub's
-demo fleet, delivered for real by Sveltos: four of its eu-central clusters
-and its Kyverno component in Meridian's three levels (a root base, a class
-base per class, a deployment per cluster), made by `cub sveltos
---class-label` from one Sveltos profile per class. Each class base holds
-what its class's values render differently: the admission controller's
-replicas, protected, and a PodDisruptionBudget above one replica. One chart
-upgrade and one replica change on the root reached the class bases, then
-test, uat and prod in order, and uat and prod kept their own replicas.
-Recorded on kind as a run log.
-
-## How to run it
-
-Already running Sveltos? [Onboard your Sveltos fleet](docs/user/onboard-your-sveltos-fleet.md)
-turns the ClusterProfiles you have into this shape with three commands.
-
-To stand this shape up for your own fleet, at any size, read
-[Run your own fleet on one variant per cluster](docs/user/run-your-own-fleet.md):
-the shape, what a change costs at N clusters, adding and removing a cluster,
-and the operational limits this repository already measured.
-
-Every check runs with no account, no cluster, and no network, and the
-repository has no npm dependencies:
-
-```bash
-git clone https://github.com/confighub/sveltos-confighub
-cd sveltos-confighub
-npm run verify
-```
+### Running the chapters
 
 The fleet rehearsal builds its own clusters and needs no ConfigHub account:
 

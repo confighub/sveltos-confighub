@@ -9,6 +9,20 @@ Already running Sveltos? You do not have to build this shape by hand:
 [Onboard your Sveltos fleet](onboard-your-sveltos-fleet.md) reads your
 ClusterProfiles and SveltosClusters and writes it for you.
 
+**Which design this describes.** The chapters record the first design:
+- each variant holds a Sveltos ClusterProfile, with a chart's settings as a
+  Helm values string;
+- Sveltos installs the chart with Helm.
+
+`cub sveltos` from v0.5 builds the same shape one level down:
+- each variant holds the objects the charts render to;
+- one delivery profile per variant delivers them.
+
+What follows about the shape, stages, approvals, cost at scale and joining
+holds for both. Where it names a ClusterProfile as the unit, read the
+rendered objects for a fleet onboarded today. [What's new in
+0.5](../whats-new.md) says what changed.
+
 If you keep one Git repository per cluster, you already have the variants;
 what they lack is inheritance. A fix to shared configuration then means an
 edit in every repository. Here the fix is made once, on the base, and every
