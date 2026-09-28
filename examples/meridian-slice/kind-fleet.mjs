@@ -7,7 +7,11 @@
 //   node examples/meridian-slice/kind-fleet.mjs               build the fleet
 //   node examples/meridian-slice/kind-fleet.mjs --join        register eu-central-prod3
 //   node examples/meridian-slice/kind-fleet.mjs --join uat2   register eu-central-uat2
+//   node examples/meridian-slice/kind-fleet.mjs --refresh     register every cluster again, with a fresh token
 //   node examples/meridian-slice/kind-fleet.mjs --delete      remove it
+//
+// Sveltos reaches each cluster with a token that lasts 30 days; --refresh
+// gives every cluster a new one without rebuilding anything.
 //
 // Kubeconfigs go to $MERIDIAN_SLICE_DIR (default: $TMPDIR/sveltos-meridian-slice).
 import { spawnSync } from "node:child_process";
@@ -28,8 +32,9 @@ const WORKLOADS = ["test1", "uat1", "prod1", "prod2"].map((n) => ({
   name: `eu-central-${n}`,
   labels: { region: "eu-central", class: n.replace(/[0-9]+$/, ""), department: "shared" },
 }));
+const workload = (n) => ({ kind: `mer-${n}`, name: `eu-central-${n}`, labels: { region: "eu-central", class: n.replace(/[0-9]+$/, ""), department: "shared" } });
 const joining = process.argv[2] === "--join" ? (process.argv[3] ?? "prod3") : "prod3";
-const JOINER = { kind: `mer-${joining}`, name: `eu-central-${joining}`, labels: { region: "eu-central", class: joining.replace(/[0-9]+$/, ""), department: "shared" } };
+const JOINER = workload(joining);
 
 function run(cmd, args, { timeout = 900_000, input } = {}) {
   const r = spawnSync(cmd, args, { encoding: "utf8", timeout, input, maxBuffer: 1 << 28 });
@@ -59,9 +64,12 @@ if (process.argv[2] === "--delete") {
   console.log("deleted the fleet's kind clusters");
   process.exit(0);
 }
-const registerOnly = process.argv[2] === "--join";
+const refresh = process.argv[2] === "--refresh";
+const registerOnly = process.argv[2] === "--join" || refresh;
 const existing = run("kind", ["get", "clusters"]).split("\n");
-for (const name of registerOnly ? [JOINER.kind] : [MGMT, ...WORKLOADS.map((w) => w.kind)]) {
+// --refresh registers every workload cluster there is, those that joined too.
+const registered = refresh ? existing.filter((n) => /^mer-/.test(n) && n !== MGMT).map((n) => workload(n.slice(4))) : [JOINER];
+for (const name of refresh ? [] : registerOnly ? [JOINER.kind] : [MGMT, ...WORKLOADS.map((w) => w.kind)]) {
   if (existing.includes(name)) { log(`${name} exists`); continue; }
   log(`creating ${name}`);
   run("kind", ["create", "cluster", "--name", name, "--kubeconfig", kc(name), "--wait", "180s"]);
@@ -96,7 +104,7 @@ log("waiting for mgmt/mgmt");
 waitReady("mgmt", "mgmt");
 }
 
-for (const w of registerOnly ? [JOINER] : WORKLOADS) {
+for (const w of registerOnly ? registered : WORKLOADS) {
   log(`registering ${w.name}`);
   k(w.kind, ["apply", "-f", "-"], { input: `apiVersion: v1
 kind: Namespace
@@ -112,7 +120,7 @@ metadata: {name: sveltos-manager}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}
 subjects: [{kind: ServiceAccount, name: sveltos-manager, namespace: projectsveltos}]
 ` });
-  const token = k(w.kind, ["-n", "projectsveltos", "create", "token", "sveltos-manager", "--duration=12h"]).trim();
+  const token = k(w.kind, ["-n", "projectsveltos", "create", "token", "sveltos-manager", "--duration=720h"]).trim();
   const ca = JSON.parse(k(w.kind, ["config", "view", "--raw", "-o", "json"])).clusters[0].cluster["certificate-authority-data"];
   const kubeconfig = `apiVersion: v1
 kind: Config

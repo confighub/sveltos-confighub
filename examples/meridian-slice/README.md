@@ -120,3 +120,7 @@ node examples/meridian-slice/kind-fleet.mjs --join prod4    # in another termina
 ```
 
 The watcher prints the `cub variant approve` command to run.
+
+Sveltos reaches each kind cluster with a token that lasts 30 days.
+`node examples/meridian-slice/kind-fleet.mjs --refresh` gives every cluster a
+new one, without rebuilding anything.

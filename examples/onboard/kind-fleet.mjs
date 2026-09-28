@@ -108,7 +108,7 @@ metadata: {name: sveltos-manager}
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}
 subjects: [{kind: ServiceAccount, name: sveltos-manager, namespace: projectsveltos}]
 ` });
-  const token = k(w.kind, ["-n", "projectsveltos", "create", "token", "sveltos-manager", "--duration=12h"]).trim();
+  const token = k(w.kind, ["-n", "projectsveltos", "create", "token", "sveltos-manager", "--duration=720h"]).trim();
   const ca = JSON.parse(k(w.kind, ["config", "view", "--raw", "-o", "json"])).clusters[0].cluster["certificate-authority-data"];
   const kubeconfig = `apiVersion: v1
 kind: Config
