@@ -50,6 +50,7 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 | `cub sveltos plan` | Reads your Sveltos ClusterProfiles and clusters, and shows what ConfigHub would hold. **Changes nothing**, and needs no account or cluster. |
 | `cub sveltos apply` | Writes the plan out as files and a script, `apply.sh`, for you to read and then run. Writes `handover.sh` too, if your profiles are live. |
 | `cub sveltos compare` | Checks that what ConfigHub will deliver to a cluster is exactly what Helm installed there. `handover.sh` runs it for you. |
+| `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. New, not released yet. |
 | `cub sveltos version` | Prints the version. The current release is **v0.5.1**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
@@ -95,7 +96,50 @@ not, it stops and says why.
 
 ![Before and after the handover: one label-selector profile installing Kyverno on three clusters becomes a ConfigHub base with one variant per cluster, delivered by one Sveltos delivery profile per variant to the same clusters, with nothing reinstalled](docs/images/sveltos/sveltos-handover-before-after.svg)
 
-### 2. Roll a change out to every cluster, staging first
+### 2. Start something new
+
+You don't need a profile that already runs. Write the ClusterProfile you
+would have given Sveltos: which clusters, by label, and which chart. It is
+only a description; you never apply it to the management cluster.
+
+```yaml
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: cert-manager
+spec:
+  clusterSelector:
+    matchLabels:
+      env: prod                     # every production cluster
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://charts.jetstack.io
+      repositoryName: jetstack
+      chartName: jetstack/cert-manager
+      chartVersion: v1.21.2
+      releaseName: cert-manager
+      releaseNamespace: cert-manager
+      helmChartAction: Install
+      values: |
+        crds:
+          enabled: true
+        startupapicheck:
+          enabled: false
+```
+
+```bash
+kubectl get sveltosclusters -A -o yaml > clusters.yaml
+cub sveltos plan cert-manager.yaml clusters.yaml --stage-label env --stages staging,prod
+cub sveltos apply cert-manager.yaml clusters.yaml --stage-label env --stages staging,prod --out cert-manager
+MGMT_CONTEXT=<your management cluster context> bash cert-manager/apply.sh
+```
+
+ConfigHub gets a base for cert-manager and a variant for each production
+cluster. Sveltos installs it on those clusters and nowhere else. On kind it
+was running on both production clusters about 75 seconds after `apply.sh`
+started.
+
+### 3. Roll a change out to every cluster, staging first
 
 Make the change once, on the base. Here, four replicas for Kyverno's
 admission controller:
@@ -123,7 +167,7 @@ prod before staging has released the change:
 Failed: unable to promote to stage 'prod', Variant 'staging-eu' has taken change order 'replicas-4' but has not released it
 ```
 
-### 3. Upgrade a chart, and review exactly what changes
+### 4. Upgrade a chart, and review exactly what changes
 
 `apply.sh` records the command each chart was rendered with. Render the new
 version the same way, and store it on the base:
@@ -150,9 +194,9 @@ Resource: apiextensions.k8s.io/v1/CustomResourceDefinition /gpuclusters.nvidia.c
   + [Add]
 ```
 
-Then roll it out as in 2.
+Then roll it out as in 3.
 
-### 4. Give each environment, or each kind of cluster, its own settings
+### 5. Give each environment, or each kind of cluster, its own settings
 
 If you keep one Sveltos profile per environment (say `kyverno-test`,
 `kyverno-uat`, `kyverno-prod`), onboard them as one add-on with a **class
@@ -169,7 +213,7 @@ The same works for GPU types: one class per accelerator.
 
 ![One change at the root reaches three class bases; test takes 4 replicas, uat and prod keep their protected 2 and 3, and each cluster takes what its class holds](docs/images/sveltos/sveltos-meridian-three-levels.svg)
 
-### 5. Add a new cluster
+### 6. Add a new cluster
 
 Label the new cluster as you always have. **Nothing ships yet**: in this
 setup, a label alone deploys nothing. Plan and apply again, from the profiles
@@ -185,20 +229,31 @@ The new cluster gets its own variant, with every change made since
 onboarding, and is released through its stage with an approval. A cluster
 labelled by mistake gets nothing.
 
-### 6. See what every cluster runs, and who changed it
+### 7. See what every cluster runs, whether it is healthy, and who changed it
 
 ```bash
 cub space list --where "Labels.Cluster = 'prod-eu'"                  # everything on prod-eu
 cub unit data --space sveltos-kyverno-prod-eu kyverno                # the exact objects it runs
 cub revision list --space sveltos-kyverno-prod-eu kyverno            # every change, with who and why
 cub changeorder get --space sveltos-kyverno-base replicas-4          # where a rollout has got to
+cub sveltos status --context <management cluster context> --watch    # live status, from Sveltos
 ```
+
+`cub sveltos status` writes what Sveltos delivered to each cluster into
+ConfigHub, as its live status:
+- **Synced and Healthy** once the latest release is applied and its workloads
+  are available;
+- **OutOfSync** while a newer release waits.
+
+A change workflow can then hold each stage until the one before it is
+healthy. On kind, ConfigHub refused to promote to uat while test's new
+release was not applied yet. (New since v0.5.1; not released yet.)
 
 Each change carries its author and a reason. Each stage's approval is
 recorded. ConfigHub's refusals come in its own words, and that's the
 record an audit needs.
 
-### 7. Run it at business size
+### 8. Run it at business size
 
 Sveltos brings the same three levels to a large fleet: a root base, class
 bases, and a variant per cluster. That's the shape of ConfigHub's
@@ -210,7 +265,7 @@ class, test before uat before prod, and each class kept its own settings.
 However big the fleet, a change costs the same: one edit, then one promotion
 and one approval per stage.
 
-### 8. Work with an AI assistant
+### 9. Work with an AI assistant
 
 Every step is a `cub` or `kubectl` command, so an assistant in your terminal
 can do the work:
@@ -266,10 +321,8 @@ cluster: `npm run verify` and `go test ./...`.
 ## Status
 
 `cub sveltos` v0.5.1 is tested on kind with stock Sveltos v1.15.0. It has not
-run in a production fleet yet. Live status in ConfigHub, reported from
-Sveltos, is being built
-([#33](https://github.com/confighub/sveltos-confighub/issues/33)). Until then
-ConfigHub shows each cluster as "Not reported yet". Rollback here restores one
+run in a production fleet yet. `cub sveltos status`, which reports live status
+to ConfigHub, is on main and not released yet. Rollback here restores one
 cluster to an exact revision. There's no single action that halts and reverses
 a rollout across the fleet.
 

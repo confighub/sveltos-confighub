@@ -94,6 +94,51 @@ A file you wrote by hand works too; [my-fleet.yaml](../../examples/onboard/my-fl
 is an example with three profiles and five clusters. If a profile names
 ConfigMaps in `policyRefs`, the plan asks for them too.
 
+**Starting something new.** You don't need a profile that already runs.
+Write the ClusterProfile you would have given Sveltos, which selects clusters
+by label and names a chart, and plan from it with a list of your clusters. You
+never apply that profile to the management cluster; it is only the
+description. `apply.sh` builds the base and a variant for each cluster it
+selects, and puts one delivery profile per cluster in place:
+
+```yaml
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: cert-manager
+spec:
+  clusterSelector:
+    matchLabels:
+      env: prod
+  syncMode: ContinuousWithDriftDetection
+  helmCharts:
+    - repositoryURL: https://charts.jetstack.io
+      repositoryName: jetstack
+      chartName: jetstack/cert-manager
+      chartVersion: v1.21.2
+      releaseName: cert-manager
+      releaseNamespace: cert-manager
+      helmChartAction: Install
+      values: |
+        crds:
+          enabled: true
+        startupapicheck:
+          enabled: false
+```
+
+```bash
+kubectl get sveltosclusters -A -o yaml > clusters.yaml
+cub sveltos plan cert-manager.yaml clusters.yaml --stage-label env --stages staging,prod
+```
+
+Measured on kind, with this profile selecting the two prod clusters of the
+[Meridian slice](../../examples/meridian-slice/README.md): `apply.sh` made the
+base (47 objects, 6 of them CRDs) and two variants, released them, and
+Sveltos had cert-manager on both clusters about 75 seconds after `apply.sh`
+started. It put nothing on the test and uat clusters. The startup check Job
+is turned off in the values because it is a Helm hook that runs at install.
+The plan would otherwise stop and ask for `--include-hooks cert-manager`.
+
 ## 2. See the plan
 
 ```bash
@@ -424,6 +469,62 @@ The generated workflow lets the person who promotes a change also approve
 it, which one person trying this needs. Once a second person approves, set
 `AllowAuthors: false` in each profile's `change-workflow.yaml`, and ConfigHub
 refuses an approval from the change's author.
+
+## Live status in ConfigHub
+
+`cub sveltos status` tells ConfigHub what Sveltos delivered to each cluster.
+Run it once, or keep it running:
+
+```bash
+cub sveltos status --context <management cluster context>
+cub sveltos status --context <management cluster context> --watch   # every 30 seconds
+```
+
+It prints one line per cluster, and writes the same reading to that
+cluster's variant, where ConfigHub shows it:
+
+```text
+CLUSTER           SPACE                          SYNC       HEALTH       REVISION             WRITTEN  MESSAGE
+eu-central-test1  mer-kyverno-eu-central-test1   OutOfSync  Progressing  sha256:3e39eaa74376  yes      release 3, published 2026-09-28T11:03:43Z, not applied yet
+eu-central-uat1   mer-kyverno-eu-central-uat1    Synced     Healthy      sha256:e2b3ed3756b1  yes
+```
+
+- **Synced and Healthy:** Sveltos applied the latest release, and the
+  Deployments, StatefulSets and DaemonSets it delivers were available. The
+  revision is the digest of the release the cluster runs.
+- **OutOfSync and Progressing:** a newer release is published and not applied
+  yet, or Sveltos is still deploying.
+- **Degraded:** Sveltos reports a failure, and the message says what failed.
+
+It writes a reading only when it changes, or when the one ConfigHub holds is
+older than `--refresh` (ten minutes by default).
+
+**Health comes from Sveltos.** Each delivery profile carries
+`validateHealths` for the workloads its charts deliver, named one by one, and
+Sveltos reports the profile `Provisioned` only once they are available.
+Sveltos checks this when it applies a release, not continuously. Measured on
+kind: a Deployment that went down after its release was applied still showed
+as healthy. So Healthy means that the release came up healthy. A delivery
+profile written by 0.5 or earlier has no health checks, and `status` says so,
+with health `Unknown`. Run `apply` again and apply the new
+`management/<profile>.yaml` to add them.
+
+**ConfigHub can gate a rollout on it.** A stage in the change workflow can
+list `Healthy` among its prerequisites. ConfigHub then refuses to promote
+into that stage until every cluster in the stage ahead reports Synced and
+Healthy. Measured on the Meridian slice, with `Healthy` added before uat:
+
+```text
+$ cub variant promote --change-order mer-kyverno-base/healthy-gate-probe --target-stage uat --squash
+Failed: Variant 'eu-central-test1' is not synced
+```
+
+To use it, add `Healthy` to the `Prerequisites` of each stage after the
+first in `change-workflow.yaml`, and keep `cub sveltos status --watch`
+running. Without the reporter, the gate never opens. ConfigHub checks the
+words in the reading, not which release it is about. So promote after
+`status` has reported the new release, which it does within one interval of
+Sveltos applying it.
 
 ## When a cluster joins
 

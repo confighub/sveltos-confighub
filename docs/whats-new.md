@@ -13,6 +13,37 @@ and Sveltos still delivering. Version 0.5 changes what ConfigHub holds.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## Unreleased
+
+**Live status from Sveltos: `cub sveltos status`** (#33). It tells ConfigHub
+what Sveltos delivered to each cluster. For each delivery profile, it reads the
+ClusterSummary Sveltos keeps and the variant's published releases, and writes
+the variant's `confighub.com/live-status`:
+- Synced and Healthy, with the digest of the release the cluster runs;
+- OutOfSync while a newer release waits;
+- Degraded when Sveltos reports a failure.
+
+Run it once, or with `--watch`.
+
+**Delivery profiles carry health checks.** Each one lists `validateHealths`
+for the Deployments, StatefulSets and DaemonSets its charts deliver, named one
+by one. Sveltos then reports the profile `Provisioned` only once they are
+available.
+- A source profile's own checks are kept.
+- A check it ran after its Helm charts now runs after the delivered
+  Resources.
+
+Sveltos runs these checks when it applies a release, not continuously.
+
+**Measured on kind:**
+- with a `Healthy` prerequisite in the workflow, ConfigHub refused to promote
+  into uat while test's new release was not applied yet;
+- the promotion went through once `status` reported test Synced and Healthy.
+
+**Starting something new** is documented. Write the ClusterProfile you would
+have given Sveltos, and plan from it. It was measured with cert-manager on the
+Meridian slice's two prod clusters.
+
 ## 0.5.1, 2026-09-28
 
 **The handover compares what ConfigHub releases with what Helm installed.**

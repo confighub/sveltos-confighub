@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -233,6 +235,48 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 	compare.Flags().StringVar(&lc.Space, "space", "", "the variant's Space")
 	compare.Flags().StringVar(&lc.Unit, "unit", "", "the chart's unit")
 
+	var so onboard.StatusOptions
+	var watch bool
+	var interval time.Duration
+	status := &cobra.Command{
+		Use:   "status",
+		Short: "Report what Sveltos delivered to each cluster as ConfigHub live status",
+		Long: `Report what Sveltos delivered to each cluster as ConfigHub live status.
+
+For each delivery profile on the management cluster, it reads the ClusterSummary
+Sveltos keeps and the variant's published releases, and writes the variant
+Space's confighub.com/live-status: Synced and Healthy once the latest approved
+release is applied and its workloads are available, OutOfSync while a newer
+release is on its way, Degraded when Sveltos reports a failure. ConfigHub's
+healthy gate and its change orders read it.
+
+It writes only when a reading changes, or when the one ConfigHub holds is older
+than --refresh.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			for {
+				reports, err := onboard.ReportStatus(onboard.Run, so)
+				if err != nil && !watch {
+					return err
+				}
+				if err != nil {
+					fmt.Fprintln(c.ErrOrStderr(), "Error:", err)
+				} else {
+					printStatus(c.OutOrStdout(), reports)
+				}
+				if !watch {
+					return nil
+				}
+				time.Sleep(interval)
+			}
+		},
+	}
+	status.Flags().StringVar(&so.Context, "context", "", "kubectl context of the management cluster")
+	status.Flags().BoolVar(&so.DryRun, "dry-run", false, "show what would be written, and write nothing")
+	status.Flags().DurationVar(&so.Refresh, "refresh", 10*time.Minute, "write an unchanged reading again once the one ConfigHub holds is this old")
+	status.Flags().BoolVar(&watch, "watch", false, "keep reporting")
+	status.Flags().DurationVar(&interval, "interval", 30*time.Second, "how often to report, with --watch")
+
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the plugin version",
@@ -241,8 +285,23 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 		},
 	}
 
-	root.AddCommand(plan, apply, compare, versionCmd)
+	root.AddCommand(plan, apply, compare, status, versionCmd)
 	return root
+}
+
+// printStatus shows each delivery profile's reading, one line each.
+func printStatus(w io.Writer, reports []onboard.StatusReport) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "CLUSTER\tSPACE\tSYNC\tHEALTH\tREVISION\tWRITTEN\tMESSAGE")
+	for _, r := range reports {
+		written := "yes"
+		if !r.Wrote {
+			written = r.Why
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Cluster, r.Space, r.Status.SyncStatus, r.Status.HealthStatus,
+			onboard.ShortDigest(r.Status.Revision), written, r.Status.Message)
+	}
+	tw.Flush()
 }
 
 // Execute runs the command tree and exits non-zero on failure.
