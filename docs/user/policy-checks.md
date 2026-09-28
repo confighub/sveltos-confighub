@@ -148,7 +148,8 @@ time set to 2 minutes and the worker stopped:
   `cub space update --patch --refresh-triggers <space>`.
 
 So a policy trigger alone can let changes through, sooner than six hours.
-Treat it as feedback, and gate releases on a required check.
+Treat it as feedback, and gate releases on a required check. This is reported
+to ConfigHub as confighubai/confighub#5530.
 
 ## A required check: nothing ships without a Pass
 

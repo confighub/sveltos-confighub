@@ -41,7 +41,7 @@ running; then the script stops.
 still showed it `Ready` 25 minutes later, and never started its six-hour
 fail-open clock. A change made in that window was never checked and was
 released. Both gates read a missing result as a pass. A required check is the
-gate to rely on.
+gate to rely on. Reported to ConfigHub as confighubai/confighub#5530.
 
 ## 0.6.0, 2026-09-28
 
