@@ -1,0 +1,125 @@
+# Known cases for the policies in this directory: changes each policy must
+# refuse, and one it must admit. `cub sveltos impact --tests` evaluates each
+# case in the stage it names, beside the fleet.
+#
+# - Under the policies in force, a case that does not come out as it expects
+#   is a policy that no longer does what it says.
+# - Under a candidate, a known-bad case that comes out allowed is exactly what
+#   loosening the policy lets through. The running fleet cannot show that,
+#   because everything running already passed.
+#
+# Each case is a Deployment with two annotations: the stage whose policies it
+# meets, and the verdict it expects there.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: latest-tag
+  annotations:
+    impact.confighub.com/stage: prod
+    impact.confighub.com/expect: denied
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: latest-tag}
+  template:
+    metadata:
+      labels: {app: latest-tag}
+    spec:
+      containers:
+        - name: app
+          image: reg.kyverno.io/kyverno/cleanup-controller:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-five-replicas
+  annotations:
+    impact.confighub.com/stage: test
+    impact.confighub.com/expect: denied
+spec:
+  replicas: 5
+  selector:
+    matchLabels: {app: test-five-replicas}
+  template:
+    metadata:
+      labels: {app: test-five-replicas}
+    spec:
+      containers:
+        - name: app
+          image: reg.kyverno.io/kyverno/kyverno:v1.18.2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-seven-replicas
+  annotations:
+    impact.confighub.com/stage: test
+    impact.confighub.com/expect: denied
+spec:
+  replicas: 7
+  selector:
+    matchLabels: {app: test-seven-replicas}
+  template:
+    metadata:
+      labels: {app: test-seven-replicas}
+    spec:
+      containers:
+        - name: app
+          image: reg.kyverno.io/kyverno/kyverno:v1.18.2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uat-four-replicas
+  annotations:
+    impact.confighub.com/stage: uat
+    impact.confighub.com/expect: denied
+spec:
+  replicas: 4
+  selector:
+    matchLabels: {app: uat-four-replicas}
+  template:
+    metadata:
+      labels: {app: uat-four-replicas}
+    spec:
+      containers:
+        - name: app
+          image: reg.kyverno.io/kyverno/kyverno:v1.18.2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prod-six-replicas
+  annotations:
+    impact.confighub.com/stage: prod
+    impact.confighub.com/expect: denied
+spec:
+  replicas: 6
+  selector:
+    matchLabels: {app: prod-six-replicas}
+  template:
+    metadata:
+      labels: {app: prod-six-replicas}
+    spec:
+      containers:
+        - name: app
+          image: reg.kyverno.io/kyverno/kyverno:v1.18.2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prod-pinned-three-replicas
+  annotations:
+    impact.confighub.com/stage: prod
+    impact.confighub.com/expect: allowed
+spec:
+  replicas: 3
+  selector:
+    matchLabels: {app: prod-pinned-three-replicas}
+  template:
+    metadata:
+      labels: {app: prod-pinned-three-replicas}
+    spec:
+      containers:
+        - name: app
+          image: reg.kyverno.io/kyverno/kyverno:v1.18.2

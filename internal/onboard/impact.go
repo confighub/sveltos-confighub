@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -42,11 +41,15 @@ type ImpactOptions struct {
 	// StageLabel is the Space label that gives each target's stage, which the
 	// policies' bindings select by.
 	StageLabel string
-	// Policies are the policy files in force. Candidates replace the objects
+	// Policies are the policies in force, and Candidates replace the objects
 	// of the same kind, namespace and name, which is how a proposed policy
-	// change is read.
+	// change is read. Each is a file, or policies held in ConfigHub at a
+	// revision (see policyset.go), such as mer-policies@Tag:in-force.
 	Policies   []string
 	Candidates []string
+	// Tests are known cases, each an object annotated with the stage whose
+	// policies it meets and the verdict it expects there.
+	Tests []string
 	// Next compares each target's running configuration with what its next
 	// promotion brings: the head of its upstream.
 	Next bool
@@ -69,6 +72,11 @@ type ImpactRow struct {
 	Proposed  string `json:"candidate"`
 	Verdict   string `json:"verdict"`
 	Why       string `json:"why,omitempty"`
+	// Policy is where the policy behind the verdict came from, such as
+	// mer-policies/replica-limits@2.
+	Policy string `json:"policy,omitempty"`
+	// Expected is a test case's expected verdict.
+	Expected string `json:"expected,omitempty"`
 }
 
 // ImpactReport is the whole preview.
@@ -80,6 +88,12 @@ type ImpactReport struct {
 	// sandbox's API server restarts.
 	Removed []string    `json:"removedFromSandbox,omitempty"`
 	Rows    []ImpactRow `json:"rows"`
+	// Tests are the test sources read. FailingNow are the cases the policies
+	// in force do not treat as they expect; FailingThen the cases the
+	// candidate does not, such as a known-bad change a weaker policy admits.
+	Tests       []string `json:"tests,omitempty"`
+	FailingNow  []string `json:"testsFailingNow,omitempty"`
+	FailingThen []string `json:"testsFailingUnderCandidate,omitempty"`
 }
 
 const (
@@ -94,11 +108,13 @@ const (
 type target struct {
 	name, stage, space, config, candidate string
 	current, next                         []Doc
+	expect                                string // a test case's expected verdict
 }
 
 type admission struct {
-	state string // allowed, denied or unknown
-	why   string
+	state  string // allowed, denied or unknown
+	why    string
+	policy string // the ValidatingAdmissionPolicy behind the verdict
 }
 
 var denied = regexp.MustCompile(`ValidatingAdmissionPolicy '([^']+)' with binding '([^']+)' denied request: (.*)`)
@@ -119,20 +135,33 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 	if o.Settle == 0 {
 		o.Settle = 5 * time.Second
 	}
-	current, err := readPolicies(o.Policies)
+	if len(o.Candidates) == 0 && !o.Next && len(o.Tests) == 0 {
+		return nil, fmt.Errorf("give candidate policies (--candidate), compare with what the next promotion brings (--next), or run tests (--tests)")
+	}
+	cur, err := readSources(x, o.Policies)
 	if err != nil {
 		return nil, err
 	}
-	candidate := current
+	current := cur.policies()
+	if len(current) == 0 {
+		return nil, fmt.Errorf("no policies in force: give --policy")
+	}
+	cand, candidate := cur, current
+	var candSources []string
 	if len(o.Candidates) > 0 {
-		c, err := readPolicies(o.Candidates)
+		c, err := readSources(x, o.Candidates)
 		if err != nil {
 			return nil, err
 		}
-		candidate = overlay(current, c)
-	}
-	if len(o.Candidates) == 0 && !o.Next {
-		return nil, fmt.Errorf("give candidate policies (--candidate), or compare with what the next promotion brings (--next)")
+		candidate = overlay(current, c.policies())
+		cand = sourced{from: map[string]string{}}
+		for k, v := range cur.from {
+			cand.from[k] = v
+		}
+		for k, v := range c.from {
+			cand.from[k] = v
+		}
+		candSources = c.sorted
 	}
 	targets, err := impactTargets(x, o)
 	if err != nil {
@@ -155,26 +184,40 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 		return nil, err
 	}
 
-	report := &ImpactReport{Policies: o.Policies, Candidates: o.Candidates, Removed: removed}
+	report := &ImpactReport{Policies: cur.sorted, Candidates: candSources, Removed: removed}
 	for _, t := range targets {
+		if t.expect != "" && len(before[t.name]) == 0 {
+			report.FailingNow = append(report.FailingNow, fmt.Sprintf("%s: expects %s, and no policy matches it", t.name, t.expect))
+		}
 		for key, b := range before[t.name] {
 			a, ok := after[t.name][key]
 			if !ok {
-				a = admission{"unknown", "not in the candidate configuration"}
+				a = admission{state: "unknown", why: "not in the candidate configuration"}
 			}
 			row := ImpactRow{Target: t.name, Stage: t.stage, Space: t.space, Config: t.config, Object: key, Current: b.state, Proposed: a.state}
 			if o.Next {
 				row.Candidate = t.candidate
 			}
 			switch {
-			case b.state == "unknown" || a.state == "unknown":
-				row.Verdict, row.Why = Unknown, firstOf(a.why, b.why)
+			case a.state == "unknown":
+				row.Verdict, row.Why, row.Policy = Unknown, a.why, cand.policy(a.policy)
+			case b.state == "unknown":
+				row.Verdict, row.Why, row.Policy = Unknown, b.why, cur.policy(b.policy)
 			case b.state == "allowed" && a.state == "denied":
-				row.Verdict, row.Why = NewlyDenied, a.why
+				row.Verdict, row.Why, row.Policy = NewlyDenied, a.why, cand.policy(a.policy)
 			case b.state == "denied" && a.state == "allowed":
-				row.Verdict, row.Why = NewlyAllowed, b.why
+				row.Verdict, row.Why, row.Policy = NewlyAllowed, b.why, cur.policy(b.policy)
 			default:
-				row.Verdict, row.Why = Unchanged, a.why
+				row.Verdict, row.Why, row.Policy = Unchanged, a.why, cand.policy(a.policy)
+			}
+			if t.expect != "" {
+				row.Expected = t.expect
+				if b.state != t.expect {
+					report.FailingNow = append(report.FailingNow, fmt.Sprintf("%s: expects %s, and the policies in force give %s", t.name, t.expect, b.state))
+				}
+				if len(o.Candidates) > 0 && a.state != t.expect {
+					report.FailingThen = append(report.FailingThen, fmt.Sprintf("%s: expects %s, and the candidate gives %s", t.name, t.expect, a.state))
+				}
 			}
 			report.Rows = append(report.Rows, row)
 		}
@@ -185,6 +228,13 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 		}
 		return report.Rows[i].Object < report.Rows[j].Object
 	})
+	sort.Strings(report.FailingNow)
+	sort.Strings(report.FailingThen)
+	for _, t := range targets {
+		if t.expect != "" && (len(report.Tests) == 0 || report.Tests[len(report.Tests)-1] != t.space) {
+			report.Tests = append(report.Tests, t.space)
+		}
+	}
 	return report, nil
 }
 
@@ -195,22 +245,6 @@ func firstOf(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func readPolicies(files []string) ([]Doc, error) {
-	var docs []Doc
-	for _, f := range files {
-		data, err := os.ReadFile(f)
-		if err != nil {
-			return nil, err
-		}
-		d, err := ParseDocs(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", f, err)
-		}
-		docs = append(docs, d...)
-	}
-	return docs, nil
 }
 
 func objectKey(v map[string]any) string {
@@ -359,6 +393,30 @@ func impactTargets(x Exec, o ImpactOptions) ([]target, error) {
 			targets = append(targets, t)
 		}
 	}
+	if len(o.Tests) > 0 {
+		s, err := readSources(x, o.Tests)
+		if err != nil {
+			return nil, err
+		}
+		found := false
+		for _, d := range s.docs {
+			if !isTest(d) {
+				continue
+			}
+			stage, expect, v := testCase(d)
+			if expect != "denied" && expect != "allowed" {
+				return nil, fmt.Errorf("test case %s expects %q; say denied or allowed", objectKey(d.Value), expect)
+			}
+			found = true
+			from := s.from[objectKey(d.Value)]
+			name := "tests/" + str(obj(v["metadata"])["name"])
+			one := []Doc{{Value: v}}
+			targets = append(targets, target{name: name, stage: stage, space: from, config: from, current: one, next: one, expect: expect})
+		}
+		if !found {
+			return nil, fmt.Errorf("no test case in %s: annotate each with %s and %s", strings.Join(o.Tests, ", "), StageAnnotation, ExpectAnnotation)
+		}
+	}
 	for _, space := range o.Corpus {
 		units, err := unitsOf(x, space)
 		if err != nil {
@@ -402,7 +460,7 @@ func impactTargets(x Exec, o ImpactOptions) ([]target, error) {
 		}
 	}
 	if len(targets) == 0 {
-		return nil, fmt.Errorf("no targets: give --component, --corpus, or both")
+		return nil, fmt.Errorf("no targets: give --component, --corpus or --tests")
 	}
 	return targets, nil
 }
@@ -599,7 +657,7 @@ func (s sandbox) evaluate(policies []Doc, targets []target, kinds map[string]kin
 			key := kind + " " + str(obj(v["metadata"])["name"])
 			for _, r := range matching(policyRules(policies), group, version, info.resource) {
 				if r.contextBound != "" {
-					out[t.name][key] = admission{"unknown", fmt.Sprintf("policy %s reads %s, which the configuration does not hold", r.policy, r.contextBound)}
+					out[t.name][key] = admission{"unknown", fmt.Sprintf("policy %s reads %s, which the configuration does not hold", r.policy, r.contextBound), r.policy}
 				}
 			}
 			if _, done := out[t.name][key]; done {
@@ -638,12 +696,12 @@ func (s sandbox) submit(v map[string]any, info kindInfo, ns string) admission {
 	}
 	msg := strings.TrimSpace(string(errs))
 	if m := denied.FindStringSubmatch(msg); m != nil {
-		return admission{"denied", fmt.Sprintf("%s (binding %s): %s", m[1], m[2], m[3])}
+		return admission{"denied", fmt.Sprintf("%s (binding %s): %s", m[1], m[2], m[3]), m[1]}
 	}
 	if i := strings.LastIndex(msg, "\n"); i >= 0 {
 		msg = msg[i+1:]
 	}
-	return admission{"unknown", "the sandbox could not judge it: " + msg}
+	return admission{state: "unknown", why: "the sandbox could not judge it: " + msg}
 }
 
 func (s sandbox) namespace(name string, labels map[string]string) error {
