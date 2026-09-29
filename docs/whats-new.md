@@ -23,8 +23,8 @@ walkthrough.
 - `--policy` and `--candidate` read policies held in ConfigHub as well as
   files, each at a revision: `<space>/<unit>`, `@<n>`, `@Tag:<tag>`, or a whole
   Space such as `mer-policies@Tag:in-force`. A policy change is a new revision,
-  previewed before a person moves the tag. Each result names the policy
-  revision behind it.
+  previewed before a person moves the tag. Each denied or unknown result
+  names the policy revision behind it.
 - `--tests` adds known cases: objects annotated with the stage they meet and
   the verdict they expect. A case the policies in force get wrong is reported,
   and so is a known-bad case a candidate would admit.

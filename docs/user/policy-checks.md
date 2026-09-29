@@ -218,12 +218,17 @@ created. Each object comes out as one of four:
   the requesting user.
 
 Each row names the target, the revision it runs (and, for a proposal, the
-revision it would take), the object, the policy revision behind the verdict,
-and the API server's own message.
+revision it would take), the object, and the API server's own message. A row
+that is denied or unknown also names the policy revision behind it.
 
 Here is what a policy change's preview could look like inside ConfigHub. This
-is a mock, filled with the real output of `cub sveltos impact --json`
-([docs/mock/policy-impact.html](../mock/policy-impact.html)):
+is a mock ([docs/mock/policy-impact.html](../mock/policy-impact.html)), filled
+with real output of `cub sveltos impact --json`
+([policy-impact.json](../mock/policy-impact.json)): the proposal from step 2 of
+the recording below, evaluated again at the end of it with its revisions
+pinned (`--policy mer-policies/disallow-latest-tag@2 --policy
+mer-policies/replica-limits@2 --candidate mer-policies/replica-limits@3 --tests
+mer-policies/policy-tests@3`):
 
 ![Mock of a Policy impact view: lowering prod's replica ceiling to 2 is newly denied on the four prod clusters, each row naming the configuration revision it runs and the policy revision, with a note that nothing running is evicted, and one known case, three replicas in prod, that the proposal would now refuse](../images/sveltos/sveltos-policy-impact-mock.png)
 
@@ -384,8 +389,9 @@ mer-kyverno-eu-central-test1: passed kyverno/11; recorded a Pass (c6d95ef1-5489-
 The PolicyCheck it records names the policy revisions it was judged by
 (`check.confighub.com/policies=mer-policies/disallow-latest-tag@2,mer-policies/replica-limits@5`),
 so the change is released under exactly the policies it was previewed against.
-With a person's approval the release was published, and two minutes later
-eu-central-test1 ran 6 admission controller replicas, 6 of 6 ready. uat and
+With a person's approval the release was published, and Sveltos delivered
+it: at 22:36:40, under three minutes after the step began, eu-central-test1 ran
+6 admission controller replicas, 6 of 6 ready. uat and
 prod protect their replicas, so the order brought nothing new there, and it
 ended `Completed`, `Released`.
 
