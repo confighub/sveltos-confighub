@@ -504,15 +504,33 @@ has a release to bring it:
 
 ![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](../images/sveltos/sveltos-meridian-tree.png)
 
-- **Synced and Healthy:** Sveltos applied the latest release, and the
-  Deployments, StatefulSets and DaemonSets it delivers were available. The
-  revision is the digest of the release the cluster runs.
-- **OutOfSync and Progressing:** a newer release is published and not applied
-  yet, or Sveltos is still deploying.
+- **Synced and Healthy:** Sveltos reports provisioning complete, the
+  timestamp-based release mapping selects the latest release, and the
+  configured workload health checks passed at apply time.
+- **OutOfSync and Progressing:** the timestamp-based mapping indicates a newer
+  release is waiting, or Sveltos reports deployment in progress.
 - **Degraded:** Sveltos reports a failure, and the message says what failed.
 
+**The revision is inferred, not observed from the fetched artifact.** The
+reporter reads the variant's published releases, ordered by release number,
+and selects the last one whose `CreatedAt` is no later than the earliest
+valid `lastAppliedTime` among provisioned feature summaries. It reports that
+release's `ManifestDigest` as `revision`. `CreatedAt` is the release's
+creation time; the implementation does not read a separate publication time.
+It does not read the digest Sveltos fetched or compare the applied bytes.
+
+This mapping assumes the apply used the release selected by those times.
+Concurrent releases, a release created before it was published, cached
+content, or clock differences can break that assumption. A reported digest
+and `Synced` therefore do not prove that exact artifact reached the cluster.
+For that claim, retain independent evidence binding the intended Release
+and digest to the consumed artifact and the resulting workload fields. If
+that evidence is unavailable, leave exact-artifact delivery unverified.
+
 It writes a reading only when it changes, or when the one ConfigHub holds is
-older than `--refresh` (ten minutes by default).
+older than `--refresh` (ten minutes by default). A refreshed report timestamp
+does not mean the workload health checks ran again or the artifact digest
+was independently verified.
 
 **Health comes from Sveltos.** Each delivery profile carries
 `validateHealths` for the workloads its charts deliver, named one by one, and
@@ -540,9 +558,10 @@ Failed: Variant 'eu-central-test1' is not synced
 To use it, add `Healthy` to the `Prerequisites` of each stage after the
 first in `change-workflow.yaml`, and keep `cub sveltos status --watch`
 running. Without the reporter, the gate never opens. ConfigHub checks the
-words in the reading, not which release it is about. So promote after
-`status` has reported the new release, which it does within one interval of
-Sveltos applying it.
+words in the reading, not which release it is about. Wait for a successful
+report after the new apply, and retain the timestamp-mapping and apply-time
+health limits above. This gate alone is not exact-release verification or a
+continuous health check.
 
 ## When a cluster joins
 

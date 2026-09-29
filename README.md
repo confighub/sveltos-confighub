@@ -372,9 +372,18 @@ cub sveltos status --context <management cluster context> --watch    # live stat
 
 `cub sveltos status` writes what Sveltos delivered to each cluster into
 ConfigHub, as its live status:
-- **Synced and Healthy** once the latest release is applied and its workloads
-  are available;
-- **OutOfSync** while a newer release waits.
+- **Synced and Healthy** when Sveltos's apply status and the reporter's
+  timestamp-based release mapping indicate the latest release, with workload
+  health checked at apply time;
+- **OutOfSync** while that mapping indicates a newer release is waiting, or
+  Sveltos reports deployment in progress.
+
+The reported revision is inferred from published releases' creation times
+and Sveltos's last-applied time. The reporter does not observe the fetched
+OCI digest or compare the delivered bytes. Treat this as delivery status,
+not exact-artifact proof. Health can also become stale after apply; the
+[status guide](docs/user/onboard-your-sveltos-fleet.md#live-status-in-confighub)
+explains both limits and how they affect rollout gates.
 
 A change workflow can then hold each stage until the one before it is
 healthy. On kind, ConfigHub refused to promote to uat while test's new

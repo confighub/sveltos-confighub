@@ -65,11 +65,14 @@ gate to rely on. Reported to ConfigHub as confighubai/confighub#5530.
 what Sveltos delivered to each cluster. For each delivery profile, it reads the
 ClusterSummary Sveltos keeps and the variant's published releases, and writes
 the variant's `confighub.com/live-status`:
-- Synced and Healthy, with the digest of the release the cluster runs;
+- Synced and Healthy, with a release digest inferred from release creation
+  and Sveltos apply times;
 - OutOfSync while a newer release waits;
 - Degraded when Sveltos reports a failure.
 
-Run it once, or with `--watch`.
+Run it once, or with `--watch`. The reporter does not observe the fetched OCI
+digest or compare delivered bytes, so the revision is not exact-artifact
+proof. See [live status and its limits](user/onboard-your-sveltos-fleet.md#live-status-in-confighub).
 
 **Delivery profiles carry health checks.** Each one lists `validateHealths`
 for the Deployments, StatefulSets and DaemonSets its charts deliver, named one
