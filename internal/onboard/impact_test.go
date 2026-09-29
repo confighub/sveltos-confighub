@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -30,11 +31,48 @@ type impactBench struct {
 	applies  int
 	leftover []string // policies the sandbox holds from an earlier run
 	deleted  []string
+	// the policies held in ConfigHub, in mer-policies: each unit's head, and
+	// the revision tagged in-force
+	policyHeads map[string]int
+	inForce     map[string]int
 }
 
 func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, []byte, error) {
 	all := name + " " + strings.Join(args, " ")
 	switch {
+	case strings.HasPrefix(all, "cub unit list --space mer-policies "):
+		var slugs []string
+		for u := range b.policyHeads {
+			slugs = append(slugs, u)
+		}
+		sort.Strings(slugs)
+		var rows []map[string]any
+		for _, u := range slugs {
+			rows = append(rows, map[string]any{"Unit": map[string]any{"Slug": u, "HeadRevisionNum": b.policyHeads[u]}})
+		}
+		data, _ := json.Marshal(rows)
+		return data, nil, nil
+	case strings.HasPrefix(all, "cub unit get --space mer-policies "):
+		head, ok := b.policyHeads[args[4]]
+		if !ok {
+			return nil, []byte("not found"), errors.New("exit 1")
+		}
+		return []byte(fmt.Sprintf(`{"Unit":{"Slug":%q,"HeadRevisionNum":%d}}`, args[4], head)), nil, nil
+	case all == "cub tag get --space mer-policies in-force -o json":
+		return []byte(`{"Tag":{"TagID":"tag-in-force","Slug":"in-force"}}`), nil, nil
+	case strings.HasPrefix(all, "cub tag get "):
+		return nil, []byte("not found"), errors.New("exit 1")
+	case strings.HasPrefix(all, "cub revision list --space mer-policies "):
+		var revs []map[string]any
+		for n := b.policyHeads[args[4]]; n >= 1; n-- {
+			rev := map[string]any{"RevisionNum": n}
+			if b.inForce[args[4]] == n {
+				rev["Tags"] = map[string]string{"tag-in-force": ""}
+			}
+			revs = append(revs, map[string]any{"Revision": rev})
+		}
+		data, _ := json.Marshal(revs)
+		return data, nil, nil
 	case strings.HasPrefix(all, "cub space list --where Component.Slug = 'mer-kyverno'"):
 		return []byte(`[{"Space":{"Slug":"mer-kyverno-eu-central-test1","Labels":{"Stage":"test","Cluster":"eu-central-test1"}}},
 		  {"Space":{"Slug":"mer-kyverno-eu-central-prod1","Labels":{"Stage":"prod","Cluster":"eu-central-prod1"}}}]`), nil, nil
@@ -127,8 +165,22 @@ func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, [
 }
 
 func newImpactBench(t *testing.T) *impactBench {
+	read := func(name string) string {
+		data, err := os.ReadFile(policy(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	limits := read("replica-limits.yaml")
+	testAtSix := strings.Replace(limits, "name: replica-limits-test\n  namespace: policy-params\ndata:\n  max: \"4\"", "name: replica-limits-test\n  namespace: policy-params\ndata:\n  max: \"6\"", 1)
+	if testAtSix == limits {
+		t.Fatal("could not raise test's ceiling in the example")
+	}
 	return &impactBench{t: t, stageOf: map[string]string{}, ceilings: map[string]int{},
-		upstream: map[string]string{"mer-kyverno-eu-central-test1": "mer-kyverno-class-test", "mer-kyverno-eu-central-prod1": "mer-kyverno-class-prod"},
+		policyHeads: map[string]int{"replica-limits": 3, "disallow-latest-tag": 2, "platform-team-only": 1, "policy-tests": 2},
+		inForce:     map[string]int{"replica-limits": 2, "disallow-latest-tag": 2, "policy-tests": 2},
+		upstream:    map[string]string{"mer-kyverno-eu-central-test1": "mer-kyverno-class-test", "mer-kyverno-eu-central-prod1": "mer-kyverno-class-prod"},
 		units: map[string]string{
 			// what runs: test at 4 replicas, prod at 3
 			"mer-kyverno-eu-central-test1/kyverno@7": deployment("kyverno-admission-controller", 4, "k:v1"),
@@ -139,6 +191,13 @@ func newImpactBench(t *testing.T) *impactBench {
 			"mer-kyverno-class-prod/kyverno@12": deployment("kyverno-admission-controller", 3, "k:v1"),
 			// a revision recorded as failing: an image on :latest
 			"mer-kyverno-base/kyverno@6": deployment("kyverno-cleanup-controller", 1, "k:latest"),
+			// the policies in ConfigHub: in force, test's ceiling raised to 6
+			// as a proposal, a policy not yet in force, and the known cases
+			"mer-policies/replica-limits@2":      limits,
+			"mer-policies/replica-limits@3":      testAtSix,
+			"mer-policies/disallow-latest-tag@2": read("disallow-latest-tag.yaml"),
+			"mer-policies/platform-team-only@1":  read("candidates/platform-team-only.yaml"),
+			"mer-policies/policy-tests@2":        read("tests.yaml"),
 		}}
 }
 
@@ -249,5 +308,82 @@ func TestImpactRemovesOnlyWhatNoSetHas(t *testing.T) {
 	}
 	if len(b.deleted) != 1 || b.deleted[0] != "validatingadmissionpolicy/an-old-policy" || len(r.Removed) != 1 {
 		t.Errorf("only the leftover is deleted, and reported: deleted %v, reported %v", b.deleted, r.Removed)
+	}
+}
+
+// Policies held in ConfigHub are read at the revision a tag marks, and each
+// verdict names the policy revision behind it. A unit the tag does not mark is
+// not in force, and a unit of test cases is not a policy.
+func TestImpactReadsPoliciesFromConfigHub(t *testing.T) {
+	b := newImpactBench(t)
+	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
+		Policies: []string{"mer-policies@Tag:in-force"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(r.Policies, ",") != "mer-policies/disallow-latest-tag@2,mer-policies/replica-limits@2" {
+		t.Errorf("the policies in force are the tagged revisions, without the untagged unit or the tests: %v", r.Policies)
+	}
+	test := rowFor(t, r, "eu-central-test1")
+	if test.Verdict != NewlyDenied || test.Policy != "mer-policies/replica-limits@2" {
+		t.Errorf("the root's 6 replicas are refused by the revision of replica-limits in force: %+v", test)
+	}
+
+	// The proposal at the head of replica-limits raises test's ceiling to 6.
+	r, err = Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
+		Policies: []string{"mer-policies@Tag:in-force"}, Candidates: []string{"mer-policies/replica-limits"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(r.Candidates, ",") != "mer-policies/replica-limits@3" {
+		t.Errorf("a unit without a revision is read at its head: %v", r.Candidates)
+	}
+	if test := rowFor(t, r, "eu-central-test1"); test.Verdict != Unchanged || test.Proposed != "allowed" {
+		t.Errorf("under the proposal, test takes the root's 6 replicas: %+v", test)
+	}
+
+	for _, bad := range []string{"mer-policies/nothing-here", "mer-policies/replica-limits@0", "mer-policies/platform-team-only@Tag:in-force", "mer-policies@Tag:no-such-tag"} {
+		if _, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1, Policies: []string{bad}}); err == nil {
+			t.Errorf("%s names no policy, and is an error", bad)
+		}
+	}
+}
+
+// Known cases are evaluated in the stage each names. A case the policies in
+// force get wrong is reported, and so is a known-bad case the candidate admits.
+func TestImpactTests(t *testing.T) {
+	b := newImpactBench(t)
+	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Settle: 1,
+		Policies: []string{"mer-policies@Tag:in-force"}, Candidates: []string{"mer-policies/replica-limits@3"},
+		Tests: []string{"mer-policies/policy-tests@Tag:in-force"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Rows) != 6 || strings.Join(r.Tests, ",") != "mer-policies/policy-tests@2" {
+		t.Fatalf("six cases, from the tagged revision of the tests: %v %+v", r.Tests, r.Rows)
+	}
+	if len(r.FailingNow) != 0 {
+		t.Errorf("the policies in force treat every case as it expects: %v", r.FailingNow)
+	}
+	if len(r.FailingThen) != 1 || !strings.HasPrefix(r.FailingThen[0], "tests/test-five-replicas: expects denied, and the candidate gives allowed") {
+		t.Errorf("raising test's ceiling to 6 admits the five-replica case, and nothing else: %v", r.FailingThen)
+	}
+	five := rowFor(t, r, "tests/test-five-replicas")
+	if five.Stage != "test" || five.Verdict != NewlyAllowed || five.Expected != "denied" || five.Policy != "mer-policies/replica-limits@2" {
+		t.Errorf("the case is met in test, and was refused by the revision in force: %+v", five)
+	}
+	if seven := rowFor(t, r, "tests/test-seven-replicas"); seven.Proposed != "denied" {
+		t.Errorf("seven replicas are still above the raised ceiling: %+v", seven)
+	}
+
+	dir := t.TempDir()
+	wrong := filepath.Join(dir, "wrong.yaml")
+	os.WriteFile(wrong, []byte(strings.Replace(deployment("uat-five", 5, "k:v1"), "metadata:\n", "metadata:\n  annotations: {impact.confighub.com/stage: uat, impact.confighub.com/expect: allowed}\n", 1)), 0o644)
+	r, err = Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Settle: 1, Policies: []string{"mer-policies@Tag:in-force"}, Tests: []string{wrong}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.FailingNow) != 1 || !strings.Contains(r.FailingNow[0], "tests/uat-five: expects allowed, and the policies in force give denied") {
+		t.Errorf("a case the policies in force get wrong is reported: %v", r.FailingNow)
 	}
 }

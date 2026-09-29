@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Policy impact (mock)</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --ink2: #5a6272; --line: #e3e6eb;
+    --deny: #b42318; --deny-bg: #fdecea; --allow: #1a7f37; --allow-bg: #e8f5ec;
+    --same: #5a6272; --same-bg: #f0f2f5; --unknown: #8a5a00; --unknown-bg: #fff4d6;
+    --accent: #3b5bdb; --mock: #6b3fa0; --mock-bg: #f3ecfb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  .mock { background: var(--mock-bg); color: var(--mock); border-bottom: 1px solid #e2d4f3; padding: 8px 24px; font-size: 13px; }
+  .mock b { font-weight: 600; }
+  main { max-width: 1240px; margin: 0 auto; padding: 20px 24px 40px; }
+  .crumbs { color: var(--ink2); font-size: 13px; }
+  .crumbs code { color: var(--ink); }
+  h1 { font-size: 22px; margin: 6px 0 4px; font-weight: 600; }
+  .sub { color: var(--ink2); margin: 0 0 16px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: stretch; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+  .count { min-width: 150px; }
+  .count .n { font-size: 26px; font-weight: 600; }
+  .count .l { color: var(--ink2); font-size: 13px; }
+  .count.deny .n { color: var(--deny); } .count.allow .n { color: var(--allow); } .count.unknown .n { color: var(--unknown); }
+  .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  button { font: inherit; border-radius: 6px; padding: 7px 12px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .callout { margin: 14px 0; border-left: 3px solid var(--accent); background: #eef2ff; padding: 10px 14px; border-radius: 4px; }
+  .policies { margin: 10px 0 16px; color: var(--ink2); font-size: 13px; }
+  .policies code { color: var(--ink); background: var(--same-bg); padding: 1px 5px; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--ink2); background: #fafbfc; font-weight: 600; }
+  td code { font-size: 12.5px; white-space: nowrap; }
+  td.target { white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .pill.newly-denied { color: var(--deny); background: var(--deny-bg); }
+  .pill.newly-allowed { color: var(--allow); background: var(--allow-bg); }
+  .pill.unchanged { color: var(--same); background: var(--same-bg); }
+  .pill.unknown { color: var(--unknown); background: var(--unknown-bg); }
+  .flow { color: var(--ink2); white-space: nowrap; }
+  .why { color: var(--ink2); font-size: 13px; }
+  h2 { font-size: 16px; margin: 24px 0 8px; font-weight: 600; }
+  .muted { color: var(--ink2); }
+  .fails { color: var(--deny); font-weight: 600; }
+  .toggle { font-size: 13px; color: var(--ink2); margin: 6px 0; }
+</style>
+</head>
+<body>
+<div class="mock"><b>Mock UI.</b> Not a ConfigHub feature (proposed in confighubai/confighub#5325). The data is real output of <code>cub sveltos impact --json</code> on the Meridian fleet, <span id="recorded"></span> (policy-impact.json).</div>
+<main>
+  <div class="crumbs" id="crumbs"></div>
+  <h1 id="title"></h1>
+  <p class="sub" id="subtitle"></p>
+
+  <div class="row">
+    <div class="card count deny"><div class="n" id="n-denied"></div><div class="l">newly denied</div></div>
+    <div class="card count allow"><div class="n" id="n-allowed"></div><div class="l">newly allowed</div></div>
+    <div class="card count"><div class="n" id="n-unchanged"></div><div class="l">unchanged</div></div>
+    <div class="card count unknown"><div class="n" id="n-unknown"></div><div class="l">unknown</div></div>
+    <div class="actions">
+      <button>Explain with AI</button>
+      <button class="primary">Request approval</button>
+    </div>
+  </div>
+
+  <div class="callout" id="callout"></div>
+  <div class="policies" id="policies"></div>
+
+  <h2>Clusters</h2>
+  <div class="toggle" id="hidden-note"></div>
+  <table>
+    <thead><tr><th>Cluster</th><th>Stage</th><th>Configuration</th><th>Object</th><th>Now → then</th><th>Verdict</th><th>Policy</th><th>API server's message</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+  <h2 id="tests-title">Known cases</h2>
+  <p class="muted" id="tests-summary"></p>
+  <table id="tests-table">
+    <thead><tr><th>Case</th><th>Stage</th><th>Expects</th><th>Now → then</th><th>Policy</th><th>API server's message</th></tr></thead>
+    <tbody id="tests"></tbody>
+  </table>
+</main>
+<script id="data" type="application/json">{"recorded": "29 September 2026", "crumbs": "mer-policies &rsaquo; <code>replica-limits<\/code> &rsaquo; revision 3, proposed", "title": "Policy impact: lower prod's replica ceiling to 2", "subtitle": "Every cluster's configuration, at the revision it runs, submitted with a server-side dry run under the policies in force and under the proposal. The verdicts are the API server's own.", "callout": "<b>Nothing running is evicted.<\/b> A ValidatingAdmissionPolicy is checked at admission. The four prod clusters keep running their 3 replicas; the next create or update of that Deployment would be refused.", "report": {"policies": ["mer-policies/disallow-latest-tag@2", "mer-policies/replica-limits@2"], "candidatePolicies": ["mer-policies/replica-limits@3"], "rows": [{"target": "eu-central-prod1", "stage": "prod", "space": "mer-kyverno-eu-central-prod1", "config": "kyverno@6", "object": "Deployment kyverno-admission-controller", "current": "allowed", "candidate": "denied", "verdict": "newly denied", "why": "replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class", "policy": "mer-policies/replica-limits@3"}, {"target": "eu-central-prod1", "stage": "prod", "space": "mer-kyverno-eu-central-prod1", "config": "kyverno@6", "object": "Deployment kyverno-background-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod1", "stage": "prod", "space": "mer-kyverno-eu-central-prod1", "config": "kyverno@6", "object": "Deployment kyverno-cleanup-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod1", "stage": "prod", "space": "mer-kyverno-eu-central-prod1", "config": "kyverno@6", "object": "Deployment kyverno-reports-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod2", "stage": "prod", "space": "mer-kyverno-eu-central-prod2", "config": "kyverno@6", "object": "Deployment kyverno-admission-controller", "current": "allowed", "candidate": "denied", "verdict": "newly denied", "why": "replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class", "policy": "mer-policies/replica-limits@3"}, {"target": "eu-central-prod2", "stage": "prod", "space": "mer-kyverno-eu-central-prod2", "config": "kyverno@6", "object": "Deployment kyverno-background-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod2", "stage": "prod", "space": "mer-kyverno-eu-central-prod2", "config": "kyverno@6", "object": "Deployment kyverno-cleanup-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod2", "stage": "prod", "space": "mer-kyverno-eu-central-prod2", "config": "kyverno@6", "object": "Deployment kyverno-reports-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod3", "stage": "prod", "space": "mer-kyverno-eu-central-prod3", "config": "kyverno@4", "object": "Deployment kyverno-admission-controller", "current": "allowed", "candidate": "denied", "verdict": "newly denied", "why": "replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class", "policy": "mer-policies/replica-limits@3"}, {"target": "eu-central-prod3", "stage": "prod", "space": "mer-kyverno-eu-central-prod3", "config": "kyverno@4", "object": "Deployment kyverno-background-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod3", "stage": "prod", "space": "mer-kyverno-eu-central-prod3", "config": "kyverno@4", "object": "Deployment kyverno-cleanup-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod3", "stage": "prod", "space": "mer-kyverno-eu-central-prod3", "config": "kyverno@4", "object": "Deployment kyverno-reports-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod4", "stage": "prod", "space": "mer-kyverno-eu-central-prod4", "config": "kyverno@4", "object": "Deployment kyverno-admission-controller", "current": "allowed", "candidate": "denied", "verdict": "newly denied", "why": "replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class", "policy": "mer-policies/replica-limits@3"}, {"target": "eu-central-prod4", "stage": "prod", "space": "mer-kyverno-eu-central-prod4", "config": "kyverno@4", "object": "Deployment kyverno-background-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod4", "stage": "prod", "space": "mer-kyverno-eu-central-prod4", "config": "kyverno@4", "object": "Deployment kyverno-cleanup-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-prod4", "stage": "prod", "space": "mer-kyverno-eu-central-prod4", "config": "kyverno@4", "object": "Deployment kyverno-reports-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-test1", "stage": "test", "space": "mer-kyverno-eu-central-test1", "config": "kyverno@11", "object": "Deployment kyverno-admission-controller", "current": "denied", "candidate": "denied", "verdict": "unchanged", "why": "replica-limits (binding replica-limits-test): replicas 6 is above the ceiling of 4 for this class", "policy": "mer-policies/replica-limits@3"}, {"target": "eu-central-test1", "stage": "test", "space": "mer-kyverno-eu-central-test1", "config": "kyverno@11", "object": "Deployment kyverno-background-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-test1", "stage": "test", "space": "mer-kyverno-eu-central-test1", "config": "kyverno@11", "object": "Deployment kyverno-cleanup-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-test1", "stage": "test", "space": "mer-kyverno-eu-central-test1", "config": "kyverno@11", "object": "Deployment kyverno-reports-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-uat1", "stage": "uat", "space": "mer-kyverno-eu-central-uat1", "config": "kyverno@8", "object": "Deployment kyverno-admission-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-uat1", "stage": "uat", "space": "mer-kyverno-eu-central-uat1", "config": "kyverno@8", "object": "Deployment kyverno-background-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-uat1", "stage": "uat", "space": "mer-kyverno-eu-central-uat1", "config": "kyverno@8", "object": "Deployment kyverno-cleanup-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "eu-central-uat1", "stage": "uat", "space": "mer-kyverno-eu-central-uat1", "config": "kyverno@8", "object": "Deployment kyverno-reports-controller", "current": "allowed", "candidate": "allowed", "verdict": "unchanged"}, {"target": "tests/latest-tag", "stage": "prod", "space": "mer-policies/policy-tests@3", "config": "mer-policies/policy-tests@3", "object": "Deployment latest-tag", "current": "denied", "candidate": "denied", "verdict": "unchanged", "why": "disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.", "policy": "mer-policies/disallow-latest-tag@2", "expected": "denied"}, {"target": "tests/prod-pinned-three-replicas", "stage": "prod", "space": "mer-policies/policy-tests@3", "config": "mer-policies/policy-tests@3", "object": "Deployment prod-pinned-three-replicas", "current": "allowed", "candidate": "denied", "verdict": "newly denied", "why": "replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class", "policy": "mer-policies/replica-limits@3", "expected": "allowed"}, {"target": "tests/prod-six-replicas", "stage": "prod", "space": "mer-policies/policy-tests@3", "config": "mer-policies/policy-tests@3", "object": "Deployment prod-six-replicas", "current": "denied", "candidate": "denied", "verdict": "unchanged", "why": "replica-limits (binding replica-limits-prod): replicas 6 is above the ceiling of 2 for this class", "policy": "mer-policies/replica-limits@3", "expected": "denied"}, {"target": "tests/test-five-replicas", "stage": "test", "space": "mer-policies/policy-tests@3", "config": "mer-policies/policy-tests@3", "object": "Deployment test-five-replicas", "current": "denied", "candidate": "denied", "verdict": "unchanged", "why": "replica-limits (binding replica-limits-test): replicas 5 is above the ceiling of 4 for this class", "policy": "mer-policies/replica-limits@3", "expected": "denied"}, {"target": "tests/test-seven-replicas", "stage": "test", "space": "mer-policies/policy-tests@3", "config": "mer-policies/policy-tests@3", "object": "Deployment test-seven-replicas", "current": "denied", "candidate": "denied", "verdict": "unchanged", "why": "replica-limits (binding replica-limits-test): replicas 7 is above the ceiling of 4 for this class", "policy": "mer-policies/replica-limits@3", "expected": "denied"}, {"target": "tests/uat-four-replicas", "stage": "uat", "space": "mer-policies/policy-tests@3", "config": "mer-policies/policy-tests@3", "object": "Deployment uat-four-replicas", "current": "denied", "candidate": "denied", "verdict": "unchanged", "why": "replica-limits (binding replica-limits-uat): replicas 4 is above the ceiling of 3 for this class", "policy": "mer-policies/replica-limits@3", "expected": "denied"}], "tests": ["mer-policies/policy-tests@3"], "testsFailingUnderCandidate": ["tests/prod-pinned-three-replicas: expects allowed, and the candidate gives denied"]}}</script>
+<script>
+  const view = JSON.parse(document.getElementById('data').textContent);
+  const r = view.report;
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const why = s => esc((s || '').replace(/^[^:]*\(binding [^)]*\): /, ''));
+  $('recorded').textContent = view.recorded;
+  $('crumbs').innerHTML = view.crumbs;
+  $('title').textContent = view.title;
+  $('subtitle').innerHTML = view.subtitle;
+  $('callout').innerHTML = view.callout;
+  const fleet = r.rows.filter(x => !x.expected);
+  const tests = r.rows.filter(x => x.expected);
+  const count = v => fleet.filter(x => x.verdict === v).length;
+  $('n-denied').textContent = count('newly denied');
+  $('n-allowed').textContent = count('newly allowed');
+  $('n-unchanged').textContent = count('unchanged');
+  $('n-unknown').textContent = count('unknown');
+  $('policies').innerHTML = 'Policies in force: ' + r.policies.map(p => '<code>' + esc(p) + '</code>').join(' ') +
+    (r.candidatePolicies ? ' &nbsp;·&nbsp; Proposed: ' + r.candidatePolicies.map(p => '<code>' + esc(p) + '</code>').join(' ') : '');
+  const shown = fleet.filter(x => x.verdict !== 'unchanged');
+  $('hidden-note').textContent = (fleet.length - shown.length) + ' unchanged objects hidden.';
+  $('rows').innerHTML = shown.map(x => `<tr>
+    <td class="target"><b>${esc(x.target)}</b></td><td>${esc(x.stage)}</td><td><code>${esc(x.config)}</code></td>
+    <td>${esc(x.object)}</td><td class="flow">${esc(x.current)} → ${esc(x.candidate)}</td>
+    <td><span class="pill ${x.verdict.replace(' ', '-')}">${esc(x.verdict)}</span></td>
+    <td><code>${esc(x.policy)}</code></td><td class="why">${why(x.why)}</td></tr>`).join('');
+  if (!tests.length) { $('tests-title').remove(); $('tests-summary').remove(); $('tests-table').remove(); }
+  else {
+    const failing = r.testsFailingUnderCandidate || [];
+    $('tests-summary').innerHTML = failing.length
+      ? `<span class="fails">${failing.length} of ${tests.length} cases no longer behave as expected under the proposal.</span> Change the case in the same proposal if that is intended.`
+      : `All ${tests.length} cases behave as expected.`;
+    $('tests').innerHTML = tests.map(x => {
+      const bad = x.candidate !== x.expected;
+      return `<tr><td>${esc(x.target.replace(/^tests\//, ''))}</td><td>${esc(x.stage)}</td><td>${esc(x.expected)}</td>
+      <td class="flow ${bad ? 'fails' : ''}">${esc(x.current)} → ${esc(x.candidate)}</td>
+      <td><code>${esc(x.policy)}</code></td><td class="why">${why(x.why)}</td></tr>`;
+    }).join('');
+  }
+</script>
+</body>
+</html>

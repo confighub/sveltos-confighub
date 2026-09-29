@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // CheckOptions name a check to run on a change order as it stands in one
@@ -23,6 +24,21 @@ type CheckOptions struct {
 	Worker string
 	// Function is a validating function and its arguments.
 	Function []string
+	// Sandbox, in place of a function, judges each revision as `cub sveltos
+	// impact` does: a server-side dry run in a disposable API server that holds
+	// the policies, in a namespace labelled with the variant's stage. The
+	// attestation then names the policy revisions it was judged by.
+	Sandbox *SandboxCheck
+}
+
+// SandboxCheck is the sandbox and the policies a check is judged by.
+type SandboxCheck struct {
+	Exec                Exec
+	Kubeconfig, Context string
+	// Policies are policy sources, such as mer-policies@Tag:in-force.
+	Policies   []string
+	StageLabel string
+	Settle     time.Duration
 }
 
 // CheckResult is one variant's verdict.
@@ -58,8 +74,8 @@ var recordedID = regexp.MustCompile(`attestation ([0-9a-f-]{36})`)
 // through when the check has not run.
 func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 	base, order, ok := strings.Cut(opts.ChangeOrder, "/")
-	if !ok || base == "" || order == "" || opts.Stage == "" || len(opts.Function) == 0 {
-		return nil, fmt.Errorf("check needs --change-order <base space>/<order>, --stage and a function")
+	if !ok || base == "" || order == "" || opts.Stage == "" || (len(opts.Function) == 0 && opts.Sandbox == nil) {
+		return nil, fmt.Errorf("check needs --change-order <base space>/<order>, --stage, and a function or a sandbox with policies")
 	}
 	if opts.Type == "" {
 		opts.Type = "PolicyCheck"
@@ -86,11 +102,14 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 	if where == "" {
 		return nil, fmt.Errorf("change order %s has no stage %s", opts.ChangeOrder, opts.Stage)
 	}
-	out, err = run("cub", "space", "list", "--where", where, "-o", "jq=[.[].Space | {SpaceID, Slug}]")
+	out, err = run("cub", "space", "list", "--where", where, "-o", "jq=[.[].Space | {SpaceID, Slug, Labels}]")
 	if err != nil {
 		return nil, err
 	}
-	var spaces []struct{ SpaceID, Slug string }
+	var spaces []struct {
+		SpaceID, Slug string
+		Labels        map[string]string
+	}
 	if err := json.Unmarshal(out, &spaces); err != nil {
 		return nil, fmt.Errorf("reading the Spaces of stage %s: %w", opts.Stage, err)
 	}
@@ -99,6 +118,8 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 		inScope[id] = true
 	}
 	var results []CheckResult
+	subjects := map[string][]subject{}
+	var targets []target
 	for _, sp := range spaces {
 		if !inScope[sp.SpaceID] {
 			continue
@@ -115,23 +136,77 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 		}
 		if len(dry.Subjects) == 0 {
 			r.Skipped = "the change order marks no revision here yet; promote it into the stage first"
-			results = append(results, r)
+		}
+		subjects[sp.Slug] = dry.Subjects
+		for _, s := range dry.Subjects {
+			r.Revisions = append(r.Revisions, fmt.Sprintf("%s/%d", s.UnitSlug, s.RevisionNum))
+			if opts.Sandbox != nil {
+				docs, err := revisionDocs(opts.Sandbox.Exec, sp.Slug, s.UnitSlug, s.RevisionNum)
+				if err != nil {
+					return results, err
+				}
+				stage := sp.Labels[firstOf(opts.Sandbox.StageLabel, "Stage")]
+				targets = append(targets, target{name: fmt.Sprintf("%s/%s@%d", sp.Slug, s.UnitSlug, s.RevisionNum), stage: stage, current: docs})
+			}
+		}
+		results = append(results, r)
+	}
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no Space of stage %s is in change order %s", opts.Stage, opts.ChangeOrder)
+	}
+
+	checker, claim := "", ""
+	var judged map[string]map[string]admission
+	var policies sourced
+	if opts.Sandbox != nil {
+		var err error
+		if judged, policies, err = sandboxJudge(*opts.Sandbox, targets); err != nil {
+			return results, err
+		}
+		checker = "the policies " + strings.Join(policies.sorted, ", ")
+		claim = "check.confighub.com/policies=" + strings.Join(policies.sorted, ",")
+	} else {
+		checker = opts.Function[0]
+		claim = "check.confighub.com/function=" + opts.Function[0]
+	}
+
+	for i := range results {
+		r := &results[i]
+		if r.Skipped != "" {
 			continue
 		}
-		for _, s := range dry.Subjects {
+		for _, s := range subjects[r.Space] {
 			rev := fmt.Sprintf("%s/%d", s.UnitSlug, s.RevisionNum)
-			r.Revisions = append(r.Revisions, rev)
-			args := append(append([]string{"function", "vet"}, opts.Function...), "--space", sp.Slug, "--revision", rev)
+			if opts.Sandbox != nil {
+				verdicts := judged[fmt.Sprintf("%s/%s@%d", r.Space, s.UnitSlug, s.RevisionNum)]
+				keys := make([]string, 0, len(verdicts))
+				for k := range verdicts {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					switch a := verdicts[k]; a.state {
+					case "denied":
+						r.Passed = false
+						r.Details = append(r.Details, fmt.Sprintf("%s: %s denied by %s", rev, k, firstOf(policies.policy(a.policy), a.policy)+": "+a.why))
+					case "unknown":
+						r.Passed = false
+						r.Details = append(r.Details, fmt.Sprintf("%s: %s not judged: %s", rev, k, a.why))
+					}
+				}
+				continue
+			}
+			args := append(append([]string{"function", "vet"}, opts.Function...), "--space", r.Space, "--revision", rev)
 			if opts.Worker != "" {
 				args = append(args, "--worker", opts.Worker)
 			}
 			out, err := run("cub", append(args, "-o", "jq=[.[] | .Outputs.ValidationResult]")...)
 			if err != nil {
-				return results, fmt.Errorf("%s %s: %w", sp.Slug, rev, err)
+				return results, fmt.Errorf("%s %s: %w", r.Space, rev, err)
 			}
 			v, err := verdicts(out)
 			if err != nil {
-				return results, fmt.Errorf("%s %s: %w", sp.Slug, rev, err)
+				return results, fmt.Errorf("%s %s: %w", r.Space, rev, err)
 			}
 			for _, one := range v {
 				if !one.Passed {
@@ -142,26 +217,21 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 				}
 			}
 		}
-		note := fmt.Sprintf("%s passed on %s", opts.Function[0], strings.Join(r.Revisions, ", "))
-		args := []string{"attestation", "create", "--space", sp.Slug, "--type", opts.Type, "--change-order", opts.ChangeOrder,
-			"--claim", "check.confighub.com/function=" + opts.Function[0]}
+		note := fmt.Sprintf("%s passed on %s", checker, strings.Join(r.Revisions, ", "))
+		args := []string{"attestation", "create", "--space", r.Space, "--type", opts.Type, "--change-order", opts.ChangeOrder, "--claim", claim}
 		if !r.Passed {
-			note = clip(fmt.Sprintf("%s failed: %s", opts.Function[0], strings.Join(r.Details, "; ")))
+			note = clip(fmt.Sprintf("%s failed: %s", checker, strings.Join(r.Details, "; ")))
 			args = append(args, "--reject")
 		}
-		out, err = run("cub", append(args, "--note", note)...)
+		out, err := run("cub", append(args, "--note", note)...)
 		if err != nil {
-			return results, fmt.Errorf("%s: recording the verdict: %w", sp.Slug, err)
+			return results, fmt.Errorf("%s: recording the verdict: %w", r.Space, err)
 		}
 		if m := recordedID.FindStringSubmatch(string(out)); m != nil {
 			r.Recorded = m[1]
 		}
-		results = append(results, r)
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Space < results[j].Space })
-	if len(results) == 0 {
-		return nil, fmt.Errorf("no Space of stage %s is in change order %s", opts.Stage, opts.ChangeOrder)
-	}
 	return results, nil
 }
 
@@ -188,4 +258,28 @@ func verdicts(out []byte) ([]verdict, error) {
 		return nil, fmt.Errorf("the function returned no validation result; is it a validating function?")
 	}
 	return all, nil
+}
+
+// sandboxJudge puts the policies in the sandbox and submits every object they
+// match, from each revision, with a server-side dry run.
+func sandboxJudge(o SandboxCheck, targets []target) (map[string]map[string]admission, sourced, error) {
+	set, err := readSources(o.Exec, o.Policies)
+	if err != nil {
+		return nil, set, err
+	}
+	policies := set.policies()
+	if len(policies) == 0 {
+		return nil, set, fmt.Errorf("no policies to judge by: give --policy")
+	}
+	if o.Settle == 0 {
+		o.Settle = 5 * time.Second
+	}
+	var removed []string
+	s := sandbox{x: o.Exec, o: ImpactOptions{SandboxKubeconfig: o.Kubeconfig, SandboxContext: o.Context, Settle: o.Settle}, removed: &removed}
+	kinds, err := s.discover(policies, targets)
+	if err != nil {
+		return nil, set, err
+	}
+	judged, err := s.evaluate(policies, targets, kinds, policyRules(policies), false)
+	return judged, set, err
 }

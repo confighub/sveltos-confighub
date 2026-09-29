@@ -1,0 +1,274 @@
+{
+  "policies": [
+    "mer-policies/disallow-latest-tag@2",
+    "mer-policies/replica-limits@2"
+  ],
+  "rows": [
+    {
+      "target": "eu-central-prod1",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod1",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-admission-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod1",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod1",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-background-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod1",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod1",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-cleanup-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod1",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod1",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-reports-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod2",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod2",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-admission-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod2",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod2",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-background-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod2",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod2",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-cleanup-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod2",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod2",
+      "config": "kyverno@6",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-reports-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod3",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod3",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-admission-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod3",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod3",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-background-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod3",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod3",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-cleanup-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod3",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod3",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-reports-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod4",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod4",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-admission-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod4",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod4",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-background-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod4",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod4",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-cleanup-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-prod4",
+      "stage": "prod",
+      "space": "mer-kyverno-eu-central-prod4",
+      "config": "kyverno@4",
+      "candidateConfig": "mer-kyverno-class-prod/kyverno@17",
+      "object": "Deployment kyverno-reports-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-test1",
+      "stage": "test",
+      "space": "mer-kyverno-eu-central-test1",
+      "config": "kyverno@10",
+      "candidateConfig": "mer-kyverno-class-test/kyverno@15",
+      "object": "Deployment kyverno-admission-controller",
+      "current": "allowed",
+      "candidate": "denied",
+      "verdict": "newly denied",
+      "why": "replica-limits (binding replica-limits-test): replicas 6 is above the ceiling of 4 for this class",
+      "policy": "mer-policies/replica-limits@2"
+    },
+    {
+      "target": "eu-central-test1",
+      "stage": "test",
+      "space": "mer-kyverno-eu-central-test1",
+      "config": "kyverno@10",
+      "candidateConfig": "mer-kyverno-class-test/kyverno@15",
+      "object": "Deployment kyverno-background-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-test1",
+      "stage": "test",
+      "space": "mer-kyverno-eu-central-test1",
+      "config": "kyverno@10",
+      "candidateConfig": "mer-kyverno-class-test/kyverno@15",
+      "object": "Deployment kyverno-cleanup-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-test1",
+      "stage": "test",
+      "space": "mer-kyverno-eu-central-test1",
+      "config": "kyverno@10",
+      "candidateConfig": "mer-kyverno-class-test/kyverno@15",
+      "object": "Deployment kyverno-reports-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-uat1",
+      "stage": "uat",
+      "space": "mer-kyverno-eu-central-uat1",
+      "config": "kyverno@8",
+      "candidateConfig": "mer-kyverno-class-uat/kyverno@17",
+      "object": "Deployment kyverno-admission-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-uat1",
+      "stage": "uat",
+      "space": "mer-kyverno-eu-central-uat1",
+      "config": "kyverno@8",
+      "candidateConfig": "mer-kyverno-class-uat/kyverno@17",
+      "object": "Deployment kyverno-background-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-uat1",
+      "stage": "uat",
+      "space": "mer-kyverno-eu-central-uat1",
+      "config": "kyverno@8",
+      "candidateConfig": "mer-kyverno-class-uat/kyverno@17",
+      "object": "Deployment kyverno-cleanup-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    },
+    {
+      "target": "eu-central-uat1",
+      "stage": "uat",
+      "space": "mer-kyverno-eu-central-uat1",
+      "config": "kyverno@8",
+      "candidateConfig": "mer-kyverno-class-uat/kyverno@17",
+      "object": "Deployment kyverno-reports-controller",
+      "current": "allowed",
+      "candidate": "allowed",
+      "verdict": "unchanged"
+    }
+  ]
+}

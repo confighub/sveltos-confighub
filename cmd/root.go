@@ -373,25 +373,43 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 	watchCmd.Flags().BoolVar(&once, "once", false, "look once, and stop")
 
 	var co onboard.CheckOptions
+	var sandboxCheck onboard.SandboxCheck
 	checkCmd := &cobra.Command{
-		Use:   "check --change-order <base>/<order> --stage <stage> [--worker <space>/<worker>] <function> [arguments...]",
+		Use:   "check --change-order <base>/<order> --stage <stage> ([--worker <space>/<worker>] <function> [arguments...] | --sandbox-kubeconfig <file> --policy <source>...)",
 		Short: "Check a change as it stands in a stage, and record the verdict as an attestation its release waits for",
 		Long: `Check a change as it stands in a stage, and record the verdict as an attestation.
 
-For each variant the change order has reached in the stage, it runs a
-validating function on exactly the revisions the order marks there, and records
-the verdict as an attestation of --type (PolicyCheck by default): a Pass, or a
-rejection that holds the release until it is revoked.
+For each variant the change order has reached in the stage, it checks exactly
+the revisions the order marks there, and records the verdict as an attestation
+of --type (PolicyCheck by default): a Pass, or a rejection that holds the
+release until it is revoked.
+
+It checks with a validating function, such as vet-kyverno-server, or with the
+same sandbox and policies as cub sveltos impact: each object the policies
+match is submitted with a server-side dry run, in a namespace labelled with the
+variant's stage. The attestation then names the policy revisions it was judged
+by, so the change a preview showed is released under the policies it was
+previewed against.
 
 Plan with --require PolicyCheck and each stage's release waits for a Pass. Unlike
 a Trigger, which ConfigHub stops running if its worker is gone long enough,
 nothing releases a change this has not passed.
 
   cub sveltos check --change-order sveltos-kyverno-base/owner-label --stage prod \
-    --worker platform-policies/kyverno-checker vet-kyverno-server`,
-		Args: cobra.MinimumNArgs(1),
+    --worker platform-policies/kyverno-checker vet-kyverno-server
+
+  cub sveltos check --change-order mer-kyverno-base/six-replicas --stage test \
+    --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(c *cobra.Command, args []string) error {
 			co.Function = args
+			if sandboxCheck.Kubeconfig != "" || sandboxCheck.Context != "" || len(sandboxCheck.Policies) > 0 {
+				if len(args) > 0 {
+					return fmt.Errorf("check with a function or with the sandbox, not both")
+				}
+				sandboxCheck.Exec = onboard.RunWithInput
+				co.Sandbox = &sandboxCheck
+			}
 			results, err := onboard.Check(onboard.Run, co)
 			w := c.OutOrStdout()
 			failed := false
@@ -422,11 +440,16 @@ nothing releases a change this has not passed.
 	checkCmd.Flags().StringVar(&co.Stage, "stage", "", "the stage whose variants to check")
 	checkCmd.Flags().StringVar(&co.Type, "type", "PolicyCheck", "the attestation type to record, as planned with --require")
 	checkCmd.Flags().StringVar(&co.Worker, "worker", "", "the worker that runs the function, as <space>/<worker>")
+	checkCmd.Flags().StringVar(&sandboxCheck.Kubeconfig, "sandbox-kubeconfig", "", "kubeconfig of the sandbox API server, to check with policies instead of a function")
+	checkCmd.Flags().StringVar(&sandboxCheck.Context, "sandbox-context", "", "context in that kubeconfig")
+	checkCmd.Flags().StringArrayVar(&sandboxCheck.Policies, "policy", nil, "policies to judge by: a file, or <space>[/<unit>][@<revision>] in ConfigHub, such as mer-policies@Tag:in-force; repeat for more")
+	checkCmd.Flags().StringVar(&sandboxCheck.StageLabel, "stage-label", "Stage", "the Space label that gives each variant's stage, which bindings select by")
+	checkCmd.Flags().DurationVar(&sandboxCheck.Settle, "settle", 5*time.Second, "how long to give the sandbox after its policies change")
 
 	var io_ onboard.ImpactOptions
 	var impactJSON, impactAll bool
 	impactCmd := &cobra.Command{
-		Use:   "impact --sandbox-kubeconfig <file> --policy <file>... (--candidate <file>... | --next) [--component <c>] [--corpus <space>...]",
+		Use:   "impact --sandbox-kubeconfig <file> --policy <source>... [--candidate <source>...] [--next] [--component <c>] [--corpus <space>...] [--tests <source>...]",
 		Short: "Preview what a policy change, or the next promotion, would do to each cluster, before anything ships",
 		Long: `Preview what a policy change, or the next promotion, would do to each cluster.
 
@@ -444,6 +467,16 @@ so the verdicts are the API server's own, and nothing is created.
   --corpus      a Space whose revisions ConfigHub recorded as failing a policy.
                 They show what a weaker policy would newly allow, which the
                 running configurations cannot.
+  --tests       known cases: objects annotated with the stage whose policies
+                they meet (impact.confighub.com/stage) and the verdict they
+                expect there (impact.confighub.com/expect: denied or allowed).
+                A case the policies in force get wrong is reported, and so is
+                a known-bad case a candidate admits.
+
+A policy source is a file, or policies held in ConfigHub, each at a revision:
+<space>/<unit> (its head), <space>/<unit>@<n>, <space>/<unit>@Tag:<tag>, or a
+whole Space, <space> or <space>@Tag:<tag>. Each result names the policy
+revision behind it.
 
 Each object is newly denied, newly allowed, unchanged, or unknown when its
 verdict needs what the configuration does not hold, such as the requesting
@@ -470,21 +503,51 @@ the next create or update would be refused.`,
 			}
 			fmt.Fprintln(w)
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "TARGET\tSTAGE\tCONFIG\tOBJECT\tNOW\tTHEN\tVERDICT\tWHY")
-			counts := map[string]int{}
+			fmt.Fprintln(tw, "TARGET\tSTAGE\tCONFIG\tOBJECT\tNOW\tTHEN\tVERDICT\tPOLICY\tWHY")
+			counts, targets := map[string]int{}, 0
 			for _, row := range r.Rows {
-				counts[row.Verdict]++
-				if row.Verdict == onboard.Unchanged && !impactAll {
+				if row.Expected == "" {
+					counts[row.Verdict]++
+					targets++
+				}
+				if row.Verdict == onboard.Unchanged && !impactAll && row.Expected == "" {
 					continue
 				}
 				config := row.Config
 				if row.Candidate != "" {
 					config += " -> " + row.Candidate
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Target, row.Stage, config, row.Object, row.Current, row.Proposed, row.Verdict, row.Why)
+				verdict := row.Verdict
+				if row.Expected != "" {
+					verdict += " (expects " + row.Expected + ")"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Target, row.Stage, config, row.Object, row.Current, row.Proposed, verdict, row.Policy, row.Why)
 			}
 			tw.Flush()
-			fmt.Fprintf(w, "\n%d newly denied, %d newly allowed, %d unchanged, %d unknown\n", counts[onboard.NewlyDenied], counts[onboard.NewlyAllowed], counts[onboard.Unchanged], counts[onboard.Unknown])
+			fmt.Fprintln(w)
+			if targets > 0 {
+				fmt.Fprintf(w, "%d newly denied, %d newly allowed, %d unchanged, %d unknown\n", counts[onboard.NewlyDenied], counts[onboard.NewlyAllowed], counts[onboard.Unchanged], counts[onboard.Unknown])
+			}
+			if len(r.Tests) > 0 {
+				if len(r.FailingNow) == 0 {
+					fmt.Fprintf(w, "tests: all %d cases behave as expected under the policies in force\n", len(r.Rows)-targets)
+				} else {
+					fmt.Fprintln(w, "tests: the policies in force get these cases wrong:")
+					for _, f := range r.FailingNow {
+						fmt.Fprintf(w, "  - %s\n", f)
+					}
+				}
+				if len(r.Candidates) > 0 {
+					if len(r.FailingThen) == 0 {
+						fmt.Fprintln(w, "tests: every case behaves as expected under the candidate too")
+					} else {
+						fmt.Fprintln(w, "tests: under the candidate, these cases no longer behave as expected:")
+						for _, f := range r.FailingThen {
+							fmt.Fprintf(w, "  - %s\n", f)
+						}
+					}
+				}
+			}
 			return nil
 		},
 	}
@@ -492,8 +555,9 @@ the next create or update would be refused.`,
 	impactCmd.Flags().StringVar(&io_.SandboxContext, "sandbox-context", "", "context in that kubeconfig")
 	impactCmd.Flags().StringVar(&io_.Component, "component", "", "the component whose cluster variants are the targets")
 	impactCmd.Flags().StringVar(&io_.StageLabel, "stage-label", "Stage", "the Space label that gives each target's stage, which bindings select by")
-	impactCmd.Flags().StringArrayVar(&io_.Policies, "policy", nil, "a policy file in force; repeat for more")
-	impactCmd.Flags().StringArrayVar(&io_.Candidates, "candidate", nil, "a candidate policy file; repeat for more")
+	impactCmd.Flags().StringArrayVar(&io_.Policies, "policy", nil, "policies in force: a file, or <space>[/<unit>][@<revision>] in ConfigHub, such as mer-policies@Tag:in-force; repeat for more")
+	impactCmd.Flags().StringArrayVar(&io_.Candidates, "candidate", nil, "candidate policies, as a file or <space>/<unit>[@<revision>]; repeat for more")
+	impactCmd.Flags().StringArrayVar(&io_.Tests, "tests", nil, "known cases, as a file or <space>/<unit>[@<revision>]; repeat for more")
 	impactCmd.Flags().BoolVar(&io_.Next, "next", false, "compare each target's running configuration with what its next promotion brings")
 	impactCmd.Flags().StringArrayVar(&io_.Corpus, "corpus", nil, "a Space whose revisions recorded as failing a policy are evaluated too")
 	impactCmd.Flags().DurationVar(&io_.Settle, "settle", 5*time.Second, "how long to give the sandbox after its policies change")

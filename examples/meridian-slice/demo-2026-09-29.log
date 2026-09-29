@@ -1,0 +1,340 @@
+# Policies held in ConfigHub, previewed before anything ships, and one change
+# taken through the gates on the Meridian slice.
+# kind, stock Sveltos v1.15.0, ConfigHub, 2026-09-29. `cub sveltos` was built
+# from this repository after v0.8.0 (the policy sources, --tests, and check
+# with a sandbox). The sandbox is a separate kind cluster (Kubernetes v1.35)
+# that holds the policies and nothing else; every verdict below is its API
+# server's own, from a server-side dry run.
+#
+# The policies live in the Space mer-policies, one unit each, and the
+# revisions in force carry the tag in-force. A policy change is a new revision,
+# previewed, then approved and tagged, or taken back out. The known cases are
+# the unit policy-tests (policies/tests.yaml).
+#
+# Steps 1 to 3 ran before the summary line counted known cases apart from the
+# clusters: in step 2, "5 newly denied" is the four prod clusters and one case.
+# "Failed: no response body from server" on a promotion is a client timeout;
+# the promotion completed, as the lines after it show.
+# The assistant's explanation in step 5 is AI generated, and is kept as
+# written in explain/explain-2026-09-29.md.
+
+== 0. The policies, held in ConfigHub: one unit per policy, and the revisions in force tagged in-force (22:15:21)
+$ cub unit list --space mer-policies
+NAME                   SPACE           CHANGESET    TARGET    UPGRADE-NEEDED    UNRELEASED-CHANGES    VALIDATION-ERRORS    LAST-CHANGE-DESCRIPTION                            
+disallow-latest-tag    mer-policies                                                                                        No container image on a mutable tag such as latest    
+policy-tests           mer-policies                                                                                        UpdateUnit                                            
+replica-limits         mer-policies                                                                                        Replica ceilings per class: test 4, uat 3, prod 5     
+$ cub tag list --space mer-policies
+NAME        SPACE           CHANGESET    DISPLAY-NAME    CREATED-AT          
+in-force    mer-policies                 in-force        2026-09-29 06:10:06    
+
+== 1. The known cases, under the policies in force (22:15:23)
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force --tests mer-policies/policy-tests@Tag:in-force
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+
+TARGET                            STAGE  CONFIG                       OBJECT                                 NOW      THEN     VERDICT                      POLICY                              WHY
+tests/latest-tag                  prod   mer-policies/policy-tests@3  Deployment latest-tag                  denied   denied   unchanged (expects denied)   mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+tests/prod-pinned-three-replicas  prod   mer-policies/policy-tests@3  Deployment prod-pinned-three-replicas  allowed  allowed  unchanged (expects allowed)                                      
+tests/prod-six-replicas           prod   mer-policies/policy-tests@3  Deployment prod-six-replicas           denied   denied   unchanged (expects denied)   mer-policies/replica-limits@2       replica-limits (binding replica-limits-prod): replicas 6 is above the ceiling of 5 for this class
+tests/test-five-replicas          test   mer-policies/policy-tests@3  Deployment test-five-replicas          denied   denied   unchanged (expects denied)   mer-policies/replica-limits@2       replica-limits (binding replica-limits-test): replicas 5 is above the ceiling of 4 for this class
+tests/test-seven-replicas         test   mer-policies/policy-tests@3  Deployment test-seven-replicas         denied   denied   unchanged (expects denied)   mer-policies/replica-limits@2       replica-limits (binding replica-limits-test): replicas 7 is above the ceiling of 4 for this class
+tests/uat-four-replicas           uat    mer-policies/policy-tests@3  Deployment uat-four-replicas           denied   denied   unchanged (expects denied)   mer-policies/replica-limits@2       replica-limits (binding replica-limits-uat): replicas 4 is above the ceiling of 3 for this class
+
+0 newly denied, 0 newly allowed, 6 unchanged, 0 unknown
+tests: every case behaves as expected under the policies in force
+
+== 2. A tighter policy: prod's replica ceiling lowered from 5 to 2, proposed as a new revision (22:15:45)
+$ cub function set --space mer-policies --unit replica-limits --change-desc "Proposal: lower prod's replica ceiling to 2" -- set-yq '(select(.kind == "ConfigMap" and .metadata.name == "replica-limits-prod") | .data.max) = "2"'
+Function(s) succeeded on unit mer-policies/replica-limits (87360075-bcb4-437c-8c41-73703e7c39cf)
+Config data changed
+Awaiting triggers...
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --policy mer-policies@Tag:in-force --candidate mer-policies/replica-limits --tests mer-policies/policy-tests@Tag:in-force
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+candidate:         mer-policies/replica-limits@3
+
+TARGET                            STAGE  CONFIG                       OBJECT                                   NOW      THEN    VERDICT                         POLICY                              WHY
+eu-central-prod1                  prod   kyverno@6                    Deployment kyverno-admission-controller  allowed  denied  newly denied                    mer-policies/replica-limits@3       replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+eu-central-prod2                  prod   kyverno@6                    Deployment kyverno-admission-controller  allowed  denied  newly denied                    mer-policies/replica-limits@3       replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+eu-central-prod3                  prod   kyverno@4                    Deployment kyverno-admission-controller  allowed  denied  newly denied                    mer-policies/replica-limits@3       replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+eu-central-prod4                  prod   kyverno@4                    Deployment kyverno-admission-controller  allowed  denied  newly denied                    mer-policies/replica-limits@3       replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+tests/latest-tag                  prod   mer-policies/policy-tests@3  Deployment latest-tag                    denied   denied  unchanged (expects denied)      mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+tests/prod-pinned-three-replicas  prod   mer-policies/policy-tests@3  Deployment prod-pinned-three-replicas    allowed  denied  newly denied (expects allowed)  mer-policies/replica-limits@3       replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+tests/prod-six-replicas           prod   mer-policies/policy-tests@3  Deployment prod-six-replicas             denied   denied  unchanged (expects denied)      mer-policies/replica-limits@3       replica-limits (binding replica-limits-prod): replicas 6 is above the ceiling of 2 for this class
+tests/test-five-replicas          test   mer-policies/policy-tests@3  Deployment test-five-replicas            denied   denied  unchanged (expects denied)      mer-policies/replica-limits@3       replica-limits (binding replica-limits-test): replicas 5 is above the ceiling of 4 for this class
+tests/test-seven-replicas         test   mer-policies/policy-tests@3  Deployment test-seven-replicas           denied   denied  unchanged (expects denied)      mer-policies/replica-limits@3       replica-limits (binding replica-limits-test): replicas 7 is above the ceiling of 4 for this class
+tests/uat-four-replicas           uat    mer-policies/policy-tests@3  Deployment uat-four-replicas             denied   denied  unchanged (expects denied)      mer-policies/replica-limits@3       replica-limits (binding replica-limits-uat): replicas 4 is above the ceiling of 3 for this class
+
+5 newly denied, 0 newly allowed, 25 unchanged, 0 unknown
+tests: every case behaves as expected under the policies in force
+tests: under the candidate, these cases no longer behave as expected:
+  - tests/prod-pinned-three-replicas: expects allowed, and the candidate gives denied
+-- not adopted: the proposal is taken back out, and the tag never moved
+$ cub unit update --space mer-policies replica-limits --restore 2 --change-desc 'Not adopted: prod keeps its ceiling of 5'
+Successfully updated unit replica-limits (87360075-bcb4-437c-8c41-73703e7c39cf)
+
+== 3. A weaker policy: Kyverno's own controllers exempted from disallow-latest-tag (22:16:49)
+$ cub unit update --space mer-policies disallow-latest-tag policies/candidates/disallow-latest-tag-exempt-kyverno.yaml --change-desc "Proposal: exempt Kyverno's own controllers from disallow-latest-tag"
+Successfully updated unit disallow-latest-tag (7897bed5-b68c-4b90-8757-4557ce0b759c)
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --corpus mer-kyverno-base --policy mer-policies@Tag:in-force --candidate mer-policies/disallow-latest-tag --tests mer-policies/policy-tests@Tag:in-force
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+candidate:         mer-policies/disallow-latest-tag@3
+
+TARGET                            STAGE  CONFIG                           OBJECT                                 NOW      THEN     VERDICT                         POLICY                              WHY
+mer-kyverno-base/kyverno@6               kyverno@6 (recorded as failing)  Deployment kyverno-cleanup-controller  denied   allowed  newly allowed                   mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+mer-kyverno-base/kyverno@8               kyverno@8 (recorded as failing)  Deployment kyverno-cleanup-controller  denied   allowed  newly allowed                   mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+tests/latest-tag                  prod   mer-policies/policy-tests@3      Deployment latest-tag                  denied   allowed  newly allowed (expects denied)  mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+tests/prod-pinned-three-replicas  prod   mer-policies/policy-tests@3      Deployment prod-pinned-three-replicas  allowed  allowed  unchanged (expects allowed)                                         
+tests/prod-six-replicas           prod   mer-policies/policy-tests@3      Deployment prod-six-replicas           denied   denied   unchanged (expects denied)      mer-policies/replica-limits@2       replica-limits (binding replica-limits-prod): replicas 6 is above the ceiling of 5 for this class
+tests/test-five-replicas          test   mer-policies/policy-tests@3      Deployment test-five-replicas          denied   denied   unchanged (expects denied)      mer-policies/replica-limits@2       replica-limits (binding replica-limits-test): replicas 5 is above the ceiling of 4 for this class
+tests/test-seven-replicas         test   mer-policies/policy-tests@3      Deployment test-seven-replicas         denied   denied   unchanged (expects denied)      mer-policies/replica-limits@2       replica-limits (binding replica-limits-test): replicas 7 is above the ceiling of 4 for this class
+tests/uat-four-replicas           uat    mer-policies/policy-tests@3      Deployment uat-four-replicas           denied   denied   unchanged (expects denied)      mer-policies/replica-limits@2       replica-limits (binding replica-limits-uat): replicas 4 is above the ceiling of 3 for this class
+
+0 newly denied, 3 newly allowed, 35 unchanged, 0 unknown
+tests: every case behaves as expected under the policies in force
+tests: under the candidate, these cases no longer behave as expected:
+  - tests/latest-tag: expects denied, and the candidate gives allowed
+-- not adopted
+$ cub unit update --space mer-policies disallow-latest-tag --restore 2 --change-desc "Not adopted: Kyverno's controllers stay on pinned tags"
+Successfully updated unit disallow-latest-tag (7897bed5-b68c-4b90-8757-4557ce0b759c)
+
+== 4. An application change: 6 admission controller replicas at the root, promoted into the class bases only (22:18:07)
+$ cub function set --space mer-kyverno-base --unit kyverno --change-desc 'Proposal: 6 admission controller replicas' -- set-yq '(select(.kind == "Deployment" and .metadata.name == "kyverno-admission-controller") | .spec.replicas) = 6'
+Function(s) succeeded on unit mer-kyverno-base/kyverno (a580d050-b07f-44c2-9c4e-f0f95de33be8)
+Config data changed
+Awaiting triggers...
+$ cub changeorder create --space mer-kyverno-base test-six-replicas --change-workflow mer-kyverno-base/rollout
+Successfully created changeorder test-six-replicas (9b436250-026f-49bf-9ddc-12879a0ddbcb)
+$ cub variant promote --change-order mer-kyverno-base/test-six-replicas --target-stage bases --squash
+Promoting mer-kyverno-class-prod into stage bases...
+Upgraded 1 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+Promoting mer-kyverno-class-test into stage bases...
+Upgraded 1 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+Promoting mer-kyverno-class-uat into stage bases...
+Upgraded 1 unit(s) behind their upstream
+Adding 0 unit(s) from upstream at the change order's start
+-- class-test admission replicas at head: 4
+-- class-uat admission replicas at head: 2
+-- class-prod admission replicas at head: 3
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --policy mer-policies@Tag:in-force --next
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+
+TARGET  STAGE  CONFIG  OBJECT  NOW  THEN  VERDICT  POLICY  WHY
+
+0 newly denied, 0 newly allowed, 24 unchanged, 0 unknown
+-- the same results as JSON, for the assistant: saved as proposal.json
+
+== 4b. Why test's class base kept 4: the last proposal was taken back out with a demote (22:24:50)
+-- class-test revision 13: UpgradeUnit: Upgraded from revision 13 to 14, replicas 6
+-- class-test revision 14: RestoreRevision: Take the 6-replica proposal back out, replicas 4
+-- root revision 14: Proposal: 6 admission controller replicas| Functions: set-yq, replicas 6
+-- root revision 15: Back to 4 admission controller replicas| Functions: set-yq, replicas 4
+-- root revision 16: Proposal: 6 admission controller replicas| Functions: set-yq, replicas 6
+-- the demote restored test's class base to 4, but it stayed upgraded to the root's revision 14 (6 replicas).
+-- so this promotion took the root from 14 to 16, 6 to 6 replicas: no change, and test's class base kept 4.
+$ cub changeorder update --space mer-kyverno-base test-six-replicas --patch --aborted-reason "Test's class base did not take it: a demote had left it upgraded past the last proposal"
+Failed: HTTP 400 for req LesECySMWZgwNLVBLPblgngMUrmmyJJG: the AbortedReason contains invalid characters; it must match the following regular expression: ^[\-_@/#$%&~+=!?.,:;(){}\[\]<>|A-Za-z0-9](([\-_@/#$%&~+=!?.,:;(){}\[\]<>|A-Za-z0-9]| )*[\-_@/#$%&~+=!?.,:;(){}\[\]<>|A-Za-z0-9])?$: Test's class base did not take it: a demote had left it upgraded past the last proposal
+Details:
+  failed to update entity
+Metadata:
+  AbortedReason: the AbortedReason contains invalid characters; it must match the following regular expression: ^[\-_@/#$%&~+=!?.,:;(){}\[\]<>|A-Za-z0-9](([\-_@/#$%&~+=!?.,:;(){}\[\]<>|A-Za-z0-9]| )*[\-_@/#$%&~+=!?.,:;(){}\[\]<>|A-Za-z0-9])?$: Test's class base did not take it: a demote had left it upgraded past the last proposal
+exit 1
+
+== 4c. The proposal, made where it lands: 6 admission controller replicas in test's class base (22:25:04)
+$ cub function set --space mer-kyverno-class-test --unit kyverno --change-desc 'Proposal: 6 admission controller replicas in test, as the root now says' -- set-yq '(select(.kind == "Deployment" and .metadata.name == "kyverno-admission-controller") | .spec.replicas) = 6'
+Function(s) succeeded on unit mer-kyverno-class-test/kyverno (2f67a8a4-a023-4bfe-b1fa-dc002277d97f)
+Config data changed
+Awaiting triggers...
+$ cub changeorder create --space mer-kyverno-base six-replicas-in-test --change-workflow mer-kyverno-base/rollout
+Successfully created changeorder six-replicas-in-test (86c65c0c-f928-4d03-84cd-1c49d43ffa6b)
+$ cub variant promote --change-order mer-kyverno-base/six-replicas-in-test --target-stage bases --squash
+Promoting mer-kyverno-class-prod into stage bases...
+Upgraded 0 unit(s) behind their upstream
+Marked 1 unit(s) the change order covers and carries no changes for
+Adding 0 unit(s) from upstream at the change order's start
+Promoting mer-kyverno-class-test into stage bases...
+Upgraded 0 unit(s) behind their upstream
+Marked 1 unit(s) the change order covers and carries no changes for
+Adding 0 unit(s) from upstream at the change order's start
+Promoting mer-kyverno-class-uat into stage bases...
+Upgraded 0 unit(s) behind their upstream
+Marked 1 unit(s) the change order covers and carries no changes for
+Adding 0 unit(s) from upstream at the change order's start
+-- class-test admission replicas at head: 6
+-- class-uat admission replicas at head: 2
+-- class-prod admission replicas at head: 3
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --policy mer-policies@Tag:in-force --next
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+
+TARGET            STAGE  CONFIG                                           OBJECT                                   NOW      THEN    VERDICT       POLICY                         WHY
+eu-central-test1  test   kyverno@10 -> mer-kyverno-class-test/kyverno@15  Deployment kyverno-admission-controller  allowed  denied  newly denied  mer-policies/replica-limits@2  replica-limits (binding replica-limits-test): replicas 6 is above the ceiling of 4 for this class
+
+1 newly denied, 0 newly allowed, 23 unchanged, 0 unknown
+-- the same results as JSON, for the assistant: saved as proposal.json
+-- the reason may not contain an apostrophe; again without one
+$ cub changeorder update --space mer-kyverno-base test-six-replicas --patch --aborted-reason 'The test class base did not take it: a demote had left it upgraded past the last proposal'
+Successfully updated changeorder test-six-replicas (9b436250-026f-49bf-9ddc-12879a0ddbcb)
+
+== 5. The assistant explains the results: it reads the JSON and, read-only, ConfigHub (22:31:12)
+$ bash explain/explain.sh proposal.json > explain/explain-2026-09-29.md
+-- AI generated, kept as written in explain/explain-2026-09-29.md. It names three ways out, and warns that raising the policy would put test above prod.
+-- The person chooses to correct the policy, and says why in the approval.
+
+== 6. The fix, as a policy change: test's replica ceiling raised to 6, proposed as a new revision (22:31:12)
+$ cub function set --space mer-policies --unit replica-limits --change-desc "Raise test's replica ceiling to 6: test is where replica counts are tried before prod" -- set-yq '(select(.kind == "ConfigMap" and .metadata.name == "replica-limits-test") | .data.max) = "6"'
+Function(s) succeeded on unit mer-policies/replica-limits (87360075-bcb4-437c-8c41-73703e7c39cf)
+Config data changed
+Awaiting triggers...
+-- the proposal and the policy change together: each cluster's next promotion, under the proposed policies
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --next --policy mer-policies@Tag:in-force --candidate mer-policies/replica-limits --tests mer-policies/policy-tests@Tag:in-force
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+candidate:         mer-policies/replica-limits@5
+
+TARGET                            STAGE  CONFIG                       OBJECT                                 NOW      THEN     VERDICT                         POLICY                              WHY
+tests/latest-tag                  prod   mer-policies/policy-tests@3  Deployment latest-tag                  denied   denied   unchanged (expects denied)      mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+tests/prod-pinned-three-replicas  prod   mer-policies/policy-tests@3  Deployment prod-pinned-three-replicas  allowed  allowed  unchanged (expects allowed)                                         
+tests/prod-six-replicas           prod   mer-policies/policy-tests@3  Deployment prod-six-replicas           denied   denied   unchanged (expects denied)      mer-policies/replica-limits@5       replica-limits (binding replica-limits-prod): replicas 6 is above the ceiling of 5 for this class
+tests/test-five-replicas          test   mer-policies/policy-tests@3  Deployment test-five-replicas          denied   allowed  newly allowed (expects denied)  mer-policies/replica-limits@2       replica-limits (binding replica-limits-test): replicas 5 is above the ceiling of 4 for this class
+tests/test-seven-replicas         test   mer-policies/policy-tests@3  Deployment test-seven-replicas         denied   denied   unchanged (expects denied)      mer-policies/replica-limits@5       replica-limits (binding replica-limits-test): replicas 7 is above the ceiling of 6 for this class
+tests/uat-four-replicas           uat    mer-policies/policy-tests@3  Deployment uat-four-replicas           denied   denied   unchanged (expects denied)      mer-policies/replica-limits@5       replica-limits (binding replica-limits-uat): replicas 4 is above the ceiling of 3 for this class
+
+0 newly denied, 0 newly allowed, 24 unchanged, 0 unknown
+tests: all 6 cases behave as expected under the policies in force
+tests: under the candidate, these cases no longer behave as expected:
+  - tests/test-five-replicas: expects denied, and the candidate gives allowed
+-- five replicas in test are now allowed, as intended; seven are still refused. The case changes in the same proposal
+$ cub function set --space mer-policies --unit policy-tests --change-desc 'Five replicas in test are allowed once its ceiling is 6; seven are still refused' -- set-yq '(select(.metadata.name == "test-five-replicas") | .metadata.annotations["impact.confighub.com/expect"]) = "allowed"'
+Function(s) succeeded on unit mer-policies/policy-tests (65d9f2b4-448a-453e-97a9-5c269f38a586)
+Config data changed
+Awaiting triggers...
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --next --policy mer-policies@Tag:in-force --candidate mer-policies/replica-limits --tests mer-policies/policy-tests
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+candidate:         mer-policies/replica-limits@5
+
+TARGET                            STAGE  CONFIG                       OBJECT                                 NOW      THEN     VERDICT                          POLICY                              WHY
+tests/latest-tag                  prod   mer-policies/policy-tests@4  Deployment latest-tag                  denied   denied   unchanged (expects denied)       mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+tests/prod-pinned-three-replicas  prod   mer-policies/policy-tests@4  Deployment prod-pinned-three-replicas  allowed  allowed  unchanged (expects allowed)                                          
+tests/prod-six-replicas           prod   mer-policies/policy-tests@4  Deployment prod-six-replicas           denied   denied   unchanged (expects denied)       mer-policies/replica-limits@5       replica-limits (binding replica-limits-prod): replicas 6 is above the ceiling of 5 for this class
+tests/test-five-replicas          test   mer-policies/policy-tests@4  Deployment test-five-replicas          denied   allowed  newly allowed (expects allowed)  mer-policies/replica-limits@2       replica-limits (binding replica-limits-test): replicas 5 is above the ceiling of 4 for this class
+tests/test-seven-replicas         test   mer-policies/policy-tests@4  Deployment test-seven-replicas         denied   denied   unchanged (expects denied)       mer-policies/replica-limits@5       replica-limits (binding replica-limits-test): replicas 7 is above the ceiling of 6 for this class
+tests/uat-four-replicas           uat    mer-policies/policy-tests@4  Deployment uat-four-replicas           denied   denied   unchanged (expects denied)       mer-policies/replica-limits@5       replica-limits (binding replica-limits-uat): replicas 4 is above the ceiling of 3 for this class
+
+0 newly denied, 0 newly allowed, 24 unchanged, 0 unknown
+tests: the policies in force get these cases wrong:
+  - tests/test-five-replicas: expects allowed, and the policies in force give denied
+tests: every case behaves as expected under the candidate too
+
+== 7. The policy change is approved, then put in force (22:33:24)
+$ cub attestation create --space mer-policies --where "Slug = 'replica-limits'" --type Approval --note 'Previewed: nothing running or proposed is newly denied. In test, 5 and 6 replicas become allowed and 7 is still refused. Test above prod is deliberate: replica counts are tried in test first'
+Recorded pass Approval attestation dc21dde2-d085-4f72-bd9c-708423d151eb in mer-policies, covering 1 revision(s)
+$ cub attestation create --space mer-policies --where "Slug = 'policy-tests'" --type Approval --note "The known cases for test's new ceiling"
+Recorded pass Approval attestation 2cbdf03a-ef4c-427e-b20d-30c081b12158 in mer-policies, covering 1 revision(s)
+$ cub unit tag in-force --space mer-policies --unit replica-limits,policy-tests
+
+Tagging operation completed for tag 'in-force':
+  Success: 2 unit(s)
+  Revision type: HeadRevisionNum
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force --tests mer-policies/policy-tests@Tag:in-force
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@5
+
+TARGET                            STAGE  CONFIG                       OBJECT                                 NOW      THEN     VERDICT                      POLICY                              WHY
+tests/latest-tag                  prod   mer-policies/policy-tests@4  Deployment latest-tag                  denied   denied   unchanged (expects denied)   mer-policies/disallow-latest-tag@2  disallow-latest-tag (binding disallow-latest-tag): Using a mutable image tag such as 'latest' is not allowed.
+tests/prod-pinned-three-replicas  prod   mer-policies/policy-tests@4  Deployment prod-pinned-three-replicas  allowed  allowed  unchanged (expects allowed)                                      
+tests/prod-six-replicas           prod   mer-policies/policy-tests@4  Deployment prod-six-replicas           denied   denied   unchanged (expects denied)   mer-policies/replica-limits@5       replica-limits (binding replica-limits-prod): replicas 6 is above the ceiling of 5 for this class
+tests/test-five-replicas          test   mer-policies/policy-tests@4  Deployment test-five-replicas          allowed  allowed  unchanged (expects allowed)                                      
+tests/test-seven-replicas         test   mer-policies/policy-tests@4  Deployment test-seven-replicas         denied   denied   unchanged (expects denied)   mer-policies/replica-limits@5       replica-limits (binding replica-limits-test): replicas 7 is above the ceiling of 6 for this class
+tests/uat-four-replicas           uat    mer-policies/policy-tests@4  Deployment uat-four-replicas           denied   denied   unchanged (expects denied)   mer-policies/replica-limits@5       replica-limits (binding replica-limits-uat): replicas 4 is above the ceiling of 3 for this class
+
+tests: all 6 cases behave as expected under the policies in force
+
+== 8. The application change goes through the gates in test, checked by the policies in force (22:33:49)
+$ cub variant promote --change-order mer-kyverno-base/six-replicas-in-test --target-stage test --squash
+Promoting mer-kyverno-eu-central-test1 into stage test...
+Upgraded 0 unit(s) behind their upstream
+Marked 1 unit(s) the change order covers and carries no changes for
+Adding 0 unit(s) from upstream at the change order's start
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/six-replicas-in-test
+Failed: HTTP 422 for req htrSQXoLybnncUjFUIZzMKOhwPhLBNMF: unable to publish a release of change order 'six-replicas-in-test' in stage 'test': requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 11 has 0 of 1; requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 11 has 0 of 1
+exit 1
+-- refused: no approval and no policy check yet
+$ cub sveltos check --change-order mer-kyverno-base/six-replicas-in-test --stage test --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force
+mer-kyverno-eu-central-test1: passed kyverno/11; recorded a Pass (c6d95ef1-5489-46c6-aec3-a8ddbf177539)
+$ cub variant approve --change-order mer-kyverno-base/six-replicas-in-test --stage test
+Recorded pass Approval attestation a5de17ae-5482-4011-9895-13b6c1c5e76c in mer-kyverno-eu-central-test1, covering 1 revision(s)
+$ cub release publish mer-kyverno-eu-central-test1 --revision ChangeOrder:mer-kyverno-base/six-replicas-in-test
+Successfully created release 11f6b8e0-ca91-4def-b323-9859d025a821 (11f6b8e0-ca91-4def-b323-9859d025a821)
+-- Sveltos fetches the new release within a minute
+-- 22:36:40 eu-central-test1: kyverno-admission-controller replicas/ready = 6/6
+$ kubectl --kubeconfig test1.kubeconfig -n kyverno get deployment kyverno-admission-controller
+NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
+kyverno-admission-controller   6/6     6            6           40h
+
+== 9. uat and prod protect their replicas, so the order brings nothing new there (22:36:40)
+$ cub variant promote --change-order mer-kyverno-base/six-replicas-in-test --target-stage uat --squash
+Promoting mer-kyverno-eu-central-uat1 into stage uat...
+Upgraded 0 unit(s) behind their upstream
+Marked 1 unit(s) the change order covers and carries no changes for
+Adding 0 unit(s) from upstream at the change order's start
+$ cub variant promote --change-order mer-kyverno-base/six-replicas-in-test --target-stage prod --squash
+Failed: no response body from server for req 
+exit 1
+-- eu-central-uat1 admission replicas at head: 2
+-- eu-central-prod1 admission replicas at head: 3
+-- eu-central-prod2 admission replicas at head: 3
+-- eu-central-prod3 admission replicas at head: 3
+-- eu-central-prod4 admission replicas at head: 3
+$ cub changeorder get --space mer-kyverno-base six-replicas-in-test -o 'jq=.ChangeOrder | {Stage, State}'
+{
+  "Stage": "Completed",
+  "State": "Released"
+}
+$ cub attestation list --space '*' --where "ChangeOrderID = '86c65c0c-f928-4d03-84cd-1c49d43ffa6b'" -o 'jq=[.[] | .Attestation | {SpaceSlug, Type, Result}]'
+[
+  {
+    "Result": "Pass",
+    "SpaceSlug": "mer-kyverno-eu-central-test1",
+    "Type": "PolicyCheck"
+  },
+  {
+    "Result": "Pass",
+    "SpaceSlug": "mer-kyverno-eu-central-test1",
+    "Type": "Approval"
+  }
+]
+
+== 10. Unknown: a policy that reads the requesting user, proposed as a new unit (22:40:04)
+$ cub unit create --space mer-policies platform-team-only policies/candidates/platform-team-only.yaml --change-desc 'Proposal: only the platform team may change Kyverno'
+Successfully created unit platform-team-only (1802d41e-49e8-4eda-aea2-7d9bb2cd468b)
+$ cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno --policy mer-policies@Tag:in-force --candidate mer-policies/platform-team-only
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@5
+candidate:         mer-policies/platform-team-only@2
+
+TARGET            STAGE  CONFIG      OBJECT                                    NOW      THEN     VERDICT  POLICY                             WHY
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-admission-controller   allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-background-controller  allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod1  prod   kyverno@6   Deployment kyverno-reports-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-admission-controller   allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-background-controller  allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod2  prod   kyverno@6   Deployment kyverno-reports-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-admission-controller   allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-background-controller  allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod3  prod   kyverno@4   Deployment kyverno-reports-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-admission-controller   allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-background-controller  allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-prod4  prod   kyverno@4   Deployment kyverno-reports-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@11  Deployment kyverno-admission-controller   allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@11  Deployment kyverno-background-controller  allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@11  Deployment kyverno-cleanup-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-test1  test   kyverno@11  Deployment kyverno-reports-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-admission-controller   allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-background-controller  allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-cleanup-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+eu-central-uat1   uat    kyverno@8   Deployment kyverno-reports-controller     allowed  unknown  unknown  mer-policies/platform-team-only@2  policy platform-team-only reads request.userInfo, which the configuration does not hold
+
+0 newly denied, 0 newly allowed, 0 unchanged, 24 unknown
+-- not adopted: the unit is never tagged in-force, so it is not among the policies in force

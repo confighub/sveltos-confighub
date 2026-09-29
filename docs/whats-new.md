@@ -17,6 +17,21 @@ policy, would do to each cluster.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## Unreleased
+
+**Policies held in ConfigHub, known cases, and one judge for preview and gate.**
+- `--policy` and `--candidate` read policies held in ConfigHub as well as
+  files, each at a revision: `<space>/<unit>`, `@<n>`, `@Tag:<tag>`, or a whole
+  Space such as `mer-policies@Tag:in-force`. A policy change is a new revision,
+  previewed before a person moves the tag. Each denied or unknown result
+  names the policy revision behind it.
+- `--tests` adds known cases: objects annotated with the stage they meet and
+  the verdict they expect. A case the policies in force get wrong is reported,
+  and so is a known-bad case a candidate would admit.
+- `cub sveltos check` can judge with the same sandbox and policies instead of
+  a worker function. The PolicyCheck it records names the policy revisions, so
+  a change is released under exactly the policies it was previewed against.
+
 ## 0.8.0, 2026-09-28
 
 **Preview a change's impact before anything ships: `cub sveltos impact`.** It
