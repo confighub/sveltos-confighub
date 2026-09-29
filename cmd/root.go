@@ -504,9 +504,12 @@ the next create or update would be refused.`,
 			fmt.Fprintln(w)
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "TARGET\tSTAGE\tCONFIG\tOBJECT\tNOW\tTHEN\tVERDICT\tPOLICY\tWHY")
-			counts := map[string]int{}
+			counts, targets := map[string]int{}, 0
 			for _, row := range r.Rows {
-				counts[row.Verdict]++
+				if row.Expected == "" {
+					counts[row.Verdict]++
+					targets++
+				}
 				if row.Verdict == onboard.Unchanged && !impactAll && row.Expected == "" {
 					continue
 				}
@@ -521,10 +524,13 @@ the next create or update would be refused.`,
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", row.Target, row.Stage, config, row.Object, row.Current, row.Proposed, verdict, row.Policy, row.Why)
 			}
 			tw.Flush()
-			fmt.Fprintf(w, "\n%d newly denied, %d newly allowed, %d unchanged, %d unknown\n", counts[onboard.NewlyDenied], counts[onboard.NewlyAllowed], counts[onboard.Unchanged], counts[onboard.Unknown])
+			fmt.Fprintln(w)
+			if targets > 0 {
+				fmt.Fprintf(w, "%d newly denied, %d newly allowed, %d unchanged, %d unknown\n", counts[onboard.NewlyDenied], counts[onboard.NewlyAllowed], counts[onboard.Unchanged], counts[onboard.Unknown])
+			}
 			if len(r.Tests) > 0 {
 				if len(r.FailingNow) == 0 {
-					fmt.Fprintln(w, "tests: every case behaves as expected under the policies in force")
+					fmt.Fprintf(w, "tests: all %d cases behave as expected under the policies in force\n", len(r.Rows)-targets)
 				} else {
 					fmt.Fprintln(w, "tests: the policies in force get these cases wrong:")
 					for _, f := range r.FailingNow {
@@ -533,7 +539,7 @@ the next create or update would be refused.`,
 				}
 				if len(r.Candidates) > 0 {
 					if len(r.FailingThen) == 0 {
-						fmt.Fprintln(w, "tests: every case behaves as expected under the candidate")
+						fmt.Fprintln(w, "tests: every case behaves as expected under the candidate too")
 					} else {
 						fmt.Fprintln(w, "tests: under the candidate, these cases no longer behave as expected:")
 						for _, f := range r.FailingThen {

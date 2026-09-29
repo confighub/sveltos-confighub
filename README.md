@@ -226,9 +226,14 @@ unable to promote to stage 'test', Variant 'class-test' has ValidationErrors on 
 Before a change or a policy ships, `cub sveltos impact` previews it: each
 cluster's configuration is evaluated under the policies in force and under the
 candidate, in a disposable API server, and each object comes out newly denied,
-newly allowed, unchanged or unknown. On the Meridian slice, lowering prod's
-replica ceiling to 2 was newly denied on all four prod clusters, before
-anything changed.
+newly allowed, unchanged or unknown. The policies can live in ConfigHub, each
+change to them a revision that is previewed, approved and tagged in force, with
+known cases that say what each policy must refuse. On the Meridian slice,
+lowering prod's replica ceiling to 2 was newly denied on all four prod
+clusters, before anything changed. As a view in ConfigHub it could look like
+this (a mock, filled with the real results):
+
+![Mock of a Policy impact view: lowering prod's replica ceiling to 2 is newly denied on the four prod clusters, with the policy revision behind each verdict, a note that nothing running is evicted, and a known case the proposal would now refuse](docs/images/sveltos/sveltos-policy-impact-mock.png)
 
 A policy trigger alone can let a change through while its checker is away.
 In our test that happened at once, not after the six hours ConfigHub

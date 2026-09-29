@@ -172,6 +172,14 @@ cub sveltos check --change-order sveltos-kyverno-base/cost-center --stage test \
 mer-kyverno-eu-central-test1: passed kyverno/10; recorded a Pass (dae879e6-f5bf-453a-ad41-bc5678096878)
 ```
 
+Or judge it with the same sandbox and policies as the preview, with no worker
+(see [the fix, and the gates](#the-fix-and-the-gates)):
+
+```bash
+cub sveltos check --change-order mer-kyverno-base/six-replicas-in-test --stage test \
+  --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force
+```
+
 For each variant the order has reached in the stage, it checks exactly the
 revisions the order marks there. Then it records a Pass, or a rejection that
 holds the release until someone revokes it. It exits non-zero on a failure,
@@ -210,7 +218,14 @@ created. Each object comes out as one of four:
   the requesting user.
 
 Each row names the target, the revision it runs (and, for a proposal, the
-revision it would take), the object, and the policy's own message.
+revision it would take), the object, the policy revision behind the verdict,
+and the API server's own message.
+
+Here is what a policy change's preview could look like inside ConfigHub. This
+is a mock, filled with the real output of `cub sveltos impact --json`
+([docs/mock/policy-impact.html](../mock/policy-impact.html)):
+
+![Mock of a Policy impact view: lowering prod's replica ceiling to 2 is newly denied on the four prod clusters, each row naming the configuration revision it runs and the policy revision, with a note that nothing running is evicted, and one known case, three replicas in prod, that the proposal would now refuse](../images/sveltos/sveltos-policy-impact-mock.png)
 
 **The sandbox.** Any small cluster will do, for example kind:
 
@@ -223,57 +238,182 @@ The policies select each target's stage through the namespace label
 each target. The Meridian example's policies are in
 [examples/meridian-slice/policies](../../examples/meridian-slice/policies).
 
-**A policy change against the fleet.** Lowering prod's replica ceiling from 5
-to 2:
+### Keep the policies in ConfigHub
+
+A policy is configuration too. Put each one in a unit of its own, in a Space
+for policies, and tag the revisions in force:
 
 ```bash
+cub unit create --space mer-policies replica-limits policies/replica-limits.yaml
+cub unit create --space mer-policies disallow-latest-tag policies/disallow-latest-tag.yaml
+cub tag create --space mer-policies in-force
+cub unit tag in-force --space mer-policies --unit replica-limits,disallow-latest-tag
+```
+
+A policy change is then a new revision, like any other change. Preview it,
+have a person approve it, and move the tag to put it in force. A proposal
+nobody adopts is taken back out with `cub unit update --restore`, and the tag
+never moves.
+
+`--policy` and `--candidate` take a policy source:
+
+| Source | Reads |
+| --- | --- |
+| `mer-policies@Tag:in-force` | every unit in the Space at the revision the tag marks; a unit the tag does not mark is not in force |
+| `mer-policies/replica-limits` | the unit's head: usually the proposal |
+| `mer-policies/replica-limits@3` | revision 3 |
+| `policies/replica-limits.yaml` | a file |
+
+### Known cases
+
+The running fleet only shows what runs today. Known cases say what each
+policy must refuse and what it must admit. Each case is an object annotated
+with the stage it meets and the verdict it expects
+([policies/tests.yaml](../../examples/meridian-slice/policies/tests.yaml)):
+
+```yaml
+metadata:
+  name: test-five-replicas
+  annotations:
+    impact.confighub.com/stage: test
+    impact.confighub.com/expect: denied
+```
+
+Keep them in ConfigHub beside the policies, and pass them with `--tests`. A
+case the policies in force get wrong is reported. So is a known-bad case a
+candidate would admit, or a known-good one it would refuse.
+
+### A policy change against the fleet
+
+Lowering prod's replica ceiling from 5 to 2, proposed as revision 3 of
+`replica-limits`:
+
+```bash
+cub function set --space mer-policies --unit replica-limits --change-desc "Proposal: lower prod's replica ceiling to 2" \
+  -- set-yq '(select(.kind == "ConfigMap" and .metadata.name == "replica-limits-prod") | .data.max) = "2"'
 cub sveltos impact --sandbox-kubeconfig sandbox.kubeconfig --component mer-kyverno \
-  --policy policies/replica-limits.yaml --policy policies/disallow-latest-tag.yaml \
-  --candidate policies/candidates/replica-limits-prod-2.yaml
+  --policy mer-policies@Tag:in-force --candidate mer-policies/replica-limits \
+  --tests mer-policies/policy-tests@Tag:in-force
 ```
 
 ```text
-TARGET            STAGE  CONFIG     OBJECT                                   NOW      THEN    VERDICT       WHY
-eu-central-prod1  prod   kyverno@6  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-prod): replicas 3 is above the ceiling of 2 for this class
+policies in force: mer-policies/disallow-latest-tag@2, mer-policies/replica-limits@2
+candidate:         mer-policies/replica-limits@3
+
+TARGET                            STAGE  CONFIG     OBJECT                                   NOW      THEN    VERDICT                         POLICY
+eu-central-prod1                  prod   kyverno@6  Deployment kyverno-admission-controller  allowed  denied  newly denied                    mer-policies/replica-limits@3
 ...
-4 newly denied, 0 newly allowed, 20 unchanged, 0 unknown
+tests/prod-pinned-three-replicas  prod   ...        Deployment prod-pinned-three-replicas    allowed  denied  newly denied (expects allowed)  mer-policies/replica-limits@3
+
+tests: under the candidate, these cases no longer behave as expected:
+  - tests/prod-pinned-three-replicas: expects allowed, and the candidate gives denied
 ```
 
-A ValidatingAdmissionPolicy does not evict what runs. Newly denied means the
+The four prod clusters are newly denied, each at the revision it runs, and a
+known-good case says the proposal also refuses three replicas in prod. A
+ValidatingAdmissionPolicy does not evict what runs: newly denied means the
 cluster's next create or update of that object would be refused.
 
-**A proposed change against each cluster's policies.** Make the change, open
-its change order, and promote it into the class bases only. Then `--next`
-compares what each cluster runs with what its next promotion brings. On the
-Meridian slice, 6 admission controller replicas at the root reach test, whose
-class base does not protect replicas, and test's ceiling is 4. uat and prod
-protect theirs, so nothing changes there:
+### What a weaker policy lets through
+
+Everything running already passes, so the running configurations cannot show
+what a weaker policy would allow. The changes that were refused can.
+`--corpus <space>` adds the revisions ConfigHub recorded as failing a policy,
+and the known cases add the ones you wrote down. Exempting Kyverno's
+controllers from `disallow-latest-tag` newly allows the two root revisions
+that once put the cleanup controller on `:latest`, and the `latest-tag` case
+says the proposal admits what it must refuse. Newly allowed is only as complete
+as the corpus and the cases.
+
+### A proposed change against each cluster's policies
+
+Make the change, open its change order, and promote it into the class bases
+only. Then `--next` compares what each cluster runs with what its next
+promotion brings. On the Meridian slice, 6 admission controller replicas in
+test's class base meet test's ceiling of 4:
 
 ```text
-TARGET            STAGE  CONFIG                                           OBJECT                                   NOW      THEN    VERDICT       WHY
-eu-central-test1  test   kyverno@10 -> mer-kyverno-class-test/kyverno@13  Deployment kyverno-admission-controller  allowed  denied  newly denied  replica-limits (binding replica-limits-test): replicas 6 is above the ceiling of 4 for this class
+TARGET            STAGE  CONFIG                                           OBJECT                                   NOW      THEN    VERDICT       POLICY                         WHY
+eu-central-test1  test   kyverno@10 -> mer-kyverno-class-test/kyverno@15  Deployment kyverno-admission-controller  allowed  denied  newly denied  mer-policies/replica-limits@2  replica-limits (binding replica-limits-test): replicas 6 is above the ceiling of 4 for this class
+
 1 newly denied, 0 newly allowed, 23 unchanged, 0 unknown
 ```
 
-**What a weaker policy lets through.** Everything running already passes, so
-the running configurations cannot show what a weaker policy would allow. The
-changes that were refused can. `--corpus <space>` adds the revisions ConfigHub
-recorded as failing a policy. Exempting Kyverno's controllers from
-`disallow-latest-tag` newly allows the two revisions that once put the cleanup
-controller on `:latest`. Newly allowed is only as complete as the corpus: add
-policy tests or proposed changes for anything the history does not hold.
+With `--candidate` as well, `--next` previews the change and a policy change
+together: each cluster's next promotion under the proposed policies.
 
-**Unknown.** A policy that reads the requesting user (`request.userInfo`), the
-previous object (`oldObject`), the namespace object, or the authorizer cannot
-be judged from configuration. The row says so and names what is missing.
+### An assistant explains, and a person decides
 
-**One thing measured in the sandbox:** on Kubernetes v1.35, once a
-ValidatingAdmissionPolicy is deleted, the parameters its successors read stay
-as they were until the API server restarts. So the tool applies policies in
-place, removes only a policy neither set has, and says when it did. If a
-result looks wrong after that, restart the sandbox's API server
-(`docker restart <sandbox>-control-plane` for kind) and run again.
+[`explain/explain.sh`](../../examples/meridian-slice/explain/explain.sh) gives
+the results, as `--json`, to an assistant (Claude Code in print mode), which
+may read ConfigHub with read-only `cub` commands. Its fixed prompt
+([prompt.md](../../examples/meridian-slice/explain/prompt.md)) asks it to
+explain why the targets differ, group the causes, name the smallest correction
+per target, and compare three ways out: fix the application, correct the
+policy, or ask for an exception. It makes no verdict and approves nothing.
+
+On the Meridian proposal it found that test was already at its ceiling, and
+warned that raising the policy would put test's ceiling above prod's
+([its answer, as written](../../examples/meridian-slice/explain/explain-2026-09-29.md)).
+
+### The fix, and the gates
+
+The person chose to correct the policy, deliberately: test is where replica
+counts are tried before prod. That is a new revision of `replica-limits`,
+previewed together with the proposal (nothing newly denied; five and six
+replicas become allowed in test, seven are still refused), with the known case
+changed in the same proposal. It was approved and tagged:
+
+```bash
+cub attestation create --space mer-policies --where "Slug = 'replica-limits'" --type Approval --note "..."
+cub unit tag in-force --space mer-policies --unit replica-limits,policy-tests
+```
+
+Then the change went through the gates, and `cub sveltos check` judged it with
+the same sandbox and the policies in force, rather than a worker function:
+
+```bash
+cub sveltos check --change-order mer-kyverno-base/six-replicas-in-test --stage test \
+  --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force
+```
+
+```text
+mer-kyverno-eu-central-test1: passed kyverno/11; recorded a Pass (c6d95ef1-5489-46c6-aec3-a8ddbf177539)
+```
+
+The PolicyCheck it records names the policy revisions it was judged by
+(`check.confighub.com/policies=mer-policies/disallow-latest-tag@2,mer-policies/replica-limits@5`),
+so the change is released under exactly the policies it was previewed against.
+With a person's approval the release was published, and two minutes later
+eu-central-test1 ran 6 admission controller replicas, 6 of 6 ready. uat and
+prod protect their replicas, so the order brought nothing new there, and it
+ended `Completed`, `Released`.
+
+### Unknown
+
+A policy that reads the requesting user (`request.userInfo`), the previous
+object (`oldObject`), the namespace object, or the authorizer cannot be judged
+from configuration. The row says so and names what is missing. Proposed as a
+new unit, `platform-team-only` came out unknown on all 24 objects it matches.
+
+### Measured, and worth knowing
+
+- **A deleted policy's successors can read stale parameters.** On Kubernetes
+  v1.35, once a ValidatingAdmissionPolicy is deleted, the parameters its
+  successors read stay as they were until the API server restarts. So the tool
+  applies policies in place, removes only a policy neither set has, and says
+  when it did. If a result looks wrong after that, restart the sandbox's API
+  server (`docker restart <sandbox>-control-plane` for kind) and run again.
+- **A demote leaves a unit counted as upgraded.** A proposal of 6 replicas at
+  the root, given up with `cub variant demote` on 28 September, was proposed
+  again a day later. Test's class base did not take it: the demote had
+  restored its data, but it stayed counted as upgraded to the old proposal, so
+  the new one was no change to it. Check a promotion's result before
+  previewing, or make the change where it lands.
 
 Recorded on the Meridian slice:
-[impact-2026-09-28.log](../../examples/meridian-slice/impact-2026-09-28.log).
-The same preview inside ConfigHub itself is confighubai/confighub#5325.
+[demo-2026-09-29.log](../../examples/meridian-slice/demo-2026-09-29.log) (policies in
+ConfigHub, known cases, the assistant, and the fix through the gates) and
+[impact-2026-09-28.log](../../examples/meridian-slice/impact-2026-09-28.log)
+(policies as files). The same preview inside ConfigHub itself is
+confighubai/confighub#5325.
