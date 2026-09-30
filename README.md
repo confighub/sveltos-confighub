@@ -465,8 +465,10 @@ cluster: `npm run verify` and `go test ./...`.
 - [Check every change against your policies](docs/user/policy-checks.md):
   Kyverno before anything ships, the two gates, and what happens when the
   checker is away.
-- [What's new](docs/whats-new.md): what 0.5, 0.6 and 0.7 changed, and how to
-  move from 0.4.
+- [Known behaviours](docs/user/known-behaviours.md): what we measured in
+  ConfigHub and Sveltos that you will meet, and what to do about each.
+- [What's new](docs/whats-new.md): what each version changed, from 0.1 to
+  0.10, and how to move from 0.4.
 - [chartrender](chartrender/README.md): the chart rules, as a Go package for
   other tools.
 - [Before 0.5](docs/chapters.md): how this integration worked before it
@@ -480,3 +482,6 @@ run in a production fleet yet.
 To stop a rollout part-way, abort its change order, then undo it in each Space
 it reached with `cub variant demote`. There is no single command that does
 this across the fleet yet.
+
+[Known behaviours](docs/user/known-behaviours.md) lists what we measured in
+ConfigHub and Sveltos that you will meet, and what to do about each.
