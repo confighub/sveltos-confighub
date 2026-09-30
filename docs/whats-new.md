@@ -351,3 +351,64 @@ releases cannot read the gzipped layers ConfigHub's gateway serves.
 | [Onboarding example](../examples/onboard/README.md) | Three live label-selector profiles (Kyverno, its policies, ingress-nginx) handed over with nothing reinstalled. Kyverno 3.8.2 and 4 replicas in one change order, staging before prod. A joining cluster gets both. |
 | [The GPU operator](../examples/gpu-operator/README.md) | NVIDIA's operator on exactly the clusters approved for it; a mislabel ships nothing. The driver upgrade reaches staging first, and review lists the ClusterPolicy's `spec.driver.version` and what the chart changed besides. |
 | [A slice of Meridian](../examples/meridian-slice/README.md) | Three profiles, one per class, become a root base, three class bases and four deployments. One root change reaches every class, and uat and prod keep their replicas. Recorded on 0.5.1, with the handover's checks. A cluster that joins is proposed by `cub sveltos watch` and ships once approved, recorded on 0.6.0. |
+
+## 0.4.0, 2026-09-27
+
+**Class bases: `--class-label <label>`.** A middle level between each base and
+its clusters: one class base per value of a cluster label (Meridian's test,
+uat and prod), each a variant of the root base, and each cluster's variant
+cloned from its class base.
+- Profiles that each pin one class and otherwise install the same charts become
+  one component. Each class base departs in exactly what its profile differs in.
+- The rollout workflow gains a first stage, `bases`, which carries a change into
+  the class bases without releasing it.
+- Spaces carry the labels `Component`, `Role` (base or deployment) and
+  `Cluster`.
+
+Recorded on kind with a slice of Meridian: Kyverno 3.8.1 to 3.8.2 went root,
+class bases, then test, uat and prod in order, and each class kept its
+replicas. In this version a base still held each Sveltos ClusterProfile, with a
+chart's settings as a Helm values string; 0.5 replaced that.
+
+## 0.3.0, 2026-09-27
+
+**The GPU operator, on exactly the clusters approved for it**
+([the example](../examples/gpu-operator/README.md)).
+- Labelling a new cluster ships nothing by itself: planning again proposes its
+  variant, and it ships once released.
+- A mislabelled cluster gets nothing.
+- An operator and driver upgrade reached staging first; prod was refused until
+  then.
+- kind has no GPUs, so no driver runs there.
+
+**Fix:** a cluster joining a stage the workflow did not have could not be
+promoted. `apply.sh` now adds only the missing stages, and keeps approval
+settings made in ConfigHub since.
+
+## 0.2.0, 2026-09-27
+
+**Kyverno policies come into ConfigHub with their profile.**
+- Each ConfigMap a profile's `policyRefs` names becomes a unit beside the
+  profile, and each variant gets its own copy.
+- A ConfigMap missing from the input is named, with the `kubectl` command to
+  export it.
+- `takeover.sh` (`handover.sh` from 0.5) names the original ConfigMap as no
+  longer read.
+
+Recorded on kind: a policy change from Audit to Enforce reached staging first.
+A `:latest` pod was refused on staging and admitted on prod, until prod's own
+approval and release.
+
+## 0.1.0, 2026-09-27
+
+**The first release as a `cub` plugin:** `cub plugin install
+confighub/sveltos-confighub`.
+- **`cub sveltos plan`** reads your ClusterProfiles and clusters, and shows
+  what ConfigHub would hold. It changes nothing.
+- **`cub sveltos apply`** writes the files and a script, `apply.sh`, to read and
+  then run, and `takeover.sh` for live profiles.
+- Each profile became a base with a variant per cluster, each bound to a Target
+  and released stage by stage, and Sveltos delivered each variant's release.
+
+Tested live: a `podinfo` profile went through plan, apply, `apply.sh` and
+`takeover.sh`, and its Helm release stayed at revision 1 with the same pod.
