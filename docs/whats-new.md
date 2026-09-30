@@ -47,6 +47,13 @@ still said `Provisioned`
 The check needs Sveltos's ClusterHealthCheck installed; without it, `apply.sh`
 says so and goes on. See [live status](user/onboard-your-sveltos-fleet.md#live-status-in-confighub).
 
+**Each cluster's facts on its Target: `cub sveltos facts`** (part of #39). For
+every cluster Sveltos manages, it runs `cub k8s collect` through the
+kubeconfig Sveltos reaches the cluster with, and stores the facts on the
+cluster's Target: its Kubernetes version, CRDs, and storage and ingress
+classes. `apply.sh` runs it after making the Targets, and goes on if a cluster
+cannot be reached. Measured on the Meridian slice: all seven Targets.
+
 ## 0.9.0, 2026-09-30
 
 **Policies held in ConfigHub, known cases, and one judge for preview and gate.**
