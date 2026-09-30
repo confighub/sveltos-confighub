@@ -1,0 +1,43 @@
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: mgmt
+  namespace: mgmt
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: SveltosCluster
+metadata:
+  name: demo-prod
+  namespace: fleet
+  labels:
+    env: prod
+---
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: demo-policy
+spec:
+  clusterSelector:
+    matchLabels:
+      env: prod
+  policyRefs:
+    - kind: ConfigMap
+      namespace: default
+      name: demo-policy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-policy
+  namespace: default
+data:
+  policy.yaml: |
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: deny-ingress
+      namespace: default
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+      ingress: []

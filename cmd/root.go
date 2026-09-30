@@ -143,6 +143,7 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 	}
 
 	var pf planFlags
+	var planFormat string
 	plan := &cobra.Command{
 		Use:   "plan <input.yaml|-> [more inputs]",
 		Short: "Show the fleet ConfigHub would govern; changes nothing",
@@ -156,7 +157,18 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 			if err != nil {
 				return err
 			}
-			fmt.Fprint(c.OutOrStdout(), onboard.RenderPlan(p, true))
+			switch planFormat {
+			case "ascii":
+				fmt.Fprint(c.OutOrStdout(), onboard.RenderPlan(p, true))
+			case "json":
+				data, err := onboard.BuildPreview(docs, p, time.Now(), Version(), pf.options())
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(c.OutOrStdout(), string(data))
+			default:
+				return fmt.Errorf("unknown plan format %q (want ascii or json)", planFormat)
+			}
 			if len(p.Problems) > 0 {
 				return errProblems{}
 			}
@@ -164,6 +176,7 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 		},
 	}
 	pf.register(plan)
+	plan.Flags().StringVar(&planFormat, "format", "ascii", "output format: ascii or json")
 
 	var af planFlags
 	var out string
@@ -627,7 +640,7 @@ kubeconfig that reaches it at <dir>/<cluster>.kubeconfig, with --kubeconfigs.`,
 	factsCmd.Flags().StringVar(&fo.KubeconfigDir, "kubeconfigs", "", "a directory of <cluster>.kubeconfig files for clusters only the management cluster reaches")
 	factsCmd.Flags().BoolVar(&fo.DryRun, "dry-run", false, "print the facts and store nothing")
 
-	root.AddCommand(plan, apply, compare, status, watchCmd, checkCmd, impactCmd, factsCmd, versionCmd)
+	root.AddCommand(plan, apply, compare, status, watchCmd, checkCmd, impactCmd, factsCmd, newUICommand(), versionCmd)
 	return root
 }
 
