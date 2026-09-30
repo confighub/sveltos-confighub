@@ -8,7 +8,9 @@ that joins for a person to approve. Version 0.7 checks every change against
 your policies before it ships. Version 0.8 previews what a change, or a new
 policy, would do to each cluster. Version 0.9 keeps the policies themselves in
 ConfigHub, with known cases, and checks each change by the same policies it was
-previewed against.
+previewed against. Version 0.10 watches each cluster's health after every
+release too, can deliver the management cluster's record from ConfigHub, and
+stores each cluster's facts on its Target.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -19,7 +21,7 @@ previewed against.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## Unreleased
+## 0.10.0, 2026-09-30
 
 **The management cluster's record, delivered from ConfigHub** (#81), with
 `--management-release`. The management Space publishes releases, and one root
