@@ -99,15 +99,26 @@ awaits() { [ -z "$waiting" ] || [ "$waitfor" != approval ] || echo "$1 waits for
 # With PROPOSE_ONLY, only those whose variant has a release; the others
 # follow on the run after their release is approved.
 deliver() {
-  local file=management/$1.yaml s; shift
-  [ -n "${PROPOSE_ONLY:-}" ] || { k apply -f "$file"; return; }
-  for s in "$@"; do
-    if released "$s"; then
-      k apply -f "$file" -l "sveltos.confighub.com/variant=$s"
-    else
-      echo "$s has no release yet, so its delivery profile waits"
-    fi
-  done
+  local file=management/$1.yaml health=management/$1-health.yaml s; shift
+  if [ -z "${PROPOSE_ONLY:-}" ]; then
+    k apply -f "$file"
+  else
+    for s in "$@"; do
+      if released "$s"; then
+        k apply -f "$file" -l "sveltos.confighub.com/variant=$s"
+      else
+        echo "$s has no release yet, so its delivery profile waits"
+      fi
+    done
+  fi
+  watch_health "$health"
+}
+# watch_health <file>: the profile's continuous health check, which Sveltos
+# runs on its clusters all the time. A management cluster without Sveltos's
+# health checks installed goes on without it.
+watch_health() {
+  [ -f "$1" ] || return 0
+  k apply -f "$1" || echo "Sveltos's ClusterHealthCheck is not installed here, so health is checked only when Sveltos deploys"
 }
 
 step "0/6 Check before changing anything"
@@ -173,8 +184,12 @@ cub component create sveltos-management --allow-exists --quiet
 cub space create sveltos-management --component sveltos-management --allow-exists --quiet
 cub unit create --space sveltos-management delivery-ingress-nginx management/ingress-nginx.yaml --target sveltos-targets/mgmt --change-desc 'The profiles that deliver each ingress-nginx variant'\''s releases to its cluster' --allow-exists --quiet
 cub unit update --space sveltos-management delivery-ingress-nginx management/ingress-nginx.yaml --change-desc 'The delivery profiles for every ingress-nginx variant this plan holds' --quiet
+cub unit create --space sveltos-management health-ingress-nginx management/ingress-nginx-health.yaml --target sveltos-targets/mgmt --change-desc 'The continuous health check for the ingress-nginx profile'\''s clusters' --allow-exists --quiet
+cub unit update --space sveltos-management health-ingress-nginx management/ingress-nginx-health.yaml --change-desc 'The continuous health check for the ingress-nginx profile'\''s clusters' --quiet
 cub unit create --space sveltos-management delivery-kyverno management/kyverno.yaml --target sveltos-targets/mgmt --change-desc 'The profiles that deliver each kyverno variant'\''s releases to its cluster' --allow-exists --quiet
 cub unit update --space sveltos-management delivery-kyverno management/kyverno.yaml --change-desc 'The delivery profiles for every kyverno variant this plan holds' --quiet
+cub unit create --space sveltos-management health-kyverno management/kyverno-health.yaml --target sveltos-targets/mgmt --change-desc 'The continuous health check for the kyverno profile'\''s clusters' --allow-exists --quiet
+cub unit update --space sveltos-management health-kyverno management/kyverno-health.yaml --change-desc 'The continuous health check for the kyverno profile'\''s clusters' --quiet
 cub unit create --space sveltos-management delivery-kyverno-policies management/kyverno-policies.yaml --target sveltos-targets/mgmt --change-desc 'The profiles that deliver each kyverno-policies variant'\''s releases to its cluster' --allow-exists --quiet
 cub unit update --space sveltos-management delivery-kyverno-policies management/kyverno-policies.yaml --change-desc 'The delivery profiles for every kyverno-policies variant this plan holds' --quiet
 

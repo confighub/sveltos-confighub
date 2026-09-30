@@ -122,6 +122,10 @@ func ReportStatus(run Runner, opts StatusOptions) ([]StatusReport, error) {
 		name := str(obj(obj(s["metadata"])["labels"])["projectsveltos.io/cluster-profile-name"])
 		byProfile[name] = s
 	}
+	watched, err := watchedHealth(kubectl)
+	if err != nil {
+		return nil, err
+	}
 
 	var reports []StatusReport
 	for _, p := range profiles.Items {
@@ -143,6 +147,10 @@ func ReportStatus(run Runner, opts StatusOptions) ([]StatusReport, error) {
 		}
 		checked := len(list(obj(p["spec"])["validateHealths"])) > 0
 		report.Status = liveStatus(name, summary, releases, checked, now())
+		cluster := str(obj(summary["spec"])["clusterNamespace"]) + "/" + report.Cluster
+		if w, ok := watched[watchingProfile(watched, name)][cluster]; ok {
+			report.Status = w.apply(report.Status, appliedAt(summary))
+		}
 		if err := writeStatus(run, &report, opts, now()); err != nil {
 			return nil, fmt.Errorf("%s: %w", space, err)
 		}
@@ -243,6 +251,119 @@ func liveStatus(profile string, summary map[string]any, releases []release, chec
 			s.HealthStatus = "Unknown"
 			s.Message = "applied; this delivery profile has no health checks, so Sveltos does not wait for its workloads"
 		}
+	}
+	return s
+}
+
+// watch is what a profile's ClusterHealthCheck last said about one cluster.
+type watch struct {
+	check      string
+	conditions []any
+}
+
+// watchedHealth reads the ClusterHealthChecks that watch profiles, by the
+// profile they watch and the cluster, as <namespace>/<name>. A management
+// cluster without Sveltos's health checks installed has none.
+func watchedHealth(kubectl func(args ...string) ([]byte, error)) (map[string]map[string]watch, error) {
+	out := map[string]map[string]watch{}
+	data, err := kubectl("get", "clusterhealthchecks", "-o", "json")
+	if err != nil {
+		if strings.Contains(err.Error(), "doesn't have a resource type") {
+			return out, nil
+		}
+		return nil, fmt.Errorf("reading the ClusterHealthChecks: %w", err)
+	}
+	var checks struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(data, &checks); err != nil {
+		return nil, fmt.Errorf("reading the ClusterHealthChecks: %w", err)
+	}
+	for _, c := range checks.Items {
+		profile := str(obj(obj(c["metadata"])["labels"])[ProfileLabel])
+		if profile == "" {
+			continue
+		}
+		for _, cc := range list(obj(c["status"])["clusterCondition"]) {
+			ref := obj(obj(obj(cc)["clusterInfo"])["cluster"])
+			if out[profile] == nil {
+				out[profile] = map[string]watch{}
+			}
+			out[profile][str(ref["namespace"])+"/"+str(ref["name"])] = watch{check: str(obj(c["metadata"])["name"]), conditions: list(obj(cc)["conditions"])}
+		}
+	}
+	return out, nil
+}
+
+// watchingProfile is the profile a delivery profile belongs to: delivery
+// profiles are named <profile>-<cluster>, and the longest profile name that
+// prefixes it is the one.
+func watchingProfile(watched map[string]map[string]watch, deliveryProfile string) string {
+	best := ""
+	for p := range watched {
+		if strings.HasPrefix(deliveryProfile, p+"-") && len(p) > len(best) {
+			best = p
+		}
+	}
+	return best
+}
+
+// appliedAt is when Sveltos last applied every feature of a profile: the
+// earliest of their last-applied times.
+func appliedAt(summary map[string]any) time.Time {
+	var applied time.Time
+	for _, f := range list(obj(summary["status"])["featureSummaries"]) {
+		t, err := time.Parse(time.RFC3339, str(obj(f)["lastAppliedTime"]))
+		if err == nil && (applied.IsZero() || t.Before(applied)) {
+			applied = t
+		}
+	}
+	return applied
+}
+
+var spaces = regexp.MustCompile(`\s+`)
+
+// apply lets the continuous check speak for health once the latest release is
+// applied: Degraded, naming what failed, when a workload has stopped being
+// healthy since, Progressing while one rolls out, and Healthy when Sveltos's
+// apply-time checks were missing and the check passes. A failure the check
+// saw before the release was applied is stale, since Sveltos's own checks
+// passed at apply. While a release is on its way, Sveltos's reading stands.
+func (w watch) apply(s LiveStatus, applied time.Time) LiveStatus {
+	if s.SyncStatus != "Synced" {
+		return s
+	}
+	failing, passing := "", false
+	for _, c := range w.conditions {
+		c := obj(c)
+		if !strings.HasPrefix(str(c["type"]), "HealthCheck") {
+			continue
+		}
+		switch str(c["status"]) {
+		case "True":
+			passing = true
+		case "False":
+			if at, err := time.Parse(time.RFC3339, str(c["lastTransitionTime"])); err == nil && !applied.IsZero() && at.Before(applied) {
+				continue
+			}
+			if failing == "" {
+				failing = strings.TrimSpace(spaces.ReplaceAllString(str(c["message"]), " "))
+				if failing == "" {
+					failing = "a workload is not healthy"
+				}
+			}
+		}
+	}
+	switch {
+	case failing != "":
+		s.HealthStatus = "Degraded"
+		if strings.Contains(failing, "status is Progressing") && !strings.Contains(failing, "status is Degraded") {
+			s.HealthStatus = "Progressing"
+		}
+		s.Message = clip(fmt.Sprintf("ClusterHealthCheck %s: %s", w.check, failing))
+	case passing && s.HealthStatus == "Unknown":
+		s.HealthStatus = "Healthy"
+		s.Message = "watched by ClusterHealthCheck " + w.check
 	}
 	return s
 }

@@ -525,18 +525,47 @@ It writes a reading only when it changes, or when the one ConfigHub holds is
 older than `--refresh` (ten minutes by default). A refreshed reading has a new
 time, but the health checks did not run again.
 
-**Health comes from Sveltos.** Each delivery profile carries
-`validateHealths` for the workloads its charts deliver, named one by one, and
-Sveltos reports the profile `Provisioned` only once they are available.
-Sveltos checks this when it applies a release, not continuously. Measured on
-kind: a Deployment that went down after its release was applied still showed
-as healthy. The Sveltos project confirms it: these checks are like Helm's
-post-install and post-upgrade hooks. So Healthy means that the release came up
-healthy. Sveltos's ClusterHealthCheck watches continuously; reading it is
-[#71](https://github.com/confighub/sveltos-confighub/issues/71). A delivery
-profile written by 0.5 or earlier has no health checks, and `status` says so,
-with health `Unknown`. Run `apply` again and apply the new
-`management/<profile>.yaml` to add them.
+**Health comes from Sveltos, when it deploys and after.** Each delivery
+profile carries `validateHealths` for the workloads its charts deliver, named
+one by one, and Sveltos reports the profile `Provisioned` only once they are
+available. Sveltos checks this when it applies a release, not afterwards: the
+Sveltos project confirms these checks are like Helm's post-install and
+post-upgrade hooks.
+
+So `apply` also writes a continuous check for each profile, in
+`management/<profile>-health.yaml`, which `apply.sh` applies after the
+delivery profiles and ConfigHub holds in the management record:
+- a **HealthCheck** that judges the Deployments, StatefulSets and DaemonSets
+  the profile delivers, named one by one: Progressing while one rolls out,
+  Degraded once too few of its pods are available;
+- a **ClusterHealthCheck** that runs it on the profile's clusters all the time,
+  and emits a Kubernetes event when a cluster's health changes.
+
+`status` reads each cluster's condition from the ClusterHealthCheck. A
+workload that goes down after its release was applied turns the cluster
+Degraded, naming it, while its release stays Synced; it turns Healthy again
+when the workload recovers. ConfigHub's `Healthy` gate then holds the next
+stage while a cluster is Degraded. Measured on the Meridian slice
+([health-2026-09-30.log](../../examples/meridian-slice/health-2026-09-30.log)):
+- a Kyverno controller stopped on test1 after its release was reported in 37
+  seconds, naming it, and its recovery 46 seconds after it came back, while
+  Sveltos still reported the profile `Provisioned`;
+- later that morning, with the laptop overloaded, Kyverno's pods began
+  restarting on their own. The check found it on all six clusters, which
+  `status` had reported Synced and Healthy minutes before.
+
+Sveltos's other liveness type, `Addons`, stayed passing throughout: it follows
+what Sveltos deployed, not whether it is running.
+
+A ClusterHealthCheck chooses clusters by label only, while a delivery profile
+names its one cluster. So the check selects by the profile's own labels, with
+every class of a component (for Meridian, `class In (test, uat, prod)`). A
+profile that names its clusters by `clusterRefs` is checked on every cluster
+Sveltos manages; a cluster without its workloads passes.
+
+A delivery profile written by 0.5 or earlier has no apply-time checks, and
+`status` says so, with health `Unknown` unless a continuous check covers it.
+Run `apply` again and apply the new `management/<profile>.yaml` to add both.
 
 **ConfigHub can gate a rollout on it.** A stage in the change workflow can
 list `Healthy` among its prerequisites. ConfigHub then refuses to promote

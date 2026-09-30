@@ -1,0 +1,57 @@
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: HealthCheck
+metadata:
+  name: sveltos-ingress-nginx
+  labels:
+    sveltos.confighub.com/profile: ingress-nginx
+spec:
+  resourceSelectors:
+    - group: apps
+      version: v1
+      kind: Deployment
+      namespace: ingress-nginx
+  evaluateHealth: |
+    function evaluate()
+      local hs = {}
+      hs.resources = {}
+      local delivered = {
+        ["Deployment/ingress-nginx/ingress-nginx-controller"] = true,
+      }
+      for _, obj in ipairs(resources) do
+        if delivered[obj.kind .. "/" .. (obj.metadata.namespace or "") .. "/" .. obj.metadata.name] then
+          local status, message = "Healthy", ""
+          if obj.kind == "Deployment" then
+            local want = obj.spec.replicas or 1
+            local st = obj.status or {}
+            if (st.observedGeneration or 0) < (obj.metadata.generation or 0) or (st.updatedReplicas or 0) < want then
+              status, message = "Progressing", obj.metadata.name .. ": rolling out"
+            elseif (st.availableReplicas or 0) < want then
+              status, message = "Degraded", obj.metadata.name .. ": " .. (st.availableReplicas or 0) .. " of " .. want .. " available"
+            end
+          end
+          table.insert(hs.resources, {resource = obj, status = status, message = message})
+        end
+      end
+      return hs
+    end
+---
+apiVersion: lib.projectsveltos.io/v1beta1
+kind: ClusterHealthCheck
+metadata:
+  name: sveltos-ingress-nginx
+  labels:
+    sveltos.confighub.com/profile: ingress-nginx
+spec:
+  clusterSelector:
+    matchLabels:
+      env: prod
+  livenessChecks:
+    - name: workloads
+      type: HealthCheck
+      livenessSourceRef:
+        apiVersion: lib.projectsveltos.io/v1beta1
+        kind: HealthCheck
+        name: sveltos-ingress-nginx
+  notifications:
+    - name: events
+      type: KubernetesEvent

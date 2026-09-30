@@ -28,6 +28,7 @@ kyverno-policies  (selects env In [staging, prod])
 
 Management cluster mgmt/mgmt
   record   sveltos-management  one delivery profile per variant (8): each sends its variant's releases to its one cluster
+  health   a ClusterHealthCheck per profile (2): watches the workloads it delivers on its clusters, after each release too
 
 Not onboarded
   cluster dev-1: no profile selects it

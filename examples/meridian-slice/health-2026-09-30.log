@@ -1,0 +1,149 @@
+# Continuous health on the Meridian slice (#71), 30 September 2026.
+# kind, stock Sveltos v1.15.0, ConfigHub. `cub sveltos` built from this
+# repository after v0.9.0.
+#
+# Sveltos runs a delivery profile's validateHealths only when it deploys. A
+# HealthCheck and a ClusterHealthCheck keep watching: part A measured that
+# with a hand-written check, and part B with the one `cub sveltos apply` now
+# writes, read by `cub sveltos status`.
+#
+# Part A was run by hand at 07:02 to 07:08 and is transcribed here from its
+# output. Part B is the recording as captured. During part B the laptop ran
+# sixteen kind clusters at a load average of 18 on 18 cores, and Kyverno's
+# pods on the Meridian clusters were restarting on their own ("unable to
+# apply cgroup configuration"). The check found that too, which is why test1
+# had not recovered by the end of part B.
+
+== A. A probe: one HealthCheck for Kyverno's Deployments, on the six clusters (07:02:16)
+-- The first attempt returned each resource's health under healthStatus, as
+-- the HealthCheck field's description says. Sveltos's agent refused every
+-- report: 'spec.resourceStatuses[0].healthStatus: Unsupported value: ""'.
+-- The agent reads the key status; with it, all six clusters passed:
+eu-central-prod1: kyverno-workloads=True, addons=True
+eu-central-prod2: kyverno-workloads=True, addons=True
+eu-central-prod3: kyverno-workloads=True, addons=True
+eu-central-prod4: kyverno-workloads=True, addons=True
+eu-central-test1: kyverno-workloads=True, addons=True
+eu-central-uat1: kyverno-workloads=True, addons=True
+-- 07:06:06 test1's node cordoned, and the cleanup controller's pod deleted, so its replacement stays Pending
+-- 07:06:43, 37s later, on eu-central-test1:
+kyverno-workloads=False: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available
+addons=True
+-- the ClusterSummary: kyverno-eu-central-test1-sveltos-eu-central-test1 Provisioned
+-- the Addons liveness check stays True: it follows what Sveltos deployed, not whether it is running
+-- 07:06:55 the node uncordoned
+-- 07:07:41, 46s later: kyverno-workloads=True, addons=True
+-- Kubernetes events from the ClusterHealthCheck: Warning on eu-central-test1 when it failed, Normal when it recovered
+
+== B. The check cub sveltos apply writes, read by cub sveltos status
+
+== 0. Before: each delivery profile checks health only when Sveltos deploys (07:31:50)
+$ cub sveltos status --context kind-mer-mgmt
+CLUSTER           SPACE                         SYNC    HEALTH   REVISION             WRITTEN  MESSAGE
+eu-central-prod1  mer-kyverno-eu-central-prod1  Synced  Healthy  sha256:a539b34b4f06  yes      
+eu-central-prod2  mer-kyverno-eu-central-prod2  Synced  Healthy  sha256:2a9f8af8d12c  yes      
+eu-central-prod3  mer-kyverno-eu-central-prod3  Synced  Healthy  sha256:e71e2320987f  yes      
+eu-central-prod4  mer-kyverno-eu-central-prod4  Synced  Healthy  sha256:b61151227eca  yes      
+eu-central-test1  mer-kyverno-eu-central-test1  Synced  Healthy  sha256:3cd288e11479  yes      
+eu-central-uat1   mer-kyverno-eu-central-uat1   Synced  Healthy  sha256:c7a666bbe28b  yes      
+
+== 1. Plan again with this build: a HealthCheck and a ClusterHealthCheck for the kyverno profile (07:32:13)
+$ cub sveltos apply onboard-watch/profiles.yaml clusters-now.yaml --class-label class --stage-label class --stages test,uat,prod --prefix mer --out onboard-ch
+Onboarding plan: 1 component made from 3 profiles over 6 clusters, one variant per cluster per component (6 variants).
+Nothing has changed. This is what ConfigHub would hold.
+
+kyverno  (selects one profile per class: prod, test, uat)
+  base     mer-kyverno-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno  chart kyverno 3.8.1 from https://kyverno.github.io/kyverno: 70 objects (22 CRDs)
+  class    prod         mer-kyverno-class-prod  from profile kyverno-prod; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
+  class    test         mer-kyverno-class-test  from profile kyverno-test; the same as the base
+  class    uat          mer-kyverno-class-uat  from profile kyverno-uat; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
+  stage test
+    eu-central-test1 variant mer-kyverno-eu-central-test1 (class test)  ->  Target mer-targets/eu-central-test1
+  stage uat
+    eu-central-uat1  variant mer-kyverno-eu-central-uat1 (class uat)  ->  Target mer-targets/eu-central-uat1
+  stage prod
+    eu-central-prod1 variant mer-kyverno-eu-central-prod1 (class prod)  ->  Target mer-targets/eu-central-prod1
+    eu-central-prod2 variant mer-kyverno-eu-central-prod2 (class prod)  ->  Target mer-targets/eu-central-prod2
+    eu-central-prod3 variant mer-kyverno-eu-central-prod3 (class prod)  ->  Target mer-targets/eu-central-prod3
+    eu-central-prod4 variant mer-kyverno-eu-central-prod4 (class prod)  ->  Target mer-targets/eu-central-prod4
+
+Management cluster mgmt/mgmt
+  record   mer-management  one delivery profile per variant (6): each sends its variant's releases to its one cluster
+  health   a ClusterHealthCheck per profile (1): watches the workloads it delivers on its clusters, after each release too
+
+In ConfigHub
+  7 Targets in mer-targets, one per cluster, on a server-hosted worker
+  1 component, each one base, 3 class bases, 6 variants, 1 management record
+  12 Spaces and 9 Links, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
+  first rollout: kyverno in 3 stages after its class bases; one approval per stage, one release per variant
+
+Note: kyverno-test's chart kyverno has 11 Helm hooks for upgrade, delete or test, among them Jobs kyverno-migrate-resources, kyverno-rm-webhooks, kyverno-scale-to-zero. They are left out, as cub helm leaves them out, because only Helm runs them.
+
+Wrote onboard-ch/apply.sh and the files it reads. Read it, then run it:
+  MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard-ch/apply.sh
+$ grep -E '^  (record|health) ' onboard-ch/plan.txt
+  record   mer-management  one delivery profile per variant (6): each sends its variant's releases to its one cluster
+  health   a ClusterHealthCheck per profile (1): watches the workloads it delivers on its clusters, after each release too
+-- the six delivery profiles are unchanged; only the two health objects are new
+$ sh -c "yq 'select(.kind == \"HealthCheck\" or .kind == \"ClusterHealthCheck\")' onboard-ch/management/kyverno.yaml | kubectl --context kind-mer-mgmt apply -f -"
+healthcheck.lib.projectsveltos.io/mer-kyverno created
+clusterhealthcheck.lib.projectsveltos.io/mer-kyverno created
+-- 07:36:24 clusters whose check passes: 3 of 6
+$ sh -c "kubectl --context kind-mer-mgmt get clusterhealthcheck mer-kyverno -o json | jq -r '.status.clusterCondition[] | .clusterInfo.cluster.name + \": \" + ([.conditions[] | .name + \"=\" + .status] | join(\", \"))'"
+eu-central-prod4: workloads=True
+eu-central-test1: workloads=True
+eu-central-uat1: workloads=False
+eu-central-prod1: workloads=False
+eu-central-prod2: workloads=True
+eu-central-prod3: workloads=False
+$ cub sveltos status --context kind-mer-mgmt
+CLUSTER           SPACE                         SYNC    HEALTH    REVISION             WRITTEN    MESSAGE
+eu-central-prod1  mer-kyverno-eu-central-prod1  Synced  Degraded  sha256:a539b34b4f06  yes        ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-admission-controller status is Degraded Message: kyverno-admission-controller: 2 of 3 available Deployment: kyverno/kyverno-background-controller status is Degraded Message: kyverno-background-controller: 0 of 1 available Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 avail...
+eu-central-prod2  mer-kyverno-eu-central-prod2  Synced  Healthy   sha256:2a9f8af8d12c  unchanged  
+eu-central-prod3  mer-kyverno-eu-central-prod3  Synced  Degraded  sha256:e71e2320987f  yes        ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available Deployment: kyverno/kyverno-admission-controller status is Degraded Message: kyverno-admission-controller: 2 of 3 available
+eu-central-prod4  mer-kyverno-eu-central-prod4  Synced  Healthy   sha256:b61151227eca  unchanged  
+eu-central-test1  mer-kyverno-eu-central-test1  Synced  Healthy   sha256:3cd288e11479  unchanged  
+eu-central-uat1   mer-kyverno-eu-central-uat1   Synced  Degraded  sha256:c7a666bbe28b  yes        ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-admission-controller status is Degraded Message: kyverno-admission-controller: 1 of 2 available Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available Deployment: kyverno/kyverno-reports-controller status is Degraded Message: kyverno-reports-controller: 0 of 1 available
+
+== 2. A workload goes down after its release was applied: test1's node is cordoned and the cleanup controller's pod deleted (07:36:39)
+$ kubectl --kubeconfig test1.kubeconfig cordon node/mer-test1-control-plane
+node/mer-test1-control-plane cordoned
+$ kubectl --kubeconfig test1.kubeconfig -n kyverno delete pod -l app.kubernetes.io/component=cleanup-controller --wait=false
+pod "kyverno-cleanup-controller-59c8fdfb66-97nnv" deleted from kyverno namespace
+-- 07:40:43, 238s later, the ClusterHealthCheck on eu-central-test1: False Deployment: kyverno/kyverno-background-controller status is Degraded Message: kyverno-background-controller: 0 of 1 available Deployment: kyverno/kyverno-cleanup-controller status is Progressing Message: kyverno-cleanup-controller: rolling out 
+$ sh -c "kubectl --context kind-mer-mgmt get clustersummary -A -o json | jq -r '.items[] | select(.spec.clusterName==\"eu-central-test1\") | .metadata.name + \": \" + ([.status.featureSummaries[].status] | join(\",\"))'"
+kyverno-eu-central-test1-sveltos-eu-central-test1: Provisioned
+-- Sveltos still reports the profile Provisioned: its apply-time checks do not look again
+$ cub sveltos status --context kind-mer-mgmt
+CLUSTER           SPACE                         SYNC    HEALTH    REVISION             WRITTEN    MESSAGE
+eu-central-prod1  mer-kyverno-eu-central-prod1  Synced  Degraded  sha256:a539b34b4f06  yes        ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-reports-controller status is Degraded Message: kyverno-reports-controller: 0 of 1 available Deployment: kyverno/kyverno-admission-controller status is Degraded Message: kyverno-admission-controller: 2 of 3 available Deployment: kyverno/kyverno-background-controller status is Degraded Message: kyverno-background-controller: 0 of 1 avail...
+eu-central-prod2  mer-kyverno-eu-central-prod2  Synced  Healthy   sha256:2a9f8af8d12c  unchanged  
+eu-central-prod3  mer-kyverno-eu-central-prod3  Synced  Healthy   sha256:e71e2320987f  yes        
+eu-central-prod4  mer-kyverno-eu-central-prod4  Synced  Degraded  sha256:b61151227eca  yes        ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available
+eu-central-test1  mer-kyverno-eu-central-test1  Synced  Degraded  sha256:3cd288e11479  yes        ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-background-controller status is Degraded Message: kyverno-background-controller: 0 of 1 available Deployment: kyverno/kyverno-cleanup-controller status is Progressing Message: kyverno-cleanup-controller: rolling out
+eu-central-uat1   mer-kyverno-eu-central-uat1   Synced  Degraded  sha256:c7a666bbe28b  yes        ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-reports-controller status is Degraded Message: kyverno-reports-controller: 0 of 1 available
+$ cub space get mer-kyverno-eu-central-test1 -o 'jq=.Space.Annotations["confighub.com/live-status"] | fromjson | {syncStatus, healthStatus, message}'
+{
+  "healthStatus": "Degraded",
+  "message": "ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-background-controller status is Degraded Message: kyverno-background-controller: 0 of 1 available Deployment: kyverno/kyverno-cleanup-controller status is Progressing Message: kyverno-cleanup-controller: rolling out",
+  "syncStatus": "Synced"
+}
+
+== 3. The workload recovers: the node is uncordoned (07:40:58)
+$ kubectl --kubeconfig test1.kubeconfig uncordon node/mer-test1-control-plane
+node/mer-test1-control-plane uncordoned
+-- 07:47:09, 363s later, the ClusterHealthCheck on eu-central-test1: False Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available Deployment: kyverno/kyverno-reports-controller status is Degraded Message: kyverno-reports-controller: 0 of 1 available 
+$ cub sveltos status --context kind-mer-mgmt
+CLUSTER           SPACE                         SYNC    HEALTH    REVISION             WRITTEN  MESSAGE
+eu-central-prod1  mer-kyverno-eu-central-prod1  Synced  Healthy   sha256:a539b34b4f06  yes      
+eu-central-prod2  mer-kyverno-eu-central-prod2  Synced  Degraded  sha256:2a9f8af8d12c  yes      ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available
+eu-central-prod3  mer-kyverno-eu-central-prod3  Synced  Degraded  sha256:e71e2320987f  yes      ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available
+eu-central-prod4  mer-kyverno-eu-central-prod4  Synced  Degraded  sha256:b61151227eca  yes      ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-reports-controller status is Degraded Message: kyverno-reports-controller: 0 of 1 available Deployment: kyverno/kyverno-admission-controller status is Degraded Message: kyverno-admission-controller: 2 of 3 available
+eu-central-test1  mer-kyverno-eu-central-test1  Synced  Degraded  sha256:3cd288e11479  yes      ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available Deployment: kyverno/kyverno-reports-controller status is Degraded Message: kyverno-reports-controller: 0 of 1 available
+eu-central-uat1   mer-kyverno-eu-central-uat1   Synced  Degraded  sha256:c7a666bbe28b  yes      ClusterHealthCheck mer-kyverno: Deployment: kyverno/kyverno-background-controller status is Degraded Message: kyverno-background-controller: 0 of 1 available
+$ sh -c "kubectl --context kind-mer-mgmt get events -A --field-selector involvedObject.name=mer-kyverno -o json | jq -r '.items[] | .type + \" \" + .reason + \": \" + (.message | gsub(\"\\s+\"; \" \") | .[0:160])' | tail -4"
+Normal ClusterHealthCheck: Cluster Sveltos:projectsveltos/eu-central-prod1 All liveness checks are passing
+Warning ClusterHealthCheck: Cluster Sveltos:projectsveltos/eu-central-prod4 Liveness check "HealthCheck:workloads" failing Deployment: kyverno/kyverno-reports-controller status is Degraded
+Warning ClusterHealthCheck: Cluster Sveltos:projectsveltos/eu-central-test1 Liveness check "HealthCheck:workloads" failing Deployment: kyverno/kyverno-background-controller status is Degra
+Warning ClusterHealthCheck: Cluster Sveltos:projectsveltos/eu-central-test1 Liveness check "HealthCheck:workloads" failing Deployment: kyverno/kyverno-cleanup-controller status is Degraded

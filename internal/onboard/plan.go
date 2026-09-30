@@ -104,9 +104,13 @@ type Variant struct {
 
 // Profile is one onboarded component: its base, its classes and its variants.
 type Profile struct {
-	Name        string
-	Live        bool
-	Selector    string
+	Name     string
+	Live     bool
+	Selector string
+	// Clusters selects the clusters the profile is for, as a label selector,
+	// for its continuous health check; nil when the profile names its
+	// clusters by clusterRefs.
+	Clusters    map[string]any
 	ClusterRefs int
 	Component   string
 	BaseSpace   string
@@ -164,6 +168,9 @@ type DeliverySet struct {
 	Profile  string
 	Unit     string
 	Profiles []*yaml.Node
+	// Health is the profile's continuous health check: a HealthCheck and the
+	// ClusterHealthCheck that runs it on the profile's clusters.
+	Health []*yaml.Node
 }
 
 // Management is the management cluster's record.
@@ -915,6 +922,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			}
 		}
 		selectorText := ""
+		var healthSelector map[string]any
 		if pinned {
 			_, rest := pinnedClass(obj(spec["clusterSelector"]), opts.ClassLabel)
 			if selectorGiven(rest) {
@@ -925,8 +933,10 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 				values = append(values, c.Value)
 			}
 			selectorText += fmt.Sprintf("one profile per %s: %s", opts.ClassLabel, strings.Join(values, ", "))
+			healthSelector = classSelector(rest, opts.ClassLabel, values)
 		} else if sel, has := spec["clusterSelector"]; has {
 			selectorText = describeSelector(obj(sel))
+			healthSelector = obj(sel)
 			if len(classes) > 0 {
 				selectorText += "; classes by " + opts.ClassLabel
 			}
@@ -954,6 +964,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			Name:         name,
 			Live:         live,
 			Selector:     selectorText,
+			Clusters:     selectorUnlessRefs(healthSelector, refs),
 			ClusterRefs:  refs,
 			Component:    component,
 			BaseSpace:    baseSpace,
@@ -1007,6 +1018,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			for _, v := range p.Variants {
 				set.Profiles = append(set.Profiles, deliveryProfile(v, sources[v.Member], gatewaySecretName(plan.TargetsSpace), keptHooks, checks))
 			}
+			set.Health = continuousHealth(p)
 			m.ByProfile = append(m.ByProfile, set)
 		}
 		plan.Management = m
@@ -1077,6 +1089,32 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 // basesStage is the first stage when a component has class bases: it carries a
 // change from the root base into every class base, which are never released.
 const basesStage = "bases"
+
+// selectorUnlessRefs is a profile's selector for its continuous health check,
+// or nil when it also names clusters by clusterRefs, which a label selector
+// cannot reach: the check then runs on every cluster.
+func selectorUnlessRefs(selector map[string]any, refs int) map[string]any {
+	if refs > 0 {
+		return nil
+	}
+	return selector
+}
+
+// classSelector is a selector for every class of a component: what its
+// profiles share, and the class label in any of their classes.
+func classSelector(rest map[string]any, label string, classes []string) map[string]any {
+	out := map[string]any{}
+	for k, v := range rest {
+		out[k] = v
+	}
+	values := make([]any, len(classes))
+	for i, c := range classes {
+		values[i] = c
+	}
+	out["matchExpressions"] = append(append([]any{}, list(rest["matchExpressions"])...),
+		map[string]any{"key": label, "operator": "In", "values": values})
+	return out
+}
 
 // The class a profile's selector pins, and its selector without that term.
 func pinnedClass(selector map[string]any, label string) (string, map[string]any) {

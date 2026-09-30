@@ -78,13 +78,16 @@ func TestReportStatus(t *testing.T) {
 	profiles := `{"items":[
 	  {"metadata":{"name":"kyverno-prod-eu"},"spec":{"validateHealths":[{"name":"deployments-kyverno"}],"policyRefs":[{"deploymentType":"Remote","remoteURL":{"url":"oci://oci.hub.confighub.com/space/sveltos-kyverno-prod-eu:latest"}}]}},
 	  {"metadata":{"name":"hand-made"},"spec":{"policyRefs":[{"kind":"ConfigMap","name":"x","namespace":"default"}]}}]}`
-	summaries := `{"items":[{"metadata":{"labels":{"projectsveltos.io/cluster-profile-name":"kyverno-prod-eu"}},"spec":{"clusterName":"prod-eu"},
+	summaries := `{"items":[{"metadata":{"labels":{"projectsveltos.io/cluster-profile-name":"kyverno-prod-eu"}},"spec":{"clusterNamespace":"projectsveltos","clusterName":"prod-eu"},
 	  "status":{"featureSummaries":[{"featureID":"Resources","status":"Provisioned","lastAppliedTime":"` + later.Format(time.RFC3339) + `"}]}}]}`
 	releases := `[{"Release":{"ReleaseNum":1,"Published":true,"ManifestDigest":"sha256:one","CreatedAt":"` + published.Format(time.RFC3339Nano) + `"}}]`
 	held := ""
+	watching := `{"items":[]}`
 	run := func(name string, args ...string) ([]byte, error) {
 		all := name + " " + strings.Join(args, " ")
 		switch {
+		case all == "kubectl --context mgmt get clusterhealthchecks -o json":
+			return []byte(watching), nil
 		case strings.HasPrefix(all, "kubectl --context mgmt get clusterprofiles"):
 			return []byte(profiles), nil
 		case strings.HasPrefix(all, "kubectl --context mgmt get clustersummaries"):
@@ -128,9 +131,87 @@ func TestReportStatus(t *testing.T) {
 	if reports, _ = ReportStatus(run, opts); !reports[0].Wrote {
 		t.Errorf("an unchanged reading is written again once the one held is older than --refresh")
 	}
+	// The profile's ClusterHealthCheck sees a workload go down after the
+	// release was applied, and Sveltos still says Provisioned.
+	watching = `{"items":[{"metadata":{"name":"sveltos-kyverno","labels":{"` + ProfileLabel + `":"kyverno"}},"status":{"clusterCondition":[
+	  {"clusterInfo":{"cluster":{"namespace":"projectsveltos","name":"prod-eu"}},"conditions":[{"type":"HealthCheck:workloads","name":"workloads","status":"False","lastTransitionTime":"` + later.Add(time.Minute).Format(time.RFC3339) + `",
+	   "message":"Deployment: kyverno/kyverno-cleanup-controller status is Degraded  \nMessage: kyverno-cleanup-controller: 0 of 1 available  \n"}]},
+	  {"clusterInfo":{"cluster":{"namespace":"projectsveltos","name":"prod-us"}},"conditions":[{"type":"HealthCheck:workloads","name":"workloads","status":"True"}]}]}}]}`
+	reports, _ = ReportStatus(run, opts)
+	if s := reports[0].Status; s.SyncStatus != "Synced" || s.HealthStatus != "Degraded" ||
+		s.Message != "ClusterHealthCheck sveltos-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available" {
+		t.Errorf("a workload down after the release is Degraded, naming it, and the release still Synced: %+v", s)
+	}
+
 	opts.DryRun = true
 	summaries = strings.Replace(summaries, `"Provisioned"`, `"Provisioning"`, 1)
 	if reports, _ = ReportStatus(run, opts); reports[0].Wrote || reports[0].Why != "dry run" || reports[0].Status.SyncStatus != "OutOfSync" {
 		t.Errorf("a dry run reports a changed reading, and writes nothing: %+v", reports[0])
+	}
+}
+
+// The continuous check speaks for health only once the latest release is
+// applied, fills in health a profile without apply-time checks lacks, tells a
+// rollout from a failure, and ignores a failure older than the release.
+func TestWatchApply(t *testing.T) {
+	applied := later
+	cond := func(status, message string, at time.Time) watch {
+		return watch{check: "c", conditions: []any{map[string]any{"type": "HealthCheck:workloads", "status": status, "message": message, "lastTransitionTime": at.Format(time.RFC3339)}}}
+	}
+	after, before := applied.Add(time.Minute), applied.Add(-time.Minute)
+	if s := cond("False", "", after).apply(LiveStatus{SyncStatus: "OutOfSync", HealthStatus: "Progressing"}, applied); s.HealthStatus != "Progressing" {
+		t.Errorf("while a release is on its way, Sveltos's reading stands: %+v", s)
+	}
+	if s := cond("False", "", after).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Healthy"}, applied); s.HealthStatus != "Degraded" || s.Message != "ClusterHealthCheck c: a workload is not healthy" {
+		t.Errorf("a failing check with no message still says so: %+v", s)
+	}
+	if s := cond("False", "Deployment: kyverno/x status is Progressing Message: x: rolling out", after).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Healthy"}, applied); s.HealthStatus != "Progressing" {
+		t.Errorf("a workload rolling out is Progressing, not Degraded: %+v", s)
+	}
+	if s := cond("False", "old news", before).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Healthy"}, applied); s.HealthStatus != "Healthy" {
+		t.Errorf("a failure seen before the release was applied is stale: %+v", s)
+	}
+	if s := cond("True", "", after).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Unknown"}, applied); s.HealthStatus != "Healthy" || s.Message != "watched by ClusterHealthCheck c" {
+		t.Errorf("a profile without apply-time checks is healthy when its continuous check passes: %+v", s)
+	}
+	if s := (watch{check: "c"}).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Unknown"}, applied); s.HealthStatus != "Unknown" {
+		t.Errorf("a check that has not evaluated yet says nothing: %+v", s)
+	}
+	w := map[string]map[string]watch{"kyverno": {}, "kyverno-extra": {}}
+	if p := watchingProfile(w, "kyverno-extra-projectsveltos-prod"); p != "kyverno-extra" {
+		t.Errorf("the longest profile name that prefixes a delivery profile is its profile: %q", p)
+	}
+}
+
+// A profile's continuous check names its workloads and selects its clusters by
+// its own labels; one that names clusters by clusterRefs is checked everywhere.
+func TestContinuousHealth(t *testing.T) {
+	units := []Unit{{Objects: []Object{
+		{Kind: "Deployment", APIVersion: "apps/v1", Namespace: "kyverno", Name: "kyverno-admission-controller", Value: map[string]any{}},
+		{Kind: "Service", APIVersion: "v1", Namespace: "kyverno", Name: "svc", Value: map[string]any{}},
+	}}}
+	docs := continuousHealth(Profile{Name: "kyverno", Component: "mer-kyverno", Units: units,
+		Clusters: classSelector(map[string]any{"matchLabels": map[string]any{"region": "eu"}}, "class", []string{"test", "prod"})})
+	if len(docs) != 2 {
+		t.Fatalf("a HealthCheck and a ClusterHealthCheck: %d", len(docs))
+	}
+	out, _ := EncodeYAML(docs[0], docs[1])
+	text := string(out)
+	for _, want := range []string{"kind: HealthCheck", `["Deployment/kyverno/kyverno-admission-controller"] = true`, "status = status, message = message",
+		"kind: ClusterHealthCheck", "region: eu", "key: class", "operator: In", "- test", "- prod", ProfileLabel + ": kyverno", "type: KubernetesEvent"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "svc") {
+		t.Errorf("only workloads are watched:\n%s", text)
+	}
+	docs = continuousHealth(Profile{Name: "kyverno", Component: "mer-kyverno", Units: units})
+	out, _ = EncodeYAML(docs[1])
+	if !strings.Contains(string(out), "key: projectsveltos.io/k8s-version") || !strings.Contains(string(out), "operator: Exists") {
+		t.Errorf("a profile addressed by clusterRefs is checked on every cluster Sveltos manages:\n%s", out)
+	}
+	if continuousHealth(Profile{Name: "policies", Units: []Unit{{Objects: []Object{{Kind: "ConfigMap", APIVersion: "v1", Name: "x"}}}}}) != nil {
+		t.Errorf("a profile that delivers no workloads has nothing to watch")
 	}
 }

@@ -95,13 +95,19 @@ func RenderPlan(plan *Plan, next bool) string {
 		}
 	}
 	if m := plan.Management; m != nil {
-		n := 0
+		n, watched := 0, 0
 		for _, b := range m.ByProfile {
 			n += len(b.Profiles)
+			if len(b.Health) > 0 {
+				watched++
+			}
 		}
 		out = append(out, "",
 			fmt.Sprintf("Management cluster %s/%s", m.Namespace, m.Cluster),
 			fmt.Sprintf("  record   %s  one delivery profile per variant (%d): each sends its variant's releases to its one cluster", m.Space, n))
+		if watched > 0 {
+			out = append(out, fmt.Sprintf("  health   a ClusterHealthCheck per profile (%d): watches the workloads it delivers on its clusters, after each release too", watched))
+		}
 	}
 	if len(plan.Ungoverned) > 0 || len(plan.Skipped) > 0 {
 		out = append(out, "", "Not onboarded")
@@ -334,15 +340,26 @@ func ApplyScript(plan *Plan) string {
 		"# With PROPOSE_ONLY, only those whose variant has a release; the others",
 		"# follow on the run after their release is approved.",
 		"deliver() {",
-		`  local file=management/$1.yaml s; shift`,
-		`  [ -n "${PROPOSE_ONLY:-}" ] || { k apply -f "$file"; return; }`,
-		`  for s in "$@"; do`,
-		`    if released "$s"; then`,
-		fmt.Sprintf(`      k apply -f "$file" -l "%s=$s"`, VariantLabel),
-		"    else",
-		`      echo "$s has no release yet, so its delivery profile waits"`,
-		"    fi",
-		"  done",
+		`  local file=management/$1.yaml health=management/$1-health.yaml s; shift`,
+		`  if [ -z "${PROPOSE_ONLY:-}" ]; then`,
+		`    k apply -f "$file"`,
+		"  else",
+		`    for s in "$@"; do`,
+		`      if released "$s"; then`,
+		fmt.Sprintf(`        k apply -f "$file" -l "%s=$s"`, VariantLabel),
+		"      else",
+		`        echo "$s has no release yet, so its delivery profile waits"`,
+		"      fi",
+		"    done",
+		"  fi",
+		"  watch_health \"$health\"",
+		"}",
+		"# watch_health <file>: the profile's continuous health check, which Sveltos",
+		"# runs on its clusters all the time. A management cluster without Sveltos's",
+		"# health checks installed goes on without it.",
+		"watch_health() {",
+		`  [ -f "$1" ] || return 0`,
+		`  k apply -f "$1" || echo "Sveltos's ClusterHealthCheck is not installed here, so health is checked only when Sveltos deploys"`,
 		"}",
 		"",
 		`step "0/6 Check before changing anything"`,
@@ -434,6 +451,12 @@ func ApplyScript(plan *Plan) string {
 			L = append(L,
 				line("cub", "unit", "create", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The profiles that deliver each %s variant's releases to its cluster", b.Profile), "--allow-exists", "--quiet"),
 				line("cub", "unit", "update", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--change-desc", fmt.Sprintf("The delivery profiles for every %s variant this plan holds", b.Profile), "--quiet"))
+			if len(b.Health) > 0 {
+				unit := "health-" + Slug(b.Profile)
+				L = append(L,
+					line("cub", "unit", "create", "--space", m.Space, unit, "management/"+b.Profile+"-health.yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", b.Profile), "--allow-exists", "--quiet"),
+					line("cub", "unit", "update", "--space", m.Space, unit, "management/"+b.Profile+"-health.yaml", "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", b.Profile), "--quiet"))
+			}
 		}
 	}
 	L = append(L, "", `step "5/6 Release each variant, stage by stage: promote, approve, publish"`)
@@ -551,6 +574,7 @@ func HandoverScript(plan *Plan) string {
 		`cd "$(dirname "$0")"`,
 		`k() { kubectl ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} "$@"; }`,
 		`fail() { echo "handover.sh: $*" >&2; exit 1; }`,
+		`watch_health() { [ -f "$1" ] || return 0; k apply -f "$1" || echo "Sveltos's ClusterHealthCheck is not installed here, so health is checked only when Sveltos deploys"; }`,
 		`again="export again, then plan and apply again"`,
 		"# unchanged <profile> <uid> <generation>: the profile is as exported, or gone.",
 		"# A run of this script that stopped after setting LeavePolicies leaves it",
@@ -686,6 +710,13 @@ func HandoverScript(plan *Plan) string {
 	L = append(L, "", "echo "+q("== the delivery profiles"))
 	for _, p := range live {
 		L = append(L, line("k", "apply", "-f", "management/"+p.Name+".yaml"))
+		if m := plan.Management; m != nil {
+			for _, b := range m.ByProfile {
+				if b.Profile == p.Name && len(b.Health) > 0 {
+					L = append(L, line("watch_health", "management/"+p.Name+"-health.yaml"))
+				}
+			}
+		}
 	}
 	for _, p := range live {
 		var clusters []string
