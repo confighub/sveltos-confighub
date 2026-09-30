@@ -258,7 +258,11 @@ cub unit tag in-force --space mer-policies --unit replica-limits,disallow-latest
 A policy change is then a new revision, like any other change. Preview it,
 have a person approve it, and move the tag to put it in force. A proposal
 nobody adopts is taken back out with `cub unit update --restore`, and the tag
-never moves.
+never moves. In ConfigHub, the history of `replica-limits` after the recording:
+revision 3 proposed prod's ceiling at 2 and was taken back out by revision 4,
+and revision 5, test's ceiling at 6, is the one tagged `in-force`:
+
+![The revisions of the replica-limits policy unit in ConfigHub: revision 5 tagged in-force and at the head, revision 4 a restore that took the prod proposal back out, revision 3 the proposal, revision 2 the first policy](../images/sveltos/sveltos-policy-revisions.png)
 
 `--policy` and `--candidate` take a policy source:
 
