@@ -140,6 +140,11 @@ cub target create mgmt '{}' server-worker --space sveltos-targets --provider OCI
 cub target create prod-eu '{}' server-worker --space sveltos-targets --provider OCI --toolchain Any --allow-exists --quiet
 cub target create prod-us '{}' server-worker --space sveltos-targets --provider OCI --toolchain Any --allow-exists --quiet
 cub target create staging-eu '{}' server-worker --space sveltos-targets --provider OCI --toolchain Any --allow-exists --quiet
+# Each cluster's facts (Kubernetes version, CRDs, storage and ingress classes)
+# on its Target, read through the kubeconfig Sveltos reaches it with. A cluster
+# only the management cluster reaches needs CLUSTER_KUBECONFIGS=<dir> holding
+# <cluster>.kubeconfig; without it, onboarding goes on and says so.
+cub sveltos facts ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} --targets sveltos-targets ${CLUSTER_KUBECONFIGS:+--kubeconfigs "$CLUSTER_KUBECONFIGS"} || echo "Some clusters' facts were not collected; run cub sveltos facts again once they can be reached"
 
 step "2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow"
 cub component create sveltos-ingress-nginx --allow-exists --quiet

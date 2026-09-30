@@ -69,6 +69,7 @@ latest release. `cub sveltos version` prints which one you run.
 | `cub sveltos apply` | Writes the plan out as files and a script, `apply.sh`, for you to read and then run. Writes `handover.sh` too, if your profiles are live. With `--management-release`, the management cluster takes its delivery profiles from ConfigHub through one root profile, as Argo CD's app of apps does. |
 | `cub sveltos compare` | Checks that what ConfigHub will deliver to a cluster is exactly what Helm installed there. `handover.sh` runs it for you. |
 | `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. |
+| `cub sveltos facts` | Stores each cluster's facts on its Target: Kubernetes version, CRDs, storage and ingress classes. `apply.sh` runs it for you. |
 | `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
 | `cub sveltos check` | Runs a policy check, such as Kyverno, on a change in one stage, and records the verdict in ConfigHub. Each stage's release can require a Pass. |
 | `cub sveltos impact` | Previews what a policy change, or a change's next promotion, would do to each cluster, before anything ships. |

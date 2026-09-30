@@ -206,7 +206,13 @@ what yours will do. It checks first that `cub` is logged in and that your
 management cluster runs Sveltos v1.14.0 or newer (earlier releases cannot
 read the gzipped layers ConfigHub's gateway serves), then:
 
-1. Creates one Target per cluster, named for it, on a server-hosted worker.
+1. Creates one Target per cluster, named for it, on a server-hosted worker,
+   and stores each cluster's facts on its Target with `cub sveltos facts`:
+   its Kubernetes version, CRDs, and storage and ingress classes. It reaches
+   each cluster through the kubeconfig Sveltos uses, from its Secret on the
+   management cluster; a cluster only the management cluster reaches needs
+   `CLUSTER_KUBECONFIGS=<dir>` holding `<cluster>.kubeconfig`, and without it
+   the script goes on and says so.
 2. Stores each base, and the workflow its changes follow. Above each chart
    it notes the `cub helm template` command the chart was rendered with,
    and `apply` writes the chart's values beside it, so the next version can
