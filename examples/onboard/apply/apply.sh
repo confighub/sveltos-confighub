@@ -10,7 +10,9 @@
 # is the first release: each stage is promoted, approved, released. All of it
 # is safe to re-run, which is also how a cluster that joined since gets its
 # variants. Step 6 is the one change to your management cluster: a Secret
-# holding the gateway credential, and one delivery profile per variant.
+# holding the gateway credential, and one delivery profile per variant (with
+# --management-release, the published management record and the root profile
+# that fetches it).
 #
 # PROPOSE_ONLY=1 bash apply.sh approves nothing: a release waits for a
 # person to approve it in ConfigHub, and a delivery profile for its release.

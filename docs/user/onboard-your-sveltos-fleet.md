@@ -232,6 +232,40 @@ Sveltos reads the gateway as the Targets' server worker. That credential does
 not expire, it can pull only the releases of those Targets, and the script
 moves it from `cub` into the Secret without writing it to disk or showing it.
 
+### The management cluster's record, delivered from ConfigHub
+
+By default, step 6 puts the delivery profiles on your management cluster with
+`kubectl`. With `--management-release`, the management cluster takes them from
+ConfigHub instead, the way Argo CD's app of apps works:
+- The management Space publishes releases to the management cluster's
+  Target, like any variant.
+- `management/root.yaml` is one ClusterProfile, addressed to the management
+  cluster itself, that fetches the latest of those releases. Each run of the
+  script publishes the record if it has anything new, and makes sure the root
+  is there; `kubectl` never applies a delivery profile.
+- A variant's delivery profile joins the record once that variant has a
+  release, beside its profile's health check. A cluster that joins still waits
+  for its approval: until its variant has a release, its delivery profile
+  stays out of the record. (Sveltos marks a profile `Failed`, "not found",
+  while the release it points at does not exist yet, so the record never
+  points at one.)
+- Removing the root profile leaves everything it delivered in place
+  (`stopMatchingBehavior: LeavePolicies`): withdrawing would take every add-on
+  off every cluster.
+- With live profiles, `handover.sh` still applies the delivery profiles
+  itself, then publishes the record and applies the root, which takes them
+  over.
+
+Measured on the Meridian slice
+([management-release-2026-09-30.log](../../examples/meridian-slice/management-release-2026-09-30.log)):
+- The root profile was `Provisioned` 17 seconds after it was applied, and
+  took over the six delivery profiles and the health check that `kubectl` had
+  put there: each now names the root as its owner.
+- A change made only in ConfigHub reached the management cluster 44 seconds
+  after the record was published.
+- A HealthCheck deleted by hand on the management cluster was back 16 seconds
+  later.
+
 ## If your profiles are live
 
 If you exported from a live management cluster, the plan says which profiles

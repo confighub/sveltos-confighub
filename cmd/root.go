@@ -36,6 +36,7 @@ type planFlags struct {
 	includeHooks string
 	policy       string
 	require      string
+	mgmtRelease  bool
 }
 
 func (f *planFlags) register(c *cobra.Command) {
@@ -48,6 +49,7 @@ func (f *planFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.includeHooks, "include-hooks", "", "keep these charts' Helm hook manifests as plain objects, comma-separated release names or all")
 	c.Flags().StringVar(&f.policy, "policy", "", "a trigger Filter, <space>/<filter>, whose Triggers every base and variant runs; a change that fails one is not promoted or released")
 	c.Flags().StringVar(&f.require, "require", "", "attestation types each stage's release also waits for, comma-separated, such as PolicyCheck")
+	c.Flags().BoolVar(&f.mgmtRelease, "management-release", false, "deliver the management record from ConfigHub: its Space publishes releases, and one root profile on the management cluster fetches them")
 }
 
 func split(s string) []string {
@@ -62,14 +64,15 @@ func split(s string) []string {
 
 func (f *planFlags) options() onboard.Options {
 	return onboard.Options{
-		Prefix:       f.prefix,
-		StageLabel:   f.stageLabel,
-		Stages:       split(f.stages),
-		Management:   f.management,
-		Profiles:     split(f.profiles),
-		ClassLabel:   f.classLabel,
-		IncludeHooks: split(f.includeHooks),
-		Gates:        onboard.Gates{Policy: f.policy, Require: split(f.require)},
+		Prefix:            f.prefix,
+		StageLabel:        f.stageLabel,
+		Stages:            split(f.stages),
+		Management:        f.management,
+		Profiles:          split(f.profiles),
+		ClassLabel:        f.classLabel,
+		IncludeHooks:      split(f.includeHooks),
+		Gates:             onboard.Gates{Policy: f.policy, Require: split(f.require)},
+		ManagementRelease: f.mgmtRelease,
 	}
 }
 

@@ -1,0 +1,248 @@
+# The management cluster's record, delivered from ConfigHub (#81), on the
+# Meridian slice, 30 September 2026. kind, stock Sveltos v1.15.0, ConfigHub.
+# `cub sveltos` built from this repository after v0.9.0.
+#
+# Until now `apply.sh` put the delivery profiles on the management cluster
+# with kubectl. Here the management Space publishes releases, and one root
+# profile on the management cluster fetches them, as Argo CD's app of apps
+# does. Steps 0 to 5 were a probe by hand; step 6 ran the apply.sh that
+# `cub sveltos apply --management-release` now writes, as `cub sveltos watch`
+# runs it (PROPOSE_ONLY=1).
+
+== 0. The management record today: held in ConfigHub, put on the management cluster with kubectl (07:56:25)
+$ cub unit list --space mer-management
+NAME                SPACE             CHANGESET    TARGET    UPGRADE-NEEDED    UNRELEASED-CHANGES    VALIDATION-ERRORS    LAST-CHANGE-DESCRIPTION                                         
+delivery-kyverno    mer-management                 mgmt                        Yes                                        The delivery profiles for every kyverno variant this plan holds    
+$ cub release list --space mer-management
+RELEASE-ID    PUBLISHED    MANIFEST-DIGEST    CREATED 
+
+== 1. Plan with this build, and hold the health check in the record too (07:56:27)
+$ cub sveltos apply onboard-watch/profiles.yaml clusters-now.yaml --class-label class --stage-label class --stages test,uat,prod --prefix mer --out onboard-root
+Onboarding plan: 1 component made from 3 profiles over 6 clusters, one variant per cluster per component (6 variants).
+Nothing has changed. This is what ConfigHub would hold.
+
+kyverno  (selects one profile per class: prod, test, uat)
+  base     mer-kyverno-base  holds what its charts and policies render to, and delivers to no cluster:
+    unit   kyverno  chart kyverno 3.8.1 from https://kyverno.github.io/kyverno: 70 objects (22 CRDs)
+  class    prod         mer-kyverno-class-prod  from profile kyverno-prod; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
+  class    test         mer-kyverno-class-test  from profile kyverno-test; the same as the base
+  class    uat          mer-kyverno-class-uat  from profile kyverno-uat; differs from the base in Deployment kyverno/kyverno-admission-controller spec.replicas, adds PodDisruptionBudget kyverno/kyverno-admission-controller
+  stage test
+    eu-central-test1 variant mer-kyverno-eu-central-test1 (class test)  ->  Target mer-targets/eu-central-test1
+  stage uat
+    eu-central-uat1  variant mer-kyverno-eu-central-uat1 (class uat)  ->  Target mer-targets/eu-central-uat1
+  stage prod
+    eu-central-prod1 variant mer-kyverno-eu-central-prod1 (class prod)  ->  Target mer-targets/eu-central-prod1
+    eu-central-prod2 variant mer-kyverno-eu-central-prod2 (class prod)  ->  Target mer-targets/eu-central-prod2
+    eu-central-prod3 variant mer-kyverno-eu-central-prod3 (class prod)  ->  Target mer-targets/eu-central-prod3
+    eu-central-prod4 variant mer-kyverno-eu-central-prod4 (class prod)  ->  Target mer-targets/eu-central-prod4
+
+Management cluster mgmt/mgmt
+  record   mer-management  one delivery profile per variant (6): each sends its variant's releases to its one cluster
+  health   a ClusterHealthCheck per profile (1): watches the workloads it delivers on its clusters, after each release too
+
+In ConfigHub
+  7 Targets in mer-targets, one per cluster, on a server-hosted worker
+  1 component, each one base, 3 class bases, 6 variants, 1 management record
+  12 Spaces and 9 Links, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
+  first rollout: kyverno in 3 stages after its class bases; one approval per stage, one release per variant
+
+Note: kyverno-test's chart kyverno has 11 Helm hooks for upgrade, delete or test, among them Jobs kyverno-migrate-resources, kyverno-rm-webhooks, kyverno-scale-to-zero. They are left out, as cub helm leaves them out, because only Helm runs them.
+
+Wrote onboard-root/apply.sh and the files it reads. Read it, then run it:
+  MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard-root/apply.sh
+$ ls onboard-root/management
+kyverno-health.yaml
+kyverno.yaml
+$ cub unit update --space mer-management delivery-kyverno onboard-root/management/kyverno.yaml --change-desc 'The delivery profiles for every kyverno variant this plan holds' --quiet
+
+$ cub unit create --space mer-management health-kyverno onboard-root/management/kyverno-health.yaml --target mer-targets/mgmt --change-desc "The continuous health check for the kyverno profile's clusters" --allow-exists --quiet
+
+
+== 2. The management Space releases to the management cluster's Target, like any variant (07:56:56)
+$ cub space update mer-management --release-target mer-targets/mgmt --quiet
+
+$ cub release publish mer-management
+Successfully created release fac7545a-9148-41bc-b6a3-c2ec3b8a5200 (fac7545a-9148-41bc-b6a3-c2ec3b8a5200)
+$ cub release list --space mer-management
+RELEASE-ID                              PUBLISHED    MANIFEST-DIGEST                                                            CREATED                              
+fac7545a-9148-41bc-b6a3-c2ec3b8a5200    true         sha256:519ef09d56bb69f35689a08ee165f4e7c6d44dfdc875f924725d18dcc63a24b6    2026-09-30 06:56:58.433238 +0000 UTC    
+
+== 3. One root profile on the management cluster fetches that release, as Argo CD's app of apps does (07:56:59)
+$ cat root.yaml
+# The management cluster's root profile: it fetches the management Space's
+# release, which holds every delivery profile, and applies it to the
+# management cluster itself, as Argo CD's app of apps does.
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: mer-management
+spec:
+  clusterRefs:
+    - apiVersion: lib.projectsveltos.io/v1beta1
+      kind: SveltosCluster
+      namespace: mgmt
+      name: mgmt
+  syncMode: ContinuousWithDriftDetection
+  # Removing the root must never withdraw the delivery profiles, and with them
+  # every add-on on every cluster.
+  stopMatchingBehavior: LeavePolicies
+  continueOnError: true
+  policyRefs:
+    - deploymentType: Remote
+      remoteURL:
+        url: oci://oci.hub.confighub.com/space/mer-management:latest
+        interval: 1m0s
+        secretRef:
+          name: confighub-mer-targets
+          namespace: projectsveltos
+$ kubectl apply -f root.yaml
+clusterprofile.config.projectsveltos.io/mer-management created
+-- 07:57:16 the root profile's ClusterSummary on mgmt/mgmt: Provisioned
+$ sh -c "kubectl get clustersummary -A -o json | jq '.items[] | select(.metadata.labels[\"projectsveltos.io/cluster-profile-name\"]==\"mer-management\") | {cluster: .spec.clusterName, features: [.status.featureSummaries[]? | {featureID, status, failureMessage}], deployed: [.status.deployedGVKs[]?.deployedGroupVersionKind[]?]}'"
+{
+  "cluster": "mgmt",
+  "features": [
+    {
+      "featureID": "Resources",
+      "status": "Provisioned",
+      "failureMessage": null
+    }
+  ],
+  "deployed": [
+    "ClusterProfile.v1beta1.config.projectsveltos.io",
+    "HealthCheck.v1beta1.lib.projectsveltos.io",
+    "ClusterHealthCheck.v1beta1.lib.projectsveltos.io"
+  ]
+}
+$ sh -c "kubectl get clusterprofile kyverno-eu-central-test1 -o json | jq '{labels: .metadata.labels, owners: [.metadata.ownerReferences[]? | .kind + \"/\" + .name], annotations: (.metadata.annotations | keys)}'"
+{
+  "labels": {
+    "projectsveltos.io/reason": "Resources",
+    "sveltos.confighub.com/variant": "mer-kyverno-eu-central-test1"
+  },
+  "owners": [],
+  "annotations": [
+    "confighub.com/origin",
+    "kubectl.kubernetes.io/last-applied-configuration",
+    "projectsveltos.io/clustersummary",
+    "projectsveltos.io/deploymenttype",
+    "projectsveltos.io/hash",
+    "projectsveltos.io/owner-kind",
+    "projectsveltos.io/owner-name",
+    "projectsveltos.io/owner-tier",
+    "projectsveltos.io/reference-kind",
+    "projectsveltos.io/reference-name",
+    "projectsveltos.io/reference-namespace",
+    "projectsveltos.io/reference-tier"
+  ]
+}
+$ sh -c "kubectl get clusterhealthcheck mer-kyverno -o json | jq '{labels: .metadata.labels, owners: [.metadata.ownerReferences[]? | .kind + \"/\" + .name]}'"
+{
+  "labels": {
+    "projectsveltos.io/reason": "Resources",
+    "sveltos.confighub.com/profile": "kyverno"
+  },
+  "owners": []
+}
+
+== 4. A change made in ConfigHub only: the health check emits its events under a new name (07:57:41)
+$ cub function set --space mer-management --unit health-kyverno --change-desc "Name the health check's event notification" -- set-yq '(select(.kind == "ClusterHealthCheck") | .spec.notifications[0].name) = "kyverno-health-events"'
+Function(s) succeeded on unit mer-management/health-kyverno (591cef98-4826-4549-968e-55cb07e640cb)
+Config data changed
+Awaiting triggers...
+$ cub release publish mer-management
+Successfully created release a4c981bd-97ca-46ef-a1f0-de4b4cac6cd4 (a4c981bd-97ca-46ef-a1f0-de4b4cac6cd4)
+-- 07:58:27, 44s after publishing: the management cluster's ClusterHealthCheck notification is named kyverno-health-events, with no kubectl
+
+== 5. Drift on the management cluster: the HealthCheck is deleted by hand (07:58:27)
+$ kubectl delete healthcheck mer-kyverno
+healthcheck.lib.projectsveltos.io "mer-kyverno" deleted
+-- 07:58:43, 16s later: the root profile put it back
+$ kubectl get healthcheck mer-kyverno -o 'jsonpath={.metadata.creationTimestamp}{"\n"}'
+2026-09-30T06:58:41Z
+
+== A release that is not there yet (07:59:18, by hand)
+-- A profile pointed at a Space with no release, on eu-central-test1. After 75 seconds its ClusterSummary said:
+{"features":[{"status":"Failed","failureMessage":"failed to pull OCI artifact oci://oci.hub.confighub.com/space/mer-policies:latest: oci.hub.confighub.com/space/mer-policies:latest: not found","consecutiveFailures":3}]}
+-- So the record must not hold a delivery profile before its variant has a release. The probe profile was deleted.
+
+== 6. The apply.sh that cub sveltos apply --management-release writes, run as cub sveltos watch runs it
+$ cub sveltos apply onboard-watch/profiles.yaml clusters-now.yaml --class-label class --stage-label class --stages test,uat,prod --prefix mer --management-release --out onboard-mr
+$ MGMT_CONTEXT=kind-mer-mgmt PROPOSE_ONLY=1 bash onboard-mr/apply.sh
+
+== 0/6 Check before changing anything
+
+== 1/6 One named Target per cluster, in mer-targets
+
+== 2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow
+
+== 3/6 One variant per cluster, each holding what its base holds
+Created variant space mer-kyverno-class-prod (ID: c89fe3a2-d010-4263-bac0-db66d9e14cae)
+mer-kyverno-class-prod/kyverno already has its departures
+Created variant space mer-kyverno-class-test (ID: a779483b-238b-43a5-94f7-1f4e68518614)
+Created variant space mer-kyverno-class-uat (ID: b6835de1-662f-4048-a08c-deb39b9a150d)
+mer-kyverno-class-uat/kyverno already has its departures
+Created variant space mer-kyverno-eu-central-test1 (ID: 052cbe02-c8a0-4c8e-ac83-aedbc5e438d3)
+Created variant space mer-kyverno-eu-central-uat1 (ID: e09cd6fe-d3cf-4ee9-a040-36e515e068b1)
+Created variant space mer-kyverno-eu-central-prod1 (ID: 331fb24f-9a3c-4c1f-b664-36929ec6d99b)
+Created variant space mer-kyverno-eu-central-prod2 (ID: eb69996a-e625-470a-b2a6-af9bea3ecdcc)
+Created variant space mer-kyverno-eu-central-prod3 (ID: 9359e7b4-c21c-4edc-868f-f113a8f949c5)
+Created variant space mer-kyverno-eu-central-prod4 (ID: 5fa7e658-7573-412a-b13c-034e004d1e7e)
+
+== 4/6 The management cluster's record: one delivery profile per variant
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+kyverno: every variant in this plan is released
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-mer-targets unchanged
+clusterprofile.config.projectsveltos.io/mer-management configured
+Published the management record: the management cluster takes it from ConfigHub within a minute
+
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
+  kubectl get clustersummaries -A
+-- 08:07:40 to 08:09:33. Every Space and unit already existed; the kyverno profile's variants all had releases,
+-- so the record took its delivery profiles and health check, and was published.
+-- A minute later: 3 releases of mer-management; the root's ClusterSummary Provisioned, last applied 07:10:19Z (08:10:19 local);
+-- 7 ClusterProfiles on the management cluster (six delivery profiles and the root). The health check's notification
+-- is named events again, as apply wrote it: the record, not the hand edit of step 4, is what the cluster runs.
+
+== 7. After a review: the record holds only variants with a release, and a record with nothing new is fine (08:27:26)
+-- apply now writes one delivery profile file per variant (management/variants/), step 4 makes no management
+-- units, and record puts a variant's profile in the record only once that variant has a release.
+$ cub sveltos apply onboard-watch/profiles.yaml clusters-now.yaml --class-label class --stage-label class --stages test,uat,prod --prefix mer --management-release --out onboard-mr2
+$ MGMT_CONTEXT=kind-mer-mgmt PROPOSE_ONLY=1 bash onboard-mr2/apply.sh
+== 4/6 The management cluster's record: one delivery profile per variant
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+kyverno: every variant in this plan is released
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-mer-targets unchanged
+clusterprofile.config.projectsveltos.io/mer-management configured
+The management cluster takes the management record from ConfigHub within a minute
+
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
+  kubectl get clustersummaries -A
+-- the record was assembled from the six variant files, so it changed in form, and was published (4 releases)
+$ MGMT_CONTEXT=kind-mer-mgmt PROPOSE_ONLY=1 bash onboard-mr2/apply.sh    (again, nothing new)
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-mer-targets unchanged
+The management record has nothing new
+clusterprofile.config.projectsveltos.io/mer-management configured
+The management cluster takes the management record from ConfigHub within a minute
+
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
+  kubectl get clustersummaries -A
+-- still 4 releases: ConfigHub refuses a release with nothing new, and the script treats that as done
+
+== 8. What the root profile owns on the management cluster (by Sveltos's owner annotations)
+kyverno-eu-central-prod1: owner ClusterProfile/mer-management
+kyverno-eu-central-prod2: owner ClusterProfile/mer-management
+kyverno-eu-central-prod3: owner ClusterProfile/mer-management
+kyverno-eu-central-prod4: owner ClusterProfile/mer-management
+kyverno-eu-central-test1: owner ClusterProfile/mer-management
+kyverno-eu-central-uat1: owner ClusterProfile/mer-management
+healthcheck mer-kyverno: owner ClusterProfile/mer-management
+clusterhealthcheck mer-kyverno: owner ClusterProfile/mer-management
