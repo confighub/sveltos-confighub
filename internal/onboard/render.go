@@ -385,6 +385,12 @@ func ApplyScript(plan *Plan) string {
 	for _, t := range plan.Targets {
 		L = append(L, line("cub", "target", "create", t.Target, "{}", workerSlug, "--space", plan.TargetsSpace, "--provider", "OCI", "--toolchain", "Any", "--allow-exists", "--quiet"))
 	}
+	L = append(L,
+		"# Each cluster's facts (Kubernetes version, CRDs, storage and ingress classes)",
+		"# on its Target, read through the kubeconfig Sveltos reaches it with. A cluster",
+		"# only the management cluster reaches needs CLUSTER_KUBECONFIGS=<dir> holding",
+		"# <cluster>.kubeconfig; without it, onboarding goes on and says so.",
+		fmt.Sprintf(`cub sveltos facts ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} --targets %s ${CLUSTER_KUBECONFIGS:+--kubeconfigs "$CLUSTER_KUBECONFIGS"} || echo "Some clusters' facts were not collected; run cub sveltos facts again once they can be reached"`, plan.TargetsSpace))
 	L = append(L, "", `step "2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow"`)
 	for _, p := range plan.Profiles {
 		L = append(L,

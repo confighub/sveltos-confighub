@@ -579,7 +579,55 @@ the next create or update would be refused.`,
 		},
 	}
 
-	root.AddCommand(plan, apply, compare, status, watchCmd, checkCmd, impactCmd, versionCmd)
+	var fo onboard.FactsOptions
+	factsCmd := &cobra.Command{
+		Use:   "facts --context <management cluster context> --targets <space>",
+		Short: "Store each cluster's facts (Kubernetes version, CRDs, storage and ingress classes) on its Target",
+		Long: `Store each cluster's facts on its Target, so ConfigHub knows each destination.
+
+For every cluster Sveltos manages, it runs cub k8s collect against the cluster,
+reaching it the way Sveltos does: through the cluster's kubeconfig Secret on
+the management cluster, written to a file only you can read and removed after.
+The facts land on the Target of the same name in --targets, under the
+reserved Cluster. prefix: the Kubernetes version, the CRDs, and the storage and
+ingress classes.
+
+A cluster whose API server only the management cluster reaches needs a
+kubeconfig that reaches it at <dir>/<cluster>.kubeconfig, with --kubeconfigs.`,
+		Args: cobra.NoArgs,
+		RunE: func(c *cobra.Command, _ []string) error {
+			if fo.TargetsSpace == "" && !fo.DryRun {
+				return fmt.Errorf("say which Space holds the Targets, with --targets")
+			}
+			results, err := onboard.CollectFacts(onboard.Run, fo)
+			w := c.OutOrStdout()
+			failed := false
+			for _, r := range results {
+				switch {
+				case r.Skipped != "":
+					failed = true
+					fmt.Fprintf(w, "%s: not collected: %s\n", r.Cluster, r.Skipped)
+				case fo.DryRun:
+					fmt.Fprintf(w, "%s:\n%s\n", r.Cluster, r.Output)
+				default:
+					fmt.Fprintf(w, "%s: facts stored on Target %s/%s\n", r.Cluster, fo.TargetsSpace, r.Target)
+				}
+			}
+			if err != nil {
+				return err
+			}
+			if failed {
+				return errProblems{}
+			}
+			return nil
+		},
+	}
+	factsCmd.Flags().StringVar(&fo.Context, "context", "", "kubectl context of the management cluster")
+	factsCmd.Flags().StringVar(&fo.TargetsSpace, "targets", "", "the Space holding one Target per cluster, as apply made them (<prefix>-targets)")
+	factsCmd.Flags().StringVar(&fo.KubeconfigDir, "kubeconfigs", "", "a directory of <cluster>.kubeconfig files for clusters only the management cluster reaches")
+	factsCmd.Flags().BoolVar(&fo.DryRun, "dry-run", false, "print the facts and store nothing")
+
+	root.AddCommand(plan, apply, compare, status, watchCmd, checkCmd, impactCmd, factsCmd, versionCmd)
 	return root
 }
 
