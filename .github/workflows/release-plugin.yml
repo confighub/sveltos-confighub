@@ -5,6 +5,9 @@ name: release-plugin
 #   git tag v0.1.0 && git push origin v0.1.0
 #   cub plugin install confighub/sveltos-confighub
 #
+# Write the version's section of docs/whats-new.md ("## 0.1.0, <date>") before
+# tagging: it becomes the release's notes, above the pull requests merged.
+#
 # Asset naming is a contract, not a preference: cub locates the right binary by
 # <repo-name>-<goos>-<goarch>, matching the convention of the other cub plugins
 # (cub-che, cub-lk, eks-inference). Rename these and `cub plugin install` stops
@@ -77,16 +80,27 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      # The release's notes are its version's section of docs/whats-new.md,
+      # followed by the merged pull requests GitHub lists. A version with no
+      # section gets the list alone, and a warning.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          notes=()
+          if node scripts/release-notes.mjs "$GITHUB_REF_NAME" > notes.md; then
+            notes=(--notes-file notes.md)
+          else
+            echo "::warning::docs/whats-new.md has no section for $GITHUB_REF_NAME; the release lists its pull requests only"
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
+            "${notes[@]}" \
             --generate-notes \
             dist/*
