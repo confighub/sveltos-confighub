@@ -1,0 +1,234 @@
+{
+  "apiVersion": "confighub.com/plugin-preview/v1",
+  "kind": "PluginPreview",
+  "producer": {
+    "name": "sveltos-confighub",
+    "version": "dev"
+  },
+  "exportedAt": "2026-09-30T17:23:33Z",
+  "scope": {
+    "description": "Supplied Sveltos ClusterProfiles, clusters, and referenced ConfigMaps; not exhaustive live discovery."
+  },
+  "capabilities": [
+    "preview"
+  ],
+  "inventory": {
+    "nodes": [
+      {
+        "id": "SveltosCluster:fleet/demo-prod",
+        "kind": "SveltosCluster",
+        "name": "demo-prod",
+        "namespace": "fleet",
+        "details": {
+          "identity": "supplied"
+        }
+      },
+      {
+        "id": "SveltosCluster:mgmt/mgmt",
+        "kind": "SveltosCluster",
+        "name": "mgmt",
+        "namespace": "mgmt",
+        "details": {
+          "identity": "supplied"
+        }
+      },
+      {
+        "id": "clusterprofile:demo-policy",
+        "kind": "ClusterProfile",
+        "name": "demo-policy",
+        "details": {
+          "disposition": "planned",
+          "selectionBasis": "selector and explicit references in supplied input",
+          "selector": "{\"matchLabels\":{\"env\":\"prod\"}}"
+        }
+      },
+      {
+        "id": "configmap:default/demo-policy",
+        "kind": "ConfigMap",
+        "name": "demo-policy",
+        "namespace": "default",
+        "details": {
+          "content": "not included"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "clusterprofile:demo-policy",
+        "to": "SveltosCluster:fleet/demo-prod",
+        "relation": "selects"
+      },
+      {
+        "from": "clusterprofile:demo-policy",
+        "to": "configmap:default/demo-policy",
+        "relation": "references"
+      }
+    ]
+  },
+  "proposal": {
+    "nodes": [
+      {
+        "id": "space:sveltos-demo-policy-base",
+        "kind": "Space",
+        "name": "sveltos-demo-policy-base",
+        "details": {
+          "sourceProfile": "demo-policy",
+          "stage": "base"
+        },
+        "hub": {
+          "spaceSlug": "sveltos-demo-policy-base",
+          "targetsSpace": "sveltos-targets"
+        }
+      },
+      {
+        "id": "space:sveltos-demo-policy-demo-prod",
+        "kind": "Space",
+        "name": "sveltos-demo-policy-demo-prod",
+        "details": {
+          "clusterIdentity": "SveltosCluster:fleet/demo-prod",
+          "sourceProfile": "demo-policy",
+          "stage": "fleet"
+        },
+        "hub": {
+          "spaceSlug": "sveltos-demo-policy-demo-prod",
+          "targetsSpace": "sveltos-targets"
+        }
+      },
+      {
+        "id": "space:sveltos-management",
+        "kind": "Space",
+        "name": "sveltos-management",
+        "details": {
+          "cluster": "mgmt",
+          "role": "management"
+        },
+        "hub": {
+          "spaceSlug": "sveltos-management",
+          "targetsSpace": "sveltos-targets"
+        }
+      },
+      {
+        "id": "space:sveltos-targets",
+        "kind": "Space",
+        "name": "sveltos-targets",
+        "details": {
+          "role": "targets"
+        },
+        "hub": {
+          "spaceSlug": "sveltos-targets",
+          "targetsSpace": "sveltos-targets"
+        }
+      },
+      {
+        "id": "target:demo-prod",
+        "kind": "Target",
+        "name": "demo-prod",
+        "details": {
+          "cluster": "demo-prod"
+        },
+        "hub": {
+          "targetSlug": "demo-prod",
+          "targetsSpace": "sveltos-targets"
+        }
+      },
+      {
+        "id": "target:mgmt",
+        "kind": "Target",
+        "name": "mgmt",
+        "details": {
+          "cluster": "mgmt"
+        },
+        "hub": {
+          "targetSlug": "mgmt",
+          "targetsSpace": "sveltos-targets"
+        }
+      },
+      {
+        "id": "unit:sveltos-demo-policy-base/demo-policy",
+        "kind": "Unit",
+        "name": "demo-policy",
+        "details": {
+          "source": "ConfigMap default/demo-policy"
+        },
+        "hub": {
+          "spaceSlug": "sveltos-demo-policy-base",
+          "unitSlug": "demo-policy"
+        }
+      },
+      {
+        "id": "unit:sveltos-demo-policy-demo-prod/demo-policy",
+        "kind": "Unit",
+        "name": "demo-policy",
+        "details": {
+          "source": "ConfigMap default/demo-policy"
+        },
+        "hub": {
+          "spaceSlug": "sveltos-demo-policy-demo-prod",
+          "unitSlug": "demo-policy"
+        }
+      },
+      {
+        "id": "unit:sveltos-management/delivery-demo-policy",
+        "kind": "Unit",
+        "name": "delivery-demo-policy",
+        "details": {
+          "role": "management record",
+          "sourceProfile": "demo-policy"
+        },
+        "hub": {
+          "spaceSlug": "sveltos-management",
+          "unitSlug": "delivery-demo-policy"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "space:sveltos-demo-policy-base",
+        "to": "unit:sveltos-demo-policy-base/demo-policy",
+        "relation": "contains"
+      },
+      {
+        "from": "space:sveltos-demo-policy-demo-prod",
+        "to": "space:sveltos-demo-policy-base",
+        "relation": "variantOf"
+      },
+      {
+        "from": "space:sveltos-demo-policy-demo-prod",
+        "to": "target:demo-prod",
+        "relation": "targets"
+      },
+      {
+        "from": "space:sveltos-demo-policy-demo-prod",
+        "to": "unit:sveltos-demo-policy-demo-prod/demo-policy",
+        "relation": "contains"
+      },
+      {
+        "from": "space:sveltos-management",
+        "to": "unit:sveltos-management/delivery-demo-policy",
+        "relation": "contains"
+      },
+      {
+        "from": "space:sveltos-targets",
+        "to": "target:demo-prod",
+        "relation": "registers"
+      },
+      {
+        "from": "space:sveltos-targets",
+        "to": "target:mgmt",
+        "relation": "registers"
+      },
+      {
+        "from": "unit:sveltos-demo-policy-demo-prod/demo-policy",
+        "to": "unit:sveltos-demo-policy-base/demo-policy",
+        "relation": "variantOf"
+      }
+    ]
+  },
+  "issues": [
+    {
+      "severity": "warning",
+      "code": "cluster_unselected",
+      "message": "SveltosCluster mgmt/mgmt is supplied but selected by no planned profile."
+    }
+  ]
+}
