@@ -49,7 +49,7 @@ func TestLiveStatus(t *testing.T) {
 		sync, health, phase, revision, msg string
 	}{
 		{"applied after the latest release, checked", summary(feature("Provisioned", later, "")), two, true, "Synced", "Healthy", "Succeeded", "sha256:two", ""},
-		{"applied before the latest release", summary(feature("Provisioned", published.Add(-time.Minute), "")), two, true, "OutOfSync", "Progressing", "Running", "sha256:one", "release 2, published 2026-09-28T10:00:00Z, not applied yet"},
+		{"applied before the latest release", summary(feature("Provisioned", published.Add(-time.Minute), "")), two, true, "OutOfSync", "Progressing", "Running", "sha256:one", "release 2, created 2026-09-28T10:00:00Z, not applied yet"},
 		{"still deploying", summary(feature("Provisioning", time.Time{}, "")), two, true, "OutOfSync", "Progressing", "Running", "", "Sveltos: Provisioning"},
 		{"failed", summary(feature("Failed", time.Time{}, "GVK nvidia.com/v1, Kind=ClusterPolicy not found")), two, true, "OutOfSync", "Degraded", "Failed", "", "Sveltos: Failed: GVK nvidia.com/v1, Kind=ClusterPolicy not found"},
 		{"no summary yet", nil, two, true, "Unknown", "Unknown", "", "", "Sveltos has not deployed this profile yet"},

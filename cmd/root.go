@@ -262,10 +262,14 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 
 For each delivery profile on the management cluster, it reads the ClusterSummary
 Sveltos keeps and the variant's published releases, and writes the variant
-Space's confighub.com/live-status: Synced and Healthy once the latest approved
-release is applied and its workloads are available, OutOfSync while a newer
+Space's confighub.com/live-status: Synced and Healthy once Sveltos has applied
+the latest release and its workloads were available, OutOfSync while a newer
 release is on its way, Degraded when Sveltos reports a failure. ConfigHub's
 healthy gate and its change orders read it.
+
+Sveltos does not report which release it fetched, so the release is worked
+out: the latest one created before Sveltos last applied the profile. Health is
+what Sveltos checked when it applied.
 
 It writes only when a reading changes, or when the one ConfigHub holds is older
 than --refresh.`,
