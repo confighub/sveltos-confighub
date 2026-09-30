@@ -6,7 +6,9 @@ and Sveltos still delivering. Version 0.5 changes what ConfigHub holds.
 Version 0.6 tells ConfigHub what Sveltos delivered, and proposes each cluster
 that joins for a person to approve. Version 0.7 checks every change against
 your policies before it ships. Version 0.8 previews what a change, or a new
-policy, would do to each cluster.
+policy, would do to each cluster. Version 0.9 keeps the policies themselves in
+ConfigHub, with known cases, and checks each change by the same policies it was
+previewed against.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -17,7 +19,7 @@ policy, would do to each cluster.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## Unreleased
+## 0.9.0, 2026-09-30
 
 **Policies held in ConfigHub, known cases, and one judge for preview and gate.**
 - `--policy` and `--candidate` read policies held in ConfigHub as well as
