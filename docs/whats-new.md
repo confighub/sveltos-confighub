@@ -32,6 +32,13 @@ walkthrough.
   a worker function. The PolicyCheck it records names the policy revisions, so
   a change is released under exactly the policies it was previewed against.
 
+**Live status says how it knows which release a cluster runs.** Sveltos does
+not report which release it fetched, so `cub sveltos status` works it out from
+release and apply times. The onboarding guide now says so, and why it matters:
+ConfigHub moves a change order on when the reported revision equals a
+release's digest. A waiting release's message now says when it was created,
+which is the time `status` reads.
+
 ## 0.8.0, 2026-09-28
 
 **Preview a change's impact before anything ships: `cub sveltos impact`.** It
@@ -80,7 +87,9 @@ gate to rely on. Reported to ConfigHub as confighubai/confighub#5530.
 what Sveltos delivered to each cluster. For each delivery profile, it reads the
 ClusterSummary Sveltos keeps and the variant's published releases, and writes
 the variant's `confighub.com/live-status`:
-- Synced and Healthy, with the digest of the release the cluster runs;
+- Synced and Healthy, with the digest of the release the cluster runs, worked
+  out from release and apply times
+  ([why](user/onboard-your-sveltos-fleet.md#live-status-in-confighub));
 - OutOfSync while a newer release waits;
 - Degraded when Sveltos reports a failure.
 

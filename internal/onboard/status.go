@@ -185,8 +185,12 @@ func publishedReleases(run Runner, space string) ([]release, error) {
 var workloadGVKs = []string{"Deployment.v1.apps", "StatefulSet.v1.apps", "DaemonSet.v1.apps"}
 
 // liveStatus maps what Sveltos reports for a delivery profile onto ConfigHub's
-// words. A feature applied after a release was published applied that
-// release: Sveltos fetches the variant's release each time it applies.
+// words. Sveltos does not report which release it fetched, so the release a
+// cluster runs is inferred: the latest one created before Sveltos last applied
+// the profile, since Sveltos fetches the variant's release each time it
+// applies. Releases created close together, or clocks that disagree, can make
+// the inference wrong, and ConfigHub moves a change order on when the revision
+// equals a release's digest.
 func liveStatus(profile string, summary map[string]any, releases []release, checked bool, now time.Time) LiveStatus {
 	s := LiveStatus{Source: statusSource, App: profile, ObservedAt: now.UTC().Format(time.RFC3339)}
 	features := list(obj(summary["status"])["featureSummaries"])
@@ -232,7 +236,7 @@ func liveStatus(profile string, summary map[string]any, releases []release, chec
 	case running < len(releases)-1:
 		latest := releases[len(releases)-1]
 		s.SyncStatus, s.HealthStatus, s.OperationPhase = "OutOfSync", "Progressing", "Running"
-		s.Message = fmt.Sprintf("release %d, published %s, not applied yet", latest.num, latest.createdAt.UTC().Format(time.RFC3339))
+		s.Message = fmt.Sprintf("release %d, created %s, not applied yet", latest.num, latest.createdAt.UTC().Format(time.RFC3339))
 	default:
 		s.SyncStatus, s.OperationPhase, s.HealthStatus = "Synced", "Succeeded", "Healthy"
 		if !checked && deploysWorkloads(summary) {
