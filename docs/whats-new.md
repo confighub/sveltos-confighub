@@ -25,9 +25,9 @@ walkthrough.
 `--management-release`. The management Space publishes releases, and one root
 profile on the management cluster fetches them, as Argo CD's app of apps does:
 after `apply.sh` applies it once, a change to the delivery profiles reaches the
-management cluster by publishing, not `kubectl`. A profile's delivery profiles
-join the record only once every variant they deliver has a release, so a
-joining cluster still waits for its approval. Measured on the Meridian slice:
+management cluster by publishing, not `kubectl`. A variant's delivery profile
+joins the record only once that variant has a release, so a joining cluster
+still waits for its approval. Measured on the Meridian slice:
 the root took over the six delivery profiles 17 seconds after it was applied,
 a change made only in ConfigHub arrived 44 seconds after publishing, and a
 check deleted by hand was back in 16. See [the management cluster's

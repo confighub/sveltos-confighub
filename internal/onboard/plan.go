@@ -173,6 +173,8 @@ type DeliverySet struct {
 	Profile  string
 	Unit     string
 	Profiles []*yaml.Node
+	// Spaces are the variant Spaces the Profiles deliver, in the same order.
+	Spaces []string
 	// Health is the profile's continuous health check: a HealthCheck and the
 	// ClusterHealthCheck that runs it on the profile's clusters.
 	Health []*yaml.Node
@@ -1024,6 +1026,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			checks := healthChecks(p.Units)
 			for _, v := range p.Variants {
 				set.Profiles = append(set.Profiles, deliveryProfile(v, sources[v.Member], gatewaySecretName(plan.TargetsSpace), keptHooks, checks))
+				set.Spaces = append(set.Spaces, v.Space)
 			}
 			set.Health = continuousHealth(p)
 			m.ByProfile = append(m.ByProfile, set)

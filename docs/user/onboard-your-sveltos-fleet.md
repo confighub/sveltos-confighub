@@ -240,14 +240,15 @@ ConfigHub instead, the way Argo CD's app of apps works:
 - The management Space publishes releases to the management cluster's
   Target, like any variant.
 - `management/root.yaml` is one ClusterProfile, addressed to the management
-  cluster itself, that fetches the latest of those releases. The script
-  applies it; from then on it only publishes.
-- Each profile's delivery profiles, and its health check, join the record once
-  every variant they deliver has a release. A cluster that joins still waits
-  for its approval: until its variant has a release, the record keeps that
-  profile's delivery profiles as they were. (Sveltos marks a profile `Failed`,
-  "not found", while the release it points at does not exist yet, so the
-  record never points at one.)
+  cluster itself, that fetches the latest of those releases. Each run of the
+  script publishes the record if it has anything new, and makes sure the root
+  is there; `kubectl` never applies a delivery profile.
+- A variant's delivery profile joins the record once that variant has a
+  release, beside its profile's health check. A cluster that joins still waits
+  for its approval: until its variant has a release, its delivery profile
+  stays out of the record. (Sveltos marks a profile `Failed`, "not found",
+  while the release it points at does not exist yet, so the record never
+  points at one.)
 - Removing the root profile leaves everything it delivered in place
   (`stopMatchingBehavior: LeavePolicies`): withdrawing would take every add-on
   off every cluster.
@@ -259,7 +260,7 @@ Measured on the Meridian slice
 ([management-release-2026-09-30.log](../../examples/meridian-slice/management-release-2026-09-30.log)):
 - The root profile was `Provisioned` 17 seconds after it was applied, and
   took over the six delivery profiles and the health check that `kubectl` had
-  put there.
+  put there: each now names the root as its owner.
 - A change made only in ConfigHub reached the management cluster 44 seconds
   after the record was published.
 - A HealthCheck deleted by hand on the management cluster was back 16 seconds

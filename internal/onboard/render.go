@@ -239,7 +239,9 @@ func ApplyScript(plan *Plan) string {
 		"# is the first release: each stage is promoted, approved, released. All of it",
 		"# is safe to re-run, which is also how a cluster that joined since gets its",
 		"# variants. Step 6 is the one change to your management cluster: a Secret",
-		"# holding the gateway credential, and one delivery profile per variant.",
+		"# holding the gateway credential, and one delivery profile per variant (with",
+		"# --management-release, the published management record and the root profile",
+		"# that fetches it).",
 		"#",
 		"# PROPOSE_ONLY=1 bash apply.sh approves nothing: a release waits for a",
 		"# person to approve it in ConfigHub, and a delivery profile for its release.",
@@ -456,10 +458,13 @@ func ApplyScript(plan *Plan) string {
 				"# The management record is delivered from ConfigHub: its Space releases to",
 				"# the management cluster's Target, and each profile's delivery profiles join",
 				"# it once every variant they deliver has a release (step 6).",
-				"MANAGEMENT="+q(m.Space),
+				"MANAGEMENT="+q(m.Space)+" MANAGEMENT_TARGET="+q(plan.TargetsSpace+"/"+m.Target),
 				line("cub", "space", "update", m.Space, "--release-target", plan.TargetsSpace+"/"+m.Target, "--quiet"))
 		}
 		for _, b := range m.ByProfile {
+			if m.Root != nil {
+				continue // record() makes each profile's units once its variants have releases
+			}
 			L = append(L,
 				line("cub", "unit", "create", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The profiles that deliver each %s variant's releases to its cluster", b.Profile), "--allow-exists", "--quiet"))
 			if m.Root == nil {
@@ -763,16 +768,23 @@ func HandoverScript(plan *Plan) string {
 	}
 	if m := plan.Management; m != nil && m.Root != nil {
 		L = append(L, "", "echo "+q("== the management record, delivered from ConfigHub from now on"))
+		unit := func(name, file, why string) {
+			L = append(L,
+				line("cub", "unit", "create", "--space", m.Space, name, file, "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", why, "--allow-exists", "--quiet"),
+				line("cub", "unit", "update", "--space", m.Space, name, file, "--change-desc", why, "--quiet"))
+		}
 		for _, p := range live {
-			L = append(L, line("cub", "unit", "update", "--space", m.Space, "delivery-"+Slug(p.Name), "management/"+p.Name+".yaml", "--change-desc", fmt.Sprintf("The delivery profiles for every %s variant", p.Name), "--quiet"))
+			unit("delivery-"+Slug(p.Name), "management/"+p.Name+".yaml", fmt.Sprintf("The delivery profiles for every %s variant", p.Name))
 			for _, b := range m.ByProfile {
 				if b.Profile == p.Name && len(b.Health) > 0 {
-					L = append(L, line("cub", "unit", "update", "--space", m.Space, healthUnit(p.Name), "management/"+p.Name+"-health.yaml", "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", p.Name), "--quiet"))
+					unit(healthUnit(p.Name), "management/"+p.Name+"-health.yaml", fmt.Sprintf("The continuous health check for the %s profile's clusters", p.Name))
 				}
 			}
 		}
 		L = append(L,
-			line("cub", "release", "publish", m.Space, "--quiet"),
+			"if ! out=$("+line("cub", "release", "publish", m.Space, "--quiet")+" 2>&1); then",
+			`  case "$out" in *"no changes were made since :latest bundle"*) ;; *) echo "$out" >&2; exit 1 ;; esac`,
+			"fi",
 			line("k", "apply", "-f", "management/root.yaml"))
 	}
 	L = append(L, "", "echo",
@@ -788,25 +800,45 @@ const recordHelpers = "\x00record-helpers"
 // recordFunctions are apply.sh's record and publish_record.
 var recordFunctions = []string{
 	"# record <profile> <delivery unit> <health unit> <variant Spaces>: with",
-	"# --management-release, the management record takes a profile's delivery",
-	"# profiles once every variant they deliver has a release; until then it",
-	"# keeps them as they were, so a joining cluster still waits for approval.",
+	"# --management-release, the management record holds the delivery profile of",
+	"# each variant that has a release, and the profile's health check. A variant",
+	"# without a release stays out, so a joining cluster still waits for approval,",
+	"# and Sveltos never fetches a release that does not exist yet.",
 	"record() {",
-	`  local p=$1 delivery=$2 health=$3 s; shift 3`,
+	`  local p=$1 delivery=$2 health=$3 file=management/$1.record.yaml s; shift 3`,
+	`  : > "$file"`,
 	`  for s in "$@"; do`,
-	`    released "$s" || { echo "$s has no release yet, so the management record keeps $p's delivery profiles as they were"; return 0; }`,
+	`    if released "$s"; then`,
+	`      { echo ---; cat "management/variants/$s.yaml"; } >> "$file"`,
+	"    else",
+	`      echo "$s has no release yet, so its delivery profile stays out of the management record"`,
+	"    fi",
 	"  done",
-	`  cub unit update --space "$MANAGEMENT" "$delivery" "management/$p.yaml" --change-desc "The delivery profiles for every $p variant" --quiet`,
-	`  [ "$health" = - ] || cub unit update --space "$MANAGEMENT" "$health" "management/$p-health.yaml" --change-desc "The continuous health check for the $p profile's clusters" --quiet`,
+	`  [ -s "$file" ] || return 0`,
+	`  record_unit "$delivery" "$file" "The delivery profiles for each $p variant with a release"`,
+	`  [ "$health" = - ] || record_unit "$health" "management/$p-health.yaml" "The continuous health check for the $p profile's clusters"`,
 	"  recorded=1",
 	"}",
+	"# record_unit <unit> <file> <reason>: the unit in the management record, made",
+	"# or brought up to date.",
+	"record_unit() {",
+	`  cub unit create --space "$MANAGEMENT" "$1" "$2" --target "$MANAGEMENT_TARGET" --change-desc "$3" --allow-exists --quiet`,
+	`  cub unit update --space "$MANAGEMENT" "$1" "$2" --change-desc "$3" --quiet`,
+	"}",
 	"# publish_record: publish the management record, and make sure the root",
-	"# profile that fetches it is in place.",
+	"# profile that fetches it is in place. A record with nothing new is already",
+	"# published.",
 	"publish_record() {",
 	`  [ -n "${recorded:-}" ] || return 0`,
-	`  cub release publish "$MANAGEMENT" --quiet`,
+	"  local out",
+	`  if ! out=$(cub release publish "$MANAGEMENT" --quiet 2>&1); then`,
+	`    case "$out" in`,
+	`      *"no changes were made since :latest bundle"*) echo "The management record has nothing new" ;;`,
+	`      *) echo "$out" >&2; return 1 ;;`,
+	"    esac",
+	"  fi",
 	"  k apply -f management/root.yaml",
-	`  echo "Published the management record: the management cluster takes it from ConfigHub within a minute"`,
+	`  echo "The management cluster takes the management record from ConfigHub within a minute"`,
 	"}",
 }
 

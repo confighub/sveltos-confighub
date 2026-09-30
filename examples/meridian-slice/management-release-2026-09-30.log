@@ -207,3 +207,42 @@ Done. Sveltos delivers each variant's release to its cluster within a minute. Wa
 -- A minute later: 3 releases of mer-management; the root's ClusterSummary Provisioned, last applied 07:10:19Z (08:10:19 local);
 -- 7 ClusterProfiles on the management cluster (six delivery profiles and the root). The health check's notification
 -- is named events again, as apply wrote it: the record, not the hand edit of step 4, is what the cluster runs.
+
+== 7. After a review: the record holds only variants with a release, and a record with nothing new is fine (08:27:26)
+-- apply now writes one delivery profile file per variant (management/variants/), step 4 makes no management
+-- units, and record puts a variant's profile in the record only once that variant has a release.
+$ cub sveltos apply onboard-watch/profiles.yaml clusters-now.yaml --class-label class --stage-label class --stages test,uat,prod --prefix mer --management-release --out onboard-mr2
+$ MGMT_CONTEXT=kind-mer-mgmt PROPOSE_ONLY=1 bash onboard-mr2/apply.sh
+== 4/6 The management cluster's record: one delivery profile per variant
+
+== 5/6 Release each variant, stage by stage: promote, approve, publish
+kyverno: every variant in this plan is released
+
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-mer-targets unchanged
+clusterprofile.config.projectsveltos.io/mer-management configured
+The management cluster takes the management record from ConfigHub within a minute
+
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
+  kubectl get clustersummaries -A
+-- the record was assembled from the six variant files, so it changed in form, and was published (4 releases)
+$ MGMT_CONTEXT=kind-mer-mgmt PROPOSE_ONLY=1 bash onboard-mr2/apply.sh    (again, nothing new)
+== 6/6 Point Sveltos at ConfigHub (your management cluster)
+secret/confighub-mer-targets unchanged
+The management record has nothing new
+clusterprofile.config.projectsveltos.io/mer-management configured
+The management cluster takes the management record from ConfigHub within a minute
+
+Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:
+  kubectl get clustersummaries -A
+-- still 4 releases: ConfigHub refuses a release with nothing new, and the script treats that as done
+
+== 8. What the root profile owns on the management cluster (by Sveltos's owner annotations)
+kyverno-eu-central-prod1: owner ClusterProfile/mer-management
+kyverno-eu-central-prod2: owner ClusterProfile/mer-management
+kyverno-eu-central-prod3: owner ClusterProfile/mer-management
+kyverno-eu-central-prod4: owner ClusterProfile/mer-management
+kyverno-eu-central-test1: owner ClusterProfile/mer-management
+kyverno-eu-central-uat1: owner ClusterProfile/mer-management
+healthcheck mer-kyverno: owner ClusterProfile/mer-management
+clusterhealthcheck mer-kyverno: owner ClusterProfile/mer-management

@@ -88,6 +88,17 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 				return "", err
 			}
 			files = append(files, outFile{"management/root.yaml", data, 0o644})
+			// One file per variant, so the record can take a variant's delivery
+			// profile once that variant has a release.
+			for _, b := range m.ByProfile {
+				for i, space := range b.Spaces {
+					data, err := EncodeYAML(b.Profiles[i])
+					if err != nil {
+						return "", err
+					}
+					files = append(files, outFile{"management/variants/" + space + ".yaml", data, 0o644})
+				}
+			}
 		}
 	}
 	files = append(files, outFile{"apply.sh", []byte(ApplyScript(plan)), 0o755})
