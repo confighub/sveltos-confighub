@@ -19,6 +19,22 @@ previewed against.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## Unreleased
+
+**Health, watched after every release too** (#71). Sveltos runs a delivery
+profile's `validateHealths` only when it deploys. `cub sveltos apply` now also
+writes, beside each profile's delivery profiles, a HealthCheck that judges the
+workloads the profile delivers and a ClusterHealthCheck that runs it on the
+profile's clusters all the time. `cub sveltos status` reads each cluster's
+condition: a workload that goes down after its release was applied turns the
+cluster Degraded, naming it, and Healthy again when it recovers. A rollout
+in progress reads Progressing. Measured on the Meridian slice: a stopped
+controller was reported in 37 seconds and its recovery in 46, while Sveltos
+still said `Provisioned`
+([health-2026-09-30.log](../examples/meridian-slice/health-2026-09-30.log)).
+The check needs Sveltos's ClusterHealthCheck installed; without it, `apply.sh`
+says so and goes on. See [live status](user/onboard-your-sveltos-fleet.md#live-status-in-confighub).
+
 ## 0.9.0, 2026-09-30
 
 **Policies held in ConfigHub, known cases, and one judge for preview and gate.**

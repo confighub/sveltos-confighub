@@ -70,6 +70,17 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 				return "", err
 			}
 			files = append(files, outFile{"management/" + b.Profile + ".yaml", data, 0o644})
+			if len(b.Health) > 0 {
+				health := make([]any, len(b.Health))
+				for i := range b.Health {
+					health[i] = b.Health[i]
+				}
+				data, err := EncodeYAML(health...)
+				if err != nil {
+					return "", err
+				}
+				files = append(files, outFile{"management/" + b.Profile + "-health.yaml", data, 0o644})
+			}
 		}
 	}
 	files = append(files, outFile{"apply.sh", []byte(ApplyScript(plan)), 0o755})

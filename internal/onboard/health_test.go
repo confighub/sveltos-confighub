@@ -117,3 +117,46 @@ func TestDeliveryProfilesCheckHealth(t *testing.T) {
 		t.Errorf("a source's Helm-time check runs after the delivered Resources instead")
 	}
 }
+
+// The continuous check runs as a Sveltos HealthCheck does: resources set to
+// the selected objects, evaluate() called, and each resource's status read
+// back from the status key, which is what Sveltos's agent reads.
+func TestContinuousHealthScript(t *testing.T) {
+	units := []Unit{{Objects: []Object{
+		{Kind: "Deployment", APIVersion: "apps/v1", Namespace: "kyverno", Name: "kyverno-cleanup-controller", Value: map[string]any{}},
+		{Kind: "StatefulSet", APIVersion: "apps/v1", Namespace: "kyverno", Name: "store", Value: map[string]any{}},
+	}}}
+	docs := continuousHealth(Profile{Name: "kyverno", Component: "mer-kyverno", Units: units})
+	script := mapGet(mapGet(docs[0], "spec"), "evaluateHealth").Value
+	objects := `[
+	  {"kind":"Deployment","metadata":{"name":"kyverno-cleanup-controller","namespace":"kyverno","generation":2},"spec":{"replicas":1},"status":{"observedGeneration":2,"updatedReplicas":1,"availableReplicas":0}},
+	  {"kind":"Deployment","metadata":{"name":"someone-else","namespace":"kyverno","generation":1},"spec":{"replicas":1},"status":{"observedGeneration":1,"updatedReplicas":1,"availableReplicas":0}},
+	  {"kind":"StatefulSet","metadata":{"name":"store","namespace":"kyverno","generation":3},"spec":{"replicas":2},"status":{"observedGeneration":2,"updatedReplicas":2,"readyReplicas":2}}]`
+	var resources []any
+	if err := json.Unmarshal([]byte(objects), &resources); err != nil {
+		t.Fatal(err)
+	}
+	l := lua.NewState()
+	defer l.Close()
+	if err := l.DoString(script); err != nil {
+		t.Fatalf("the script does not load: %v\n%s", err, script)
+	}
+	l.SetGlobal("resources", toLua(resources))
+	if err := l.CallByParam(lua.P{Fn: l.GetGlobal("evaluate"), NRet: 1, Protect: true}); err != nil {
+		t.Fatalf("evaluate fails: %v", err)
+	}
+	result := l.Get(-1).(*lua.LTable)
+	got := map[string]string{}
+	result.RawGetString("resources").(*lua.LTable).ForEach(func(_, v lua.LValue) {
+		r := v.(*lua.LTable)
+		name := lua.LVAsString(r.RawGetString("resource").(*lua.LTable).RawGetString("metadata").(*lua.LTable).RawGetString("name"))
+		got[name] = lua.LVAsString(r.RawGetString("status")) + ": " + lua.LVAsString(r.RawGetString("message"))
+	})
+	want := map[string]string{
+		"kyverno-cleanup-controller": "Degraded: kyverno-cleanup-controller: 0 of 1 available",
+		"store":                      "Progressing: store: rolling out",
+	}
+	if len(got) != len(want) || got["kyverno-cleanup-controller"] != want["kyverno-cleanup-controller"] || got["store"] != want["store"] {
+		t.Errorf("each delivered workload judged, and a workload the profile did not deliver left out: %v", got)
+	}
+}

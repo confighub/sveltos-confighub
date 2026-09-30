@@ -381,11 +381,14 @@ ConfigHub, as its live status:
   workloads were available;
 - **OutOfSync** while a newer release waits, or Sveltos is still deploying.
 
-Two limits: the release a cluster runs is worked out from release and apply
-times, not read from the cluster, and health is checked when Sveltos applies a
-release, not after. The [onboarding
+- **Degraded** when a workload goes down after its release was applied:
+  `apply` writes a ClusterHealthCheck for each profile, which Sveltos runs all
+  the time, and `status` reads it.
+
+One limit: the release a cluster runs is worked out from release and apply
+times, not read from the cluster. The [onboarding
 guide](docs/user/onboard-your-sveltos-fleet.md#live-status-in-confighub)
-explains both.
+explains it, and how health is watched.
 
 A change workflow can then hold each stage until the one before it is
 healthy. On kind, ConfigHub refused to promote to uat while test's new
