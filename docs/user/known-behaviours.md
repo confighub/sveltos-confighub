@@ -2,14 +2,14 @@
 
 Things we measured while building `cub sveltos` that a user, or anyone building on ConfigHub or Sveltos, will meet. Each entry says what happens, what to do about it, and when and where it was measured. When ConfigHub or Sveltos changes one, its entry is updated or removed.
 
-Measured on hub.confighub.com with `cub` v0.6.x, and on kind with stock Sveltos v1.15.0, in September 2026.
+Measured on ConfigHub (v0.6.5 where a log records the version) and on kind with stock Sveltos v1.15.0, in September 2026.
 
 ## ConfigHub
 
 **A release with nothing new is refused.**
 - **What happens:** `cub release publish` fails with HTTP 400, "no changes were made since :latest bundle".
 - **What to do:** treat that message as success. `apply.sh`, `handover.sh` and the management record's publish do.
-- **Measured:** 30 September.
+- **Measured:** 28 and 30 September ([policy-2026-09-28.log](../../examples/meridian-slice/policy-2026-09-28.log)).
 
 **After `cub variant demote`, the same change proposed again does not reach the demoted unit.**
 - **What happens:** the demote restores the unit's data, but the unit stays counted as upgraded to the revision it was demoted from. A later promotion of the same value is then no change to it, and reports "Upgraded" with no new revision.
@@ -52,19 +52,17 @@ Measured on hub.confighub.com with `cub` v0.6.x, and on kind with stock Sveltos 
 
 **Small things that cost time:**
 - `cub changeorder update --aborted-reason` rejects an apostrophe.
-- A promotion can print "carries no changes" and still make the upgrade revision; check the revisions.
 - Our organization's quota was 100 Spaces, and each variant is a Space. `cub sveltos plan` prints the count; ask for more before onboarding a large fleet.
 
 **The UI:**
-- It does not yet recognise live status from Sveltos: each card carries a dashed "source not reported" ring (confighubai/confighub#5049, patch attached).
-- Its rollout gates do not show approvals or attestation requirements yet, although the server enforces them.
+- It does not yet recognise live status from Sveltos: its cards read "Not reported yet" (confighubai/confighub#5049, patch attached).
 
 ## Sveltos
 
 **`validateHealths` runs only when Sveltos deploys.**
 - **What happens:** a profile is `Provisioned` once its health checks pass, and they are not run again. A workload that goes down later still shows `Provisioned`. The Sveltos maintainers confirm it: these checks work like Helm's post-install hooks.
-- **What to do:** use a ClusterHealthCheck for health after the release. `cub sveltos apply` writes one per profile.
-- **Measured:** 28 and 30 September ([health-2026-09-30.log](../../examples/meridian-slice/health-2026-09-30.log)).
+- **What to do:** use a ClusterHealthCheck for health after the release. `cub sveltos apply` writes one for each profile that delivers Deployments, StatefulSets or DaemonSets.
+- **Measured:** 30 September ([health-2026-09-30.log](../../examples/meridian-slice/health-2026-09-30.log)).
 
 **A ClusterHealthCheck's `Addons` check follows deployment, not running workloads.**
 - **What happens:** it stayed passing while a workload was down.
@@ -107,5 +105,5 @@ Measured on hub.confighub.com with `cub` v0.6.x, and on kind with stock Sveltos 
 - **Measured:** 28 September.
 
 **An overloaded host makes kind clusters restart their own pods.**
-- **What happens:** with sixteen kind clusters on one laptop, containers failed to start ("unable to apply cgroup configuration"). Kyverno and the control planes restarted more than 30 times. The continuous health check reported it, where Sveltos's own status did not.
+- **What happens:** with sixteen kind clusters on one laptop, containers failed to start ("unable to apply cgroup configuration"). Kyverno's pods restarted on their own. The continuous health check reported it, where Sveltos's own status did not.
 - **Measured:** 30 September ([health-2026-09-30.log](../../examples/meridian-slice/health-2026-09-30.log)).
