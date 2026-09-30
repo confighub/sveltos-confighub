@@ -21,6 +21,30 @@ stores each cluster's facts on its Target.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## 0.11.0, 2026-09-30
+
+Explore a fleet before adding a ConfigHub server. `plan --format json` exports a
+versioned preview of supplied input and proposed ConfigHub structure; ASCII
+remains the default. Planning problems remain in JSON with a nonzero exit.
+
+The optional shared ConfigHub UI is installed separately:
+
+```sh
+cub sveltos ui install --version plugin-ui-v0.1.0
+cub sveltos ui
+```
+
+Installation verifies a pinned release archive and its file manifest before
+selecting it. Failed upgrades preserve the previous UI. GitHub CLI access to
+`confighub/ui` is needed to download its release. Offline archive installation
+and `--assets-dir` remain available. No UI download is required for CLI use.
+The source-tree `scripts/install-plugin.sh --with-ui plugin-ui-v0.1.0` offers
+both in a single opt-in installation flow.
+
+See [the preview guide](../examples/ui-preview/README.md) for scope, safety,
+local installation, and error behavior. The UI never executes a preview or
+uploads it automatically.
+
 ## 0.10.0, 2026-09-30
 
 **The management cluster's record, delivered from ConfigHub** (#81), with

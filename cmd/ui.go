@@ -56,7 +56,14 @@ func newUICommand() *cobra.Command {
 				assetsDir = os.Getenv("CUB_UI_DIR")
 			}
 			if assetsDir == "" {
-				return errors.New("ui needs --assets-dir or CUB_UI_DIR pointing to the built UI bundle")
+				var err error
+				assetsDir, err = installedUIBundleDir()
+				if err != nil {
+					return err
+				}
+				if assetsDir == "" {
+					return errors.New("ui needs --assets-dir or CUB_UI_DIR, or install a bundle with 'cub sveltos ui install'")
+				}
 			}
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 			defer stop()
@@ -66,6 +73,7 @@ func newUICommand() *cobra.Command {
 	c.Flags().StringVar(&assetsDir, "assets-dir", "", "built confighub/ui bundle directory (defaults to CUB_UI_DIR)")
 	c.Flags().IntVar(&port, "port", 0, "loopback port (0 chooses an available port)")
 	c.Flags().BoolVar(&noBrowser, "no-browser", false, "print the URL without opening a browser")
+	c.AddCommand(newUIInstallCommand())
 	return c
 }
 

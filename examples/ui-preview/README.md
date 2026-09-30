@@ -1,7 +1,25 @@
 # Local plugin UI preview
 
-Build the `confighub/ui` bundle so its root contains `index.html` and
-`plugin-ui-manifest.json`, then serve the verified bundle:
+The UI is optional. To install a published bundle, install the Sveltos plugin
+first, then select a UI release explicitly:
+
+```sh
+cub sveltos ui install --version plugin-ui-v0.1.0
+cub sveltos ui
+```
+
+The installer downloads `confighub-plugin-ui.tar.gz` and its `.sha256` file
+from the matching `confighub/ui` GitHub release with the `gh` CLI. Configure
+`gh auth login` first when the repository requires authentication. For an
+offline install, pass both `--archive` and `--sha256`; the expected digest is
+the 64-character SHA-256 value. The archive must contain the bundle files at
+its root, including `index.html` and `plugin-ui-manifest.json`.
+
+The installer checks the archive digest, safely extracts and validates the
+manifest, then atomically selects the installed bundle. It retains older
+content-addressed versions. Without an explicit `--assets-dir` or
+`CUB_UI_DIR`, `cub sveltos ui` serves the selected install. An explicit local
+bundle remains useful during development:
 
 ```sh
 CUB_UI_DIR=/path/to/confighub/ui/dist cub sveltos ui
@@ -34,7 +52,19 @@ return a nonzero exit; input read/parse errors return a diagnostic without an
 envelope. The planner may read chart sources; opening an existing export does
 not require a cluster, server or network. No raw configuration bodies are exported.
 
-The UI bundle is optional and is not downloaded automatically. The initial
-pilot uses an explicitly supplied local build; release packaging and installer
-selection remain separate work. Shared contract and cross-plugin lessons live in
-`confighub/ui`, under `docs/dev/plugin-ui/`.
+The UI bundle is never downloaded during plugin installation. Shared contract
+and cross-plugin lessons live in `confighub/ui`, under `docs/dev/plugin-ui/`.
+
+## Choose the UI during installation
+
+The release also includes `install-plugin.sh` and its SHA-256 file. Download them
+from the trusted Sveltos release, verify the checksum, and run:
+
+```sh
+bash install-plugin.sh --with-ui plugin-ui-v0.1.0
+```
+
+Omit `--with-ui` for CLI only. The same script is in this checkout's `scripts/`.
+It installs the plugin through cub, then installs the explicitly requested UI
+version. UI failure returns nonzero; the CLI remains installed and an existing
+UI selection is preserved. It does not change cub's global installer behavior.

@@ -85,6 +85,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Include the optional installation wrapper
+        run: |
+          cp scripts/install-plugin.sh dist/install-plugin.sh
+          (cd dist && shasum -a 256 install-plugin.sh > install-plugin.sh.sha256)
       # The release's notes are its version's section of docs/whats-new.md,
       # followed by the merged pull requests GitHub lists. A version with no
       # section gets the list alone, and a warning.
