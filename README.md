@@ -485,3 +485,12 @@ this across the fleet yet.
 
 [Known behaviours](docs/user/known-behaviours.md) lists what we measured in
 ConfigHub and Sveltos that you will meet, and what to do about each.
+
+## Optional local UI
+
+`cub sveltos plan fleet.yaml --format json > preview.json` exports a local
+preview. Install the shared UI with `cub sveltos ui install --version
+plugin-ui-v0.1.0`, then run `cub sveltos ui` and open the file. CLI installation
+does not download a UI by default. From this source checkout,
+`scripts/install-plugin.sh --with-ui plugin-ui-v0.1.0` opts into both.
+See [the preview guide](examples/ui-preview/README.md).
