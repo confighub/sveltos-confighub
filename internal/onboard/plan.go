@@ -59,6 +59,11 @@ type Options struct {
 	// Gates are what each stage waits for beyond its approval: a policy's
 	// Triggers, and attestations.
 	Gates Gates
+	// ManagementRelease delivers the management record from ConfigHub: its
+	// Space publishes releases, and one root profile on the management
+	// cluster fetches them, as Argo CD's app of apps does. Otherwise apply.sh
+	// puts the delivery profiles there with kubectl.
+	ManagementRelease bool
 	// Render renders a chart; CubHelm when nil.
 	Render Renderer
 }
@@ -181,6 +186,8 @@ type Management struct {
 	Component string
 	Space     string
 	ByProfile []DeliverySet
+	// Root is the management cluster's root profile, with ManagementRelease.
+	Root *yaml.Node
 }
 
 // Target is a named destination for one cluster.
@@ -1021,6 +1028,9 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			set.Health = continuousHealth(p)
 			m.ByProfile = append(m.ByProfile, set)
 		}
+		if opts.ManagementRelease {
+			m.Root = rootProfile(m, plan.TargetsSpace)
+		}
 		plan.Management = m
 	}
 
@@ -1089,6 +1099,33 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 // basesStage is the first stage when a component has class bases: it carries a
 // change from the root base into every class base, which are never released.
 const basesStage = "bases"
+
+// rootProfile is the management cluster's root profile. It fetches the
+// management Space's release, which holds every delivery profile and health
+// check, and applies it to the management cluster itself. Removing it leaves
+// everything it delivered in place: withdrawing would take every add-on off
+// every cluster.
+func rootProfile(m *Management, targetsSpace string) *yaml.Node {
+	return mapping(
+		scalar("apiVersion"), scalar(profileAPIVersion),
+		scalar("kind"), scalar("ClusterProfile"),
+		scalar("metadata"), mapping(scalar("name"), scalar(m.Space)),
+		scalar("spec"), mapping(
+			scalar("clusterRefs"), seq(mapping(
+				scalar("apiVersion"), scalar(clusterRefAPI["SveltosCluster"]),
+				scalar("kind"), scalar("SveltosCluster"),
+				scalar("namespace"), scalar(m.Namespace),
+				scalar("name"), scalar(m.Cluster))),
+			scalar("syncMode"), scalar("ContinuousWithDriftDetection"),
+			scalar("stopMatchingBehavior"), scalar("LeavePolicies"),
+			scalar("continueOnError"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"},
+			scalar("policyRefs"), seq(mapping(
+				scalar("deploymentType"), scalar("Remote"),
+				scalar("remoteURL"), mapping(
+					scalar("url"), scalar(fmt.Sprintf("oci://%s/space/%s:%s", gatewayHost, m.Space, releaseTag)),
+					scalar("interval"), scalar(fetchInterval),
+					scalar("secretRef"), mapping(scalar("name"), scalar(gatewaySecretName(targetsSpace)), scalar("namespace"), scalar(secretNamespace)))))))
+}
 
 // selectorUnlessRefs is a profile's selector for its continuous health check,
 // or nil when it also names clusters by clusterRefs, which a label selector

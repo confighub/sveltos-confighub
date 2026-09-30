@@ -82,6 +82,13 @@ func WriteApply(plan *Plan, dir string) (string, error) {
 				files = append(files, outFile{"management/" + b.Profile + "-health.yaml", data, 0o644})
 			}
 		}
+		if m.Root != nil {
+			data, err := EncodeYAML(m.Root)
+			if err != nil {
+				return "", err
+			}
+			files = append(files, outFile{"management/root.yaml", data, 0o644})
+		}
 	}
 	files = append(files, outFile{"apply.sh", []byte(ApplyScript(plan)), 0o755})
 	if plan.Live {

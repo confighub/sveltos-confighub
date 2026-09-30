@@ -108,6 +108,9 @@ func RenderPlan(plan *Plan, next bool) string {
 		if watched > 0 {
 			out = append(out, fmt.Sprintf("  health   a ClusterHealthCheck per profile (%d): watches the workloads it delivers on its clusters, after each release too", watched))
 		}
+		if m.Root != nil {
+			out = append(out, fmt.Sprintf("  root     management/root.yaml, applied once: the management cluster takes this record from %s's releases", m.Space))
+		}
 	}
 	if len(plan.Ungoverned) > 0 || len(plan.Skipped) > 0 {
 		out = append(out, "", "Not onboarded")
@@ -361,6 +364,7 @@ func ApplyScript(plan *Plan) string {
 		`  [ -f "$1" ] || return 0`,
 		`  k apply -f "$1" || echo "Sveltos's ClusterHealthCheck is not installed here, so health is checked only when Sveltos deploys"`,
 		"}",
+		recordHelpers,
 		"",
 		`step "0/6 Check before changing anything"`,
 		`cub space list --quiet >/dev/null || { echo "cub is not logged in: run cub auth login"; exit 1; }`,
@@ -447,15 +451,26 @@ func ApplyScript(plan *Plan) string {
 		L = append(L, "", `step "4/6 The management cluster's record: one delivery profile per variant"`,
 			line("cub", "component", "create", m.Component, "--allow-exists", "--quiet"),
 			line("cub", "space", "create", m.Space, "--component", m.Component, "--allow-exists", "--quiet"))
+		if m.Root != nil {
+			L = append(L,
+				"# The management record is delivered from ConfigHub: its Space releases to",
+				"# the management cluster's Target, and each profile's delivery profiles join",
+				"# it once every variant they deliver has a release (step 6).",
+				"MANAGEMENT="+q(m.Space),
+				line("cub", "space", "update", m.Space, "--release-target", plan.TargetsSpace+"/"+m.Target, "--quiet"))
+		}
 		for _, b := range m.ByProfile {
 			L = append(L,
-				line("cub", "unit", "create", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The profiles that deliver each %s variant's releases to its cluster", b.Profile), "--allow-exists", "--quiet"),
-				line("cub", "unit", "update", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--change-desc", fmt.Sprintf("The delivery profiles for every %s variant this plan holds", b.Profile), "--quiet"))
+				line("cub", "unit", "create", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The profiles that deliver each %s variant's releases to its cluster", b.Profile), "--allow-exists", "--quiet"))
+			if m.Root == nil {
+				L = append(L, line("cub", "unit", "update", "--space", m.Space, b.Unit, "management/"+b.Profile+".yaml", "--change-desc", fmt.Sprintf("The delivery profiles for every %s variant this plan holds", b.Profile), "--quiet"))
+			}
 			if len(b.Health) > 0 {
-				unit := "health-" + Slug(b.Profile)
-				L = append(L,
-					line("cub", "unit", "create", "--space", m.Space, unit, "management/"+b.Profile+"-health.yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", b.Profile), "--allow-exists", "--quiet"),
-					line("cub", "unit", "update", "--space", m.Space, unit, "management/"+b.Profile+"-health.yaml", "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", b.Profile), "--quiet"))
+				unit := healthUnit(b.Profile)
+				L = append(L, line("cub", "unit", "create", "--space", m.Space, unit, "management/"+b.Profile+"-health.yaml", "--target", plan.TargetsSpace+"/"+m.Target, "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", b.Profile), "--allow-exists", "--quiet"))
+				if m.Root == nil {
+					L = append(L, line("cub", "unit", "update", "--space", m.Space, unit, "management/"+b.Profile+"-health.yaml", "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", b.Profile), "--quiet"))
+				}
 			}
 		}
 	}
@@ -519,16 +534,28 @@ func ApplyScript(plan *Plan) string {
 				continue
 			}
 			words := []string{"deliver", p.Name}
+			if root := plan.Management.Root != nil; root {
+				words = []string{"record", p.Name, "delivery-" + Slug(p.Name), "-"}
+				for _, b := range plan.Management.ByProfile {
+					if b.Profile == p.Name && len(b.Health) > 0 {
+						words[3] = healthUnit(p.Name)
+					}
+				}
+			}
 			for _, v := range p.Variants {
 				words = append(words, v.Space)
 			}
 			L = append(L, line(words...))
+		}
+		if plan.Management.Root != nil {
+			L = append(L, "publish_record")
 		}
 		L = append(L, "", "echo", `echo "Done. Sveltos delivers each variant's release to its cluster within a minute. Watch it with:"`, `echo "  kubectl get clustersummaries -A"`)
 		if len(live) > 0 {
 			L = append(L, "echo "+q(fmt.Sprintf("The delivery profiles of %s wait for handover.sh, which steps your live profiles aside first, so no object has two profiles managing it.", strings.Join(live, ", "))))
 		}
 	}
+	L = withRecordHelpers(L, plan.Management != nil && plan.Management.Root != nil)
 	return strings.Join(L, "\n") + "\n"
 }
 
@@ -734,11 +761,72 @@ func HandoverScript(plan *Plan) string {
 			L = append(L, "echo "+q(fmt.Sprintf("ConfigMap %s is no longer read; ConfigHub holds its objects. Delete it when you are ready: kubectl delete configmap -n %s %s", key, ns, name)))
 		}
 	}
+	if m := plan.Management; m != nil && m.Root != nil {
+		L = append(L, "", "echo "+q("== the management record, delivered from ConfigHub from now on"))
+		for _, p := range live {
+			L = append(L, line("cub", "unit", "update", "--space", m.Space, "delivery-"+Slug(p.Name), "management/"+p.Name+".yaml", "--change-desc", fmt.Sprintf("The delivery profiles for every %s variant", p.Name), "--quiet"))
+			for _, b := range m.ByProfile {
+				if b.Profile == p.Name && len(b.Health) > 0 {
+					L = append(L, line("cub", "unit", "update", "--space", m.Space, healthUnit(p.Name), "management/"+p.Name+"-health.yaml", "--change-desc", fmt.Sprintf("The continuous health check for the %s profile's clusters", p.Name), "--quiet"))
+				}
+			}
+		}
+		L = append(L,
+			line("cub", "release", "publish", m.Space, "--quiet"),
+			line("k", "apply", "-f", "management/root.yaml"))
+	}
 	L = append(L, "", "echo",
 		`echo "Done. Each delivery profile reports Provisioned within a minute:"`,
 		`echo "  kubectl get clustersummaries -A"`)
 	return strings.Join(L, "\n") + "\n"
 }
+
+// recordHelpers marks where apply.sh defines record and publish_record, which
+// only --management-release uses.
+const recordHelpers = "\x00record-helpers"
+
+// recordFunctions are apply.sh's record and publish_record.
+var recordFunctions = []string{
+	"# record <profile> <delivery unit> <health unit> <variant Spaces>: with",
+	"# --management-release, the management record takes a profile's delivery",
+	"# profiles once every variant they deliver has a release; until then it",
+	"# keeps them as they were, so a joining cluster still waits for approval.",
+	"record() {",
+	`  local p=$1 delivery=$2 health=$3 s; shift 3`,
+	`  for s in "$@"; do`,
+	`    released "$s" || { echo "$s has no release yet, so the management record keeps $p's delivery profiles as they were"; return 0; }`,
+	"  done",
+	`  cub unit update --space "$MANAGEMENT" "$delivery" "management/$p.yaml" --change-desc "The delivery profiles for every $p variant" --quiet`,
+	`  [ "$health" = - ] || cub unit update --space "$MANAGEMENT" "$health" "management/$p-health.yaml" --change-desc "The continuous health check for the $p profile's clusters" --quiet`,
+	"  recorded=1",
+	"}",
+	"# publish_record: publish the management record, and make sure the root",
+	"# profile that fetches it is in place.",
+	"publish_record() {",
+	`  [ -n "${recorded:-}" ] || return 0`,
+	`  cub release publish "$MANAGEMENT" --quiet`,
+	"  k apply -f management/root.yaml",
+	`  echo "Published the management record: the management cluster takes it from ConfigHub within a minute"`,
+	"}",
+}
+
+// withRecordHelpers puts record and publish_record where the marker is, or
+// drops the marker.
+func withRecordHelpers(L []string, root bool) []string {
+	var out []string
+	for _, l := range L {
+		if l != recordHelpers {
+			out = append(out, l)
+		} else if root {
+			out = append(out, recordFunctions...)
+		}
+	}
+	return out
+}
+
+// healthUnit is the management record's unit for a profile's continuous
+// health check.
+func healthUnit(profile string) string { return "health-" + Slug(profile) }
 
 // dependsOnOf is the profiles a profile names in dependsOn.
 func dependsOnOf(source *yaml.Node) []string {
