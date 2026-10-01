@@ -62,6 +62,8 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 
 Already installed? `cub plugin upgrade sveltos-confighub` moves you to the
 latest release. `cub sveltos version` prints which one you run.
+The [optional local UI](#optional-local-ui) can be added separately; normal
+plugin installation stays CLI-only.
 
 | Command | What it does |
 | --- | --- |
@@ -488,9 +490,49 @@ ConfigHub and Sveltos that you will meet, and what to do about each.
 
 ## Optional local UI
 
-`cub sveltos plan fleet.yaml --format json > preview.json` exports a local
-preview. Install the shared UI with `cub sveltos ui install --version
-plugin-ui-v0.1.0`, then run `cub sveltos ui` and open the file. CLI installation
-does not download a UI by default. From this source checkout,
-`scripts/install-plugin.sh --with-ui plugin-ui-v0.1.0` opts into both.
-See [the preview guide](examples/ui-preview/README.md).
+The UI is an **optional extra**. Viewing an exported preview needs no ConfigHub
+server, account, or live cluster. You can add ConfigHub later. The preview shows
+supplied inputs and proposed ConfigHub structure; it does not prove live delivery.
+
+The UI installer requires **Sveltos plugin v0.11.0 or newer**. For a new installation:
+
+```sh
+cub plugin install confighub/sveltos-confighub@v0.11.0
+```
+
+If the plugin is already installed, upgrade instead:
+
+```sh
+cub plugin upgrade sveltos-confighub@v0.11.0
+```
+
+Then install the published UI bundle and start it:
+
+```sh
+cub sveltos ui install --version plugin-ui-v0.1.0
+cub sveltos ui
+```
+
+Release downloads require the GitHub CLI (`gh`); authenticate it if repository
+access requires it. No UI source checkout or Node.js build is needed. The launcher
+opens a local browser page; use a bundled example or export your own preview:
+
+```sh
+cub sveltos plan fleet.yaml --format json > preview.json
+```
+
+Replace `fleet.yaml` with your Sveltos input file, then choose **Open preview** in
+the UI. Planning may fetch chart sources; viewing an existing export is offline.
+
+[Sveltos v0.11.0](https://github.com/confighub/sveltos-confighub/releases/tag/v0.11.0)
+is the CLI plugin release;
+[plugin-ui-v0.1.0](https://github.com/confighub/ui/releases/tag/plugin-ui-v0.1.0)
+is the separate shared UI bundle. Their versions are independent. Installing or
+upgrading the CLI does not automatically install or update the UI, and neither
+command installs a ConfigHub server.
+
+For a fresh installation from this source checkout,
+`scripts/install-plugin.sh --with-ui plugin-ui-v0.1.0` explicitly installs both.
+Existing users should use the upgrade and UI-install commands above.
+See [the preview guide](examples/ui-preview/README.md) for offline installation,
+verification, and building from the matching UI release source.
