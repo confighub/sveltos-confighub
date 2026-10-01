@@ -65,8 +65,9 @@ Measured on ConfigHub (v0.6.5 where a log records the version) and on kind with 
 - **Measured:** 30 September ([health-2026-09-30.log](../../examples/meridian-slice/health-2026-09-30.log)).
 
 **A ClusterHealthCheck's `Addons` check follows deployment, not running workloads.**
-- **What happens:** it stayed passing while a workload was down.
-- **What to do:** use the `HealthCheck` liveness type with a script.
+- **What happens:** it stayed passing while a workload was down. The Sveltos maintainers confirm this is intended: `Addons` reports the profile's own status, `Provisioned` or `Failed`.
+- **What to do:** use the `HealthCheck` liveness type with a script that names the workloads. `cub sveltos apply` writes one.
+- **Measured:** 30 September ([health-2026-09-30.log](../../examples/meridian-slice/health-2026-09-30.log)).
 
 **A HealthCheck's script must return each resource's health under `status`.**
 - **What happens:** the field's description says `healthStatus`, but the agent reads `status`. With `healthStatus`, every report is rejected: `spec.resourceStatuses[0].healthStatus: Unsupported value: ""`.
