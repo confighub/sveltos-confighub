@@ -1,7 +1,9 @@
 # Local plugin UI preview
 
-The UI is optional. To install a published bundle, install the Sveltos plugin
-first, then select a UI release explicitly:
+The UI is optional and viewing an exported preview needs no ConfigHub server
+or account. It requires Sveltos plugin v0.11.0 or newer; follow the
+[install or upgrade steps](../../README.md#optional-local-ui), then select a UI
+release explicitly. Plugin and UI bundle versions are independent:
 
 ```sh
 cub sveltos ui install --version plugin-ui-v0.1.0
@@ -36,7 +38,9 @@ static files only; it does not expose APIs or upload or execute a preview.
 The adjacent [`minimal.yaml`](minimal.yaml) and [`preview.json`](preview.json)
 show the CLI preview document that a local UI can inspect.
 
-Build the bundle in the UI checkout with `npm ci && npm run build:plugin`.
+To build this version yourself, check out the `plugin-ui-v0.1.0` tag in
+`confighub/ui`, then run `npm ci && npm run build:plugin`. The tagged source
+contains the explorer; subsequent server-release syncs removed it from UI `main`.
 Export a fresh preview with:
 
 ```sh
@@ -52,12 +56,13 @@ return a nonzero exit; input read/parse errors return a diagnostic without an
 envelope. The planner may read chart sources; opening an existing export does
 not require a cluster, server or network. No raw configuration bodies are exported.
 
-The UI bundle is never downloaded during plugin installation. Shared contract
-and cross-plugin lessons live in `confighub/ui`, under `docs/dev/plugin-ui/`.
+Normal `cub plugin install` does not download the UI bundle. The explicit
+wrapper below installs it as a second step. The [shared contract and lessons](https://github.com/confighub/ui/tree/plugin-ui-v0.1.0/docs/dev/plugin-ui)
+are available in the matching UI release source.
 
 ## Choose the UI during installation
 
-The release also includes `install-plugin.sh` and its SHA-256 file. Download them
+For fresh installations, the release also includes `install-plugin.sh` and its SHA-256 file. Download them
 from the trusted Sveltos release, verify the checksum, and run:
 
 ```sh
