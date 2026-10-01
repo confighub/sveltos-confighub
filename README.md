@@ -62,7 +62,7 @@ cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 
 Already installed? `cub plugin upgrade sveltos-confighub` moves you to the
 latest release. `cub sveltos version` prints which one you run.
-The [optional local UI](#optional-local-ui) can be added separately; normal
+The [optional local UI](#ui-plugin-optional) can be added separately; normal
 plugin installation stays CLI-only.
 
 | Command | What it does |
@@ -233,8 +233,14 @@ newly allowed, unchanged or unknown. The policies can live in ConfigHub, each
 change to them a revision that is previewed, approved and tagged in force, with
 known cases that say what each policy must refuse. On the Meridian slice,
 lowering prod's replica ceiling to 2 was newly denied on all four prod
-clusters, before anything changed. As a view in ConfigHub it could look like
-this (a mock, filled with the real results):
+clusters, before anything changed. The proposed ConfigHub view below is a
+**design mock filled with real CLI results**, not a shipped GUI feature.
+[ConfigHub #5325](https://github.com/confighubai/confighub/issues/5325) tracks
+the read-only policy-impact preview. Replacing this section's mock with a real
+screenshot when that GUI is available is tracked in
+[screenshot follow-up #96](https://github.com/confighub/sveltos-confighub/issues/96).
+The [UI plugin section](#ui-plugin-optional) explains the local and connected
+experience.
 
 ![Mock of a Policy impact view: lowering prod's replica ceiling to 2 is newly denied on the four prod clusters, with the policy revision behind each verdict, a note that nothing running is evicted, and a known case the proposal would now refuse](docs/images/sveltos/sveltos-policy-impact-mock.png)
 
@@ -488,11 +494,46 @@ this across the fleet yet.
 [Known behaviours](docs/user/known-behaviours.md) lists what we measured in
 ConfigHub and Sveltos that you will meet, and what to do about each.
 
-## Optional local UI
+<a id="optional-local-ui"></a>
+
+## UI plugin (optional)
 
 The UI is an **optional extra**. Viewing an exported preview needs no ConfigHub
 server, account, or live cluster. You can add ConfigHub later. The preview shows
 supplied inputs and proposed ConfigHub structure; it does not prove live delivery.
+
+### Policy-impact UI: local and connected
+
+This image illustrates a possible policy-impact view using real
+`cub sveltos impact --json` results from the Meridian fleet. It is a **design mock**;
+`plugin-ui-v0.1.0` currently displays inventory and proposed ConfigHub structure,
+not this policy-impact screen. Supporting impact-result files in the local UI
+would require an additional adapter and view.
+
+![Design mock for a future policy-impact UI, using real Meridian CLI results: four prod clusters newly denied by a proposed replica ceiling, with policy and configuration revisions and known-case results; not a screen shipped in plugin-ui-v0.1.0](docs/images/sveltos/sveltos-policy-impact-mock.png)
+
+| Mode | What the view would use and show |
+| --- | --- |
+| Local plugin, without ConfigHub | A supplied impact-result file and its recorded scope, verdicts and provenance. Opening it would not evaluate the cluster again, upload it, or authorize a change. |
+| Connected to ConfigHub | An authenticated selection of governed configurations and targets, with exact current and candidate policy, binding, parameter and configuration revisions. Results could link to the real records and explain which inputs produced each verdict. This is the prospective read-only workflow in [#5325](https://github.com/confighubai/confighub/issues/5325). |
+
+Connecting does not make an exported result current or prove delivery. The
+released explorer already supports authenticated configuration reads when
+hosted with ConfigHub, but it does not implement this policy-impact view.
+The local launcher's **Open connected mode** opens a separately hosted UI and
+its sign-in flow; it does not transfer the preview file.
+
+The mock's **Explain with AI** and **Request approval** buttons are illustrative,
+not available plugin actions. #5325's first phase does not approve, activate,
+promote or release a policy. Those actions would require separate supported
+workflows and permissions. Policy-impact verdicts also do not mean existing
+objects are evicted; the next applicable create or update may be refused.
+
+Section 4 should use a real ConfigHub screenshot once that GUI ships. Keep this
+mock here as a labelled design reference until a corresponding plugin view is
+implemented, then update the image and these capability descriptions together.
+
+### Install and run
 
 The UI installer requires **Sveltos plugin v0.11.0 or newer**. For a new installation:
 
