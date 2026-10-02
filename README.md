@@ -538,13 +538,13 @@ implemented, then update the image and these capability descriptions together.
 The UI installer requires **Sveltos plugin v0.11.0 or newer**. For a new installation:
 
 ```sh
-cub plugin install confighub/sveltos-confighub@v0.11.0
+cub plugin install confighub/sveltos-confighub@v0.11.1
 ```
 
 If the plugin is already installed, upgrade instead:
 
 ```sh
-cub plugin upgrade sveltos-confighub@v0.11.0
+cub plugin upgrade sveltos-confighub@v0.11.1
 ```
 
 Then install the published UI bundle and start it:

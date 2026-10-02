@@ -200,8 +200,9 @@ case "$*" in
   "unit get "*) echo 3 ;;
   "unit list "*) echo 99 ;;
   "changeworkflow get "*) echo staging,prod ;;
+  "worker get "*UserID*) [ -n "$NO_BOT_USER" ] || echo bot-user ;;
   "worker get "*) echo x ;;
-  "target create --help") [ -n "$OLD_CUB" ] || echo "      --permission strings" ;;
+  "target create --help") if [ -n "$OLD_CUB" ]; then echo "      --provider string"; else echo "      --permission strings"; fi ;;
   "release publish "*)
     for s in $WAITING; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
     for s in $NEEDS; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
@@ -266,7 +267,17 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	}
 	// Targets take the reading identity as permissions, with no worker,
 	// provider or parameters.
-	if !strings.Contains(calls, `cub target create prod-us --space sveltos-targets --allow-exists --quiet --permission View:x --permission ViewChildren:x`) || strings.Contains(calls, "--provider") {
+	// The user is the worker's UserID, not its BridgeWorkerID, and a Target
+	// that already exists gets the grant too.
+	for _, target := range plan.Targets {
+		for _, verb := range []string{"create", "update"} {
+			if n := strings.Count(calls, "cub target "+verb+" "+target.Target+" --space sveltos-targets"); n != 1 {
+				t.Errorf("one target %s for %s, found %d:\n%s", verb, target.Target, n, calls)
+			}
+		}
+	}
+	if !strings.Contains(calls, "cub worker get --space sveltos-targets server-worker -o jq=.BridgeWorker.UserID") ||
+		strings.Count(calls, "--permission View:bot-user --permission ViewChildren:bot-user") != 2*len(plan.Targets) || strings.Contains(calls, "--provider") {
 		t.Errorf("each Target grants the worker's bot user View and ViewChildren:\n%s", calls)
 	}
 	if strings.Contains(calls, "cub variant approve") {
@@ -305,6 +316,13 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		t.Errorf("a cub whose Targets still take a worker stops the script before it changes anything: %v\n%s", err, out)
 	}
 	os.Unsetenv("OLD_CUB")
+
+	t.Setenv("NO_BOT_USER", "1")
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err == nil || !strings.Contains(out, "has no bot user") || strings.Contains(calls, "--allow-exists --quiet --permission") {
+		t.Errorf("a worker with no bot user stops the script before any Target is made: %v\n%s", err, out)
+	}
+	os.Unsetenv("NO_BOT_USER")
 
 	out, calls, err = run("", "", true)
 	if err != nil || strings.Contains(calls, "changeorder create") || strings.Contains(calls, "release publish") || !strings.Contains(out, "every variant in this plan is released") {

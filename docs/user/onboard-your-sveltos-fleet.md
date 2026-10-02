@@ -202,12 +202,13 @@ MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/apply.sh
 `apply` writes the files, the rendered objects among them, and one script,
 and runs nothing. The script for the example is
 [committed](../../examples/onboard/apply/apply.sh), so you can read exactly
-what yours will do. It checks first that `cub` is logged in and that your
-management cluster runs Sveltos v1.14.0 or newer (earlier releases cannot
-read the gzipped layers ConfigHub's gateway serves), then:
+what yours will do. It checks first that `cub` is logged in and is v0.7.0 or
+newer, and that your management cluster runs Sveltos v1.14.0 or newer (earlier
+releases cannot read the gzipped layers ConfigHub's gateway serves), then:
 
-1. Creates one Target per cluster, named for it, on a server-hosted worker,
-   and stores each cluster's facts on its Target with `cub sveltos facts`:
+1. Creates one Target per cluster, named for it, and a server-hosted worker
+   for Sveltos to read as. Each Target grants that worker's bot user (its
+   `UserID`) View and ViewChildren. It stores each cluster's facts on its Target with `cub sveltos facts`:
    its Kubernetes version, CRDs, and storage and ingress classes. It reaches
    each cluster through the kubeconfig Sveltos uses, from its Secret on the
    management cluster; a cluster only the management cluster reaches needs

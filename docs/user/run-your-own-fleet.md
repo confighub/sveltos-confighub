@@ -140,13 +140,15 @@ These were each paid for once so you do not have to.
   the image its run used.
 - **The gateway auth secret must be typed** `addons.projectsveltos.io/cluster-profile`;
   an Opaque secret is rejected. The ORAS client is HTTPS-only. For a fleet
-  that runs longer than a day, put the Targets' server worker in it, its ID
+  that runs longer than a day, put a server-hosted worker in it, its ID
   under `username` and its secret under `password`: the gateway lets a
-  Target's own worker pull that Target's releases, and the credential does
-  not expire (measured on 2026-09-26 with Sveltos v1.15.0). A `cub auth
+  worker pull the releases of the Targets that grant its bot user View and
+  ViewChildren, and the credential does not expire (measured on 2026-09-26
+  with Sveltos v1.15.0, when a Target named its worker). A `cub auth
   get-token` login token under `token` also works, which is what the chapter
   runs use, but it expires within a day. Give each worker its own Secret:
-  the gateway refuses a worker that is not the Target's own with 403.
+  the gateway refuses a worker the Target does not grant access to with 403
+  (measured before `cub` v0.7.0, as a worker that was not the Target's own).
 - **A Space serves from the gateway only with a release target set and a
   release published.** Until both exist the gateway answers with an error,
   which is the correct inert state for an unapproved record.
@@ -217,7 +219,10 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
 4. **Name the cluster's destination**: mint each cluster's named Target in
    your infrastructure Space, and grant the identity Sveltos pulls with View
    and ViewChildren on it:
-   `cub target create <cluster> --space <infra-space> --permission View:<bot user> --permission ViewChildren:<bot user> --allow-exists`.
+   `cub target create <cluster> --space <infra-space> --permission View:<bot user> --permission ViewChildren:<bot user> --allow-exists`,
+   where `<bot user>` is the worker's `UserID`
+   (`cub worker get --space <infra-space> <worker> -o jq=.BridgeWorker.UserID`),
+   not its worker ID.
    That is the form since `cub` v0.7.0. The recorded chapters were made
    before it, when a Target was created against a worker
    (`cub target create <cluster> '{}' <worker> --provider OCI --toolchain Any`),
