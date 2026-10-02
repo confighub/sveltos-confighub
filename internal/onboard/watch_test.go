@@ -50,36 +50,57 @@ func (b *fleetBench) run(name string, args ...string) ([]byte, error) {
 			items = append(items, map[string]any{"metadata": map[string]any{"name": n}, "spec": map[string]any{}})
 		}
 		return json.Marshal(map[string]any{"items": items})
-	case all == "cub space list -o jq=[.[].Space.Slug]":
-		var slugs []string
-		for s := range b.spaces {
-			slugs = append(slugs, s)
-		}
-		return json.Marshal(slugs)
-	case all == "cub release list --space * --where Published = true AND Space.Slug LIKE 'sveltos-%' -o jq=[.[] | (.Release // .) | .SpaceSlug] | unique":
-		var slugs []string
-		for s := range b.released {
-			slugs = append(slugs, s)
-		}
-		return json.Marshal(slugs)
-	case strings.HasPrefix(all, "cub changeorder get --space ") && strings.HasSuffix(all, " -o jq=.ChangeOrder.ChangeOrderID"):
-		id, ok := b.orders[args[3]+"/"+args[4]]
-		if !ok {
-			return nil, errors.New("not found")
-		}
-		return json.Marshal(id)
-	case strings.HasPrefix(all, "cub attestation list --where ChangeOrderID = "):
-		id := strings.Trim(strings.TrimPrefix(args[3], "ChangeOrderID = "), "'")
-		return json.Marshal(b.approvals[id])
 	}
 	b.t.Errorf("unexpected: %s", all)
 	return nil, errors.New("unexpected")
 }
 
+// hub is the ConfigHub half of the bench.
+func (b *fleetBench) hub() *fakeHub {
+	return &fakeHub{t: b.t,
+		spaces: func(where string) ([]HubSpace, error) {
+			if where != "" {
+				b.t.Errorf("the watcher reads every Space: %q", where)
+			}
+			var spaces []HubSpace
+			for s := range b.spaces {
+				spaces = append(spaces, HubSpace{Slug: s})
+			}
+			return spaces, nil
+		},
+		released: func(prefix string) ([]string, error) {
+			if prefix != "sveltos-" {
+				b.t.Errorf("releases are read for the plan's Spaces: %q", prefix)
+			}
+			var slugs []string
+			for s := range b.released {
+				slugs = append(slugs, s)
+			}
+			return slugs, nil
+		},
+		order: func(space, order string) (HubChangeOrder, error) {
+			id, ok := b.orders[space+"/"+order]
+			if !ok {
+				return HubChangeOrder{}, errors.New("not found")
+			}
+			return HubChangeOrder{ID: id}, nil
+		},
+		attestations: func(changeOrderID string) (int, error) {
+			return b.approvals[changeOrderID], nil
+		},
+		patch: func(space string, patch []byte) error {
+			var p struct{ Annotations map[string]string }
+			_ = json.Unmarshal(patch, &p)
+			b.annotated[space] = p.Annotations[JoinAnnotation]
+			return nil
+		},
+	}
+}
+
 func (b *fleetBench) watcher(out string) *Watcher {
 	opts := watchOpts
 	opts.Render = func(c Chart) (Rendering, error) { b.renders++; return fake(c) }
-	return NewWatcher(b.run, WatchOptions{
+	return NewWatcher(b.run, b.hub(), WatchOptions{
 		Context: "mgmt", Out: out, Plan: opts,
 		Profiles: parse(b.t, profile("kyverno", watchedProfile)),
 		Now:      func() time.Time { return published },
@@ -92,12 +113,6 @@ func (b *fleetBench) watcher(out string) *Watcher {
 				b.afterRun()
 			}
 			return []byte("kyverno waits for approval in stage prod: cub variant approve ...\n"), nil
-		},
-		Write: func(space string, patch []byte) error {
-			var p struct{ Annotations map[string]string }
-			_ = json.Unmarshal(patch, &p)
-			b.annotated[space] = p.Annotations[JoinAnnotation]
-			return nil
 		},
 	})
 }

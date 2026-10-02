@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -25,6 +26,11 @@ var (
 
 // Version is the plugin's version, set at release build time.
 func Version() string { return version }
+
+// hub is the plugin's one connection to ConfigHub, through the SDK. It
+// connects on first use, so plan and apply, which ask ConfigHub nothing, need
+// no login.
+var hub = sync.OnceValue(func() *onboard.SDKHub { return onboard.NewHub(version) })
 
 type planFlags struct {
 	prefix       string
@@ -236,7 +242,7 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 			}
 			lc.ClusterKind, lc.ClusterNamespace, lc.Cluster = cp[0], cp[1], cp[2]
 			lc.ReleaseNamespace, lc.Release = rp[0], rp[1]
-			r, err := onboard.CompareLive(onboard.Run, lc)
+			r, err := onboard.CompareLive(onboard.Run, hub(), lc)
 			if err != nil {
 				return fmt.Errorf("%s %s: %w", lc.Cluster, lc.Release, err)
 			}
@@ -292,7 +298,7 @@ than --refresh.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			for {
-				reports, err := onboard.ReportStatus(onboard.Run, so)
+				reports, err := onboard.ReportStatus(onboard.Run, hub(), so)
 				if err != nil && !watch {
 					return err
 				}
@@ -305,6 +311,8 @@ than --refresh.`,
 					return nil
 				}
 				time.Sleep(interval)
+				// A login renewed since reaches the next reading.
+				hub().Renew()
 			}
 		},
 	}
@@ -347,7 +355,7 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 				return err
 			}
 			wo.Profiles, wo.Plan = docs, wf.options()
-			w := onboard.NewWatcher(onboard.Run, wo)
+			w := onboard.NewWatcher(onboard.Run, hub(), wo)
 			out, errs := c.OutOrStdout(), c.ErrOrStderr()
 			last, told := "", ""
 			for {
@@ -383,6 +391,8 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 					return err
 				}
 				time.Sleep(every)
+				// A login renewed since reaches the next look.
+				hub().Renew()
 			}
 		},
 	}
@@ -430,7 +440,7 @@ nothing releases a change this has not passed.
 				sandboxCheck.Exec = onboard.RunWithInput
 				co.Sandbox = &sandboxCheck
 			}
-			results, err := onboard.Check(onboard.Run, co)
+			results, err := onboard.Check(onboard.Run, hub(), co)
 			w := c.OutOrStdout()
 			failed := false
 			for _, r := range results {
@@ -504,7 +514,7 @@ user. A ValidatingAdmissionPolicy does not evict what runs: newly denied means
 the next create or update would be refused.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
-			r, err := onboard.Impact(onboard.RunWithInput, io_)
+			r, err := onboard.Impact(onboard.RunWithInput, hub(), io_)
 			if err != nil {
 				return err
 			}
@@ -612,7 +622,7 @@ kubeconfig that reaches it at <dir>/<cluster>.kubeconfig, with --kubeconfigs.`,
 			if fo.TargetsSpace == "" && !fo.DryRun {
 				return fmt.Errorf("say which Space holds the Targets, with --targets")
 			}
-			results, err := onboard.CollectFacts(onboard.Run, fo)
+			results, err := onboard.CollectFacts(onboard.Run, hub(), fo)
 			w := c.OutOrStdout()
 			failed := false
 			for _, r := range results {

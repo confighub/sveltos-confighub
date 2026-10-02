@@ -128,7 +128,7 @@ var contextBound = []string{"request.userInfo", "oldObject", "namespaceObject", 
 // denied, newly allowed, unchanged, or unknown when the verdict needs what the
 // configuration does not hold. The verdicts are the sandbox API server's own;
 // nothing here judges a policy.
-func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
+func Impact(x Exec, hub Hub, o ImpactOptions) (*ImpactReport, error) {
 	if o.StageLabel == "" {
 		o.StageLabel = "Stage"
 	}
@@ -138,7 +138,7 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 	if len(o.Candidates) == 0 && !o.Next && len(o.Tests) == 0 {
 		return nil, fmt.Errorf("give candidate policies (--candidate), compare with what the next promotion brings (--next), or run tests (--tests)")
 	}
-	cur, err := readSources(x, o.Policies)
+	cur, err := readSources(hub, o.Policies)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 	cand, candidate := cur, current
 	var candSources []string
 	if len(o.Candidates) > 0 {
-		c, err := readSources(x, o.Candidates)
+		c, err := readSources(hub, o.Candidates)
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +163,7 @@ func Impact(x Exec, o ImpactOptions) (*ImpactReport, error) {
 		}
 		candSources = c.sorted
 	}
-	targets, err := impactTargets(x, o)
+	targets, err := impactTargets(hub, o)
 	if err != nil {
 		return nil, err
 	}
@@ -329,35 +329,26 @@ func matching(rules []resourceRule, group, version, resource string) []resourceR
 
 // impactTargets are the component's cluster variants, each at the revision
 // it runs, and the corpus's failing revisions.
-func impactTargets(x Exec, o ImpactOptions) ([]target, error) {
+func impactTargets(hub Hub, o ImpactOptions) ([]target, error) {
 	var targets []target
 	if o.Component != "" {
-		out, _, err := x(nil, "cub", "space", "list", "--where", fmt.Sprintf("Component.Slug = '%s' AND Labels.Role = 'deployment'", o.Component), "-o", "json")
+		spaces, err := hub.Spaces(fmt.Sprintf("Component.Slug = '%s' AND Labels.Role = 'deployment'", o.Component))
 		if err != nil {
 			return nil, fmt.Errorf("listing the variants of %s: %w", o.Component, err)
 		}
-		var spaces []struct {
-			Space struct {
-				Slug   string
-				Labels map[string]string
-			}
-		}
-		if err := json.Unmarshal(out, &spaces); err != nil {
-			return nil, err
-		}
 		for _, sp := range spaces {
-			units, err := unitsOf(x, sp.Space.Slug)
+			units, err := unitsOf(hub, sp.Slug)
 			if err != nil {
 				return nil, err
 			}
-			t := target{name: firstOf(sp.Space.Labels["Cluster"], sp.Space.Slug), stage: sp.Space.Labels[o.StageLabel], space: sp.Space.Slug}
+			t := target{name: firstOf(sp.Labels["Cluster"], sp.Slug), stage: sp.Labels[o.StageLabel], space: sp.Slug}
 			var configs, nexts []string
 			for _, u := range units {
-				rev := u.LastReleasedRevisionNum
+				rev := u.Released
 				if rev == 0 {
-					rev = u.HeadRevisionNum
+					rev = u.Head
 				}
-				docs, err := revisionDocs(x, sp.Space.Slug, u.Slug, rev)
+				docs, err := revisionDocs(hub, sp.Slug, u.Slug, rev)
 				if err != nil {
 					return nil, err
 				}
@@ -365,28 +356,18 @@ func impactTargets(x Exec, o ImpactOptions) ([]target, error) {
 				configs = append(configs, fmt.Sprintf("%s@%d", u.Slug, rev))
 				if o.Next {
 					if u.UpstreamUnitID == "" {
-						return nil, fmt.Errorf("%s/%s has no upstream, so it has no next promotion", sp.Space.Slug, u.Slug)
+						return nil, fmt.Errorf("%s/%s has no upstream, so it has no next promotion", sp.Slug, u.Slug)
 					}
-					out, _, err := x(nil, "cub", "unit", "get", "--space", u.UpstreamSpaceID, u.UpstreamUnitID, "-o", "json")
+					up, err := hub.Unit(u.UpstreamSpaceID, u.UpstreamUnitID)
 					if err != nil {
-						return nil, fmt.Errorf("the upstream of %s/%s: %w", sp.Space.Slug, u.Slug, err)
+						return nil, fmt.Errorf("the upstream of %s/%s: %w", sp.Slug, u.Slug, err)
 					}
-					var up struct {
-						Unit struct {
-							Slug            string
-							SpaceSlug       string
-							HeadRevisionNum int
-						}
-					}
-					if err := json.Unmarshal(out, &up); err != nil {
-						return nil, err
-					}
-					docs, err := revisionDocs(x, up.Unit.SpaceSlug, up.Unit.Slug, up.Unit.HeadRevisionNum)
+					docs, err := revisionDocs(hub, up.SpaceSlug, up.Slug, up.Head)
 					if err != nil {
 						return nil, err
 					}
 					t.next = append(t.next, docs...)
-					nexts = append(nexts, fmt.Sprintf("%s/%s@%d", up.Unit.SpaceSlug, up.Unit.Slug, up.Unit.HeadRevisionNum))
+					nexts = append(nexts, fmt.Sprintf("%s/%s@%d", up.SpaceSlug, up.Slug, up.Head))
 				}
 			}
 			t.config, t.candidate = strings.Join(configs, ","), strings.Join(nexts, ",")
@@ -394,7 +375,7 @@ func impactTargets(x Exec, o ImpactOptions) ([]target, error) {
 		}
 	}
 	if len(o.Tests) > 0 {
-		s, err := readSources(x, o.Tests)
+		s, err := readSources(hub, o.Tests)
 		if err != nil {
 			return nil, err
 		}
@@ -418,35 +399,25 @@ func impactTargets(x Exec, o ImpactOptions) ([]target, error) {
 		}
 	}
 	for _, space := range o.Corpus {
-		units, err := unitsOf(x, space)
+		units, err := unitsOf(hub, space)
 		if err != nil {
 			return nil, err
 		}
 		stage := ""
-		if out, _, err := x(nil, "cub", "space", "get", space, "-o", "jq=.Space.Labels"); err == nil {
-			var labels map[string]string
-			_ = json.Unmarshal(out, &labels)
-			stage = labels[o.StageLabel]
+		if sp, err := hub.Space(space); err == nil {
+			stage = sp.Labels[o.StageLabel]
 		}
 		for _, u := range units {
-			out, _, err := x(nil, "cub", "revision", "list", "--space", space, u.Slug, "-o", "json")
+			revs, err := hub.Revisions(space, u.Slug, "")
 			if err != nil {
 				return nil, err
 			}
-			var revs []map[string]any
-			if err := json.Unmarshal(out, &revs); err != nil {
-				return nil, err
-			}
 			for _, r := range revs {
-				rev := obj(r["Revision"])
-				if rev == nil {
-					rev = r
-				}
-				if len(obj(rev["ValidationErrors"])) == 0 {
+				if !r.Failing {
 					continue
 				}
-				num := int(rev["RevisionNum"].(float64))
-				docs, err := revisionDocs(x, space, u.Slug, num)
+				num := r.Num
+				docs, err := revisionDocs(hub, space, u.Slug, num)
 				if err != nil {
 					return nil, err
 				}
@@ -465,32 +436,16 @@ func impactTargets(x Exec, o ImpactOptions) ([]target, error) {
 	return targets, nil
 }
 
-type unitRow struct {
-	Slug                    string
-	HeadRevisionNum         int
-	LastReleasedRevisionNum int
-	UpstreamUnitID          string
-	UpstreamSpaceID         string
-}
-
-func unitsOf(x Exec, space string) ([]unitRow, error) {
-	out, _, err := x(nil, "cub", "unit", "list", "--space", space, "-o", "json")
+func unitsOf(hub Hub, space string) ([]HubUnit, error) {
+	units, err := hub.Units(space)
 	if err != nil {
 		return nil, fmt.Errorf("listing the units of %s: %w", space, err)
-	}
-	var rows []struct{ Unit unitRow }
-	if err := json.Unmarshal(out, &rows); err != nil {
-		return nil, err
-	}
-	var units []unitRow
-	for _, r := range rows {
-		units = append(units, r.Unit)
 	}
 	return units, nil
 }
 
-func revisionDocs(x Exec, space, unit string, rev int) ([]Doc, error) {
-	out, _, err := x(nil, "cub", "revision", "data", "--space", space, unit, fmt.Sprint(rev))
+func revisionDocs(hub Hub, space, unit string, rev int) ([]Doc, error) {
+	out, err := hub.RevisionData(space, unit, rev)
 	if err != nil {
 		return nil, fmt.Errorf("%s/%s revision %d: %w", space, unit, rev, err)
 	}

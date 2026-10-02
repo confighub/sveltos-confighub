@@ -10,7 +10,8 @@ policy, would do to each cluster. Version 0.9 keeps the policies themselves in
 ConfigHub, with known cases, and checks each change by the same policies it was
 previewed against. Version 0.10 watches each cluster's health after every
 release too, can deliver the management cluster's record from ConfigHub, and
-stores each cluster's facts on its Target.
+stores each cluster's facts on its Target. Version 0.12 works with `cub`
+v0.7.0's Targets, and asks ConfigHub through its SDK.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -21,7 +22,7 @@ stores each cluster's facts on its Target.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## 0.11.1, 2026-10-02
+## 0.12.0, 2026-10-02
 
 Needs `cub` v0.7.0 or newer.
 
@@ -35,7 +36,21 @@ Target from an earlier run gets the same grant. With `cub` v0.7.0, the
 `--provider`, the new script stops before it changes anything and says to
 upgrade.
 
-The plugin is built on the ConfigHub SDK v0.8.0.
+**ConfigHub is asked through the SDK.** `check`, `status`, `impact`, `watch`,
+`compare` and `facts` read Spaces, units, revisions, releases, change orders
+and Targets, and write live status and attestations, through the ConfigHub SDK
+(v0.8.0) in the plugin's own process. For those questions they no longer run
+`cub` and read what it prints, so they do not break when its output changes.
+They use the login `cub` passes a plugin, or the active context. `status
+--watch` and `watch` read the login saved for that context again before each
+reading, so `cub auth login` in another terminal reaches a watcher that is
+running; a change of context in another terminal does not move it.
+
+`cub` is still run where a `cub` command is the thing wanted: the validating
+function a `check` names (`cub function vet`), a cluster's facts (`cub k8s
+collect`), and a chart's rendering (`cub helm template`). The scripts `apply`
+writes still call `cub`, for you to read and run; `watch` runs `apply.sh` for a
+cluster that joins.
 
 ## 0.11.0, 2026-09-30
 

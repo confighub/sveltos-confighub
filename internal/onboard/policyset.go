@@ -1,7 +1,6 @@
 package onboard
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -35,7 +34,7 @@ type sourced struct {
 	tests  []string          // each source of test cases
 }
 
-func readSources(x Exec, refs []string) (sourced, error) {
+func readSources(hub Hub, refs []string) (sourced, error) {
 	s := sourced{from: map[string]string{}}
 	for _, ref := range refs {
 		if _, err := os.Stat(ref); err == nil {
@@ -50,12 +49,12 @@ func readSources(x Exec, refs []string) (sourced, error) {
 			s.add(ref, docs)
 			continue
 		}
-		units, err := resolveRef(x, ref)
+		units, err := resolveRef(hub, ref)
 		if err != nil {
 			return s, err
 		}
 		for _, u := range units {
-			docs, err := revisionDocs(x, u.space, u.unit, u.rev)
+			docs, err := revisionDocs(hub, u.space, u.unit, u.rev)
 			if err != nil {
 				return s, err
 			}
@@ -114,7 +113,7 @@ type unitRev struct {
 }
 
 // resolveRef names the unit revisions a ConfigHub policy source holds.
-func resolveRef(x Exec, ref string) ([]unitRev, error) {
+func resolveRef(hub Hub, ref string) ([]unitRev, error) {
 	path, rev, _ := strings.Cut(ref, "@")
 	space, unit, _ := strings.Cut(path, "/")
 	if space == "" || strings.Contains(unit, "/") {
@@ -129,20 +128,16 @@ func resolveRef(x Exec, ref string) ([]unitRev, error) {
 		}
 		num = n
 	}
-	var units []unitRow
+	var units []HubUnit
 	if unit != "" {
-		out, _, err := x(nil, "cub", "unit", "get", "--space", space, unit, "-o", "json")
+		u, err := hub.Unit(space, unit)
 		if err != nil {
 			return nil, fmt.Errorf("%s is neither a file nor a unit in ConfigHub", ref)
 		}
-		var u struct{ Unit unitRow }
-		if err := json.Unmarshal(out, &u); err != nil {
-			return nil, err
-		}
-		units = []unitRow{u.Unit}
+		units = []HubUnit{u}
 	} else {
 		var err error
-		if units, err = unitsOf(x, space); err != nil {
+		if units, err = unitsOf(hub, space); err != nil {
 			return nil, err
 		}
 		if len(units) == 0 {
@@ -151,22 +146,18 @@ func resolveRef(x Exec, ref string) ([]unitRev, error) {
 	}
 	tagID := ""
 	if tagged {
-		out, _, err := x(nil, "cub", "tag", "get", "--space", space, tag, "-o", "json")
+		id, err := hub.TagID(space, tag)
 		if err != nil {
 			return nil, fmt.Errorf("%s: no tag %s in %s", ref, tag, space)
 		}
-		var t struct{ Tag struct{ TagID string } }
-		if err := json.Unmarshal(out, &t); err != nil {
-			return nil, err
-		}
-		tagID = t.Tag.TagID
+		tagID = id
 	}
 	var out []unitRev
 	for _, u := range units {
 		r := unitRev{space: space, unit: u.Slug, rev: num}
 		switch {
 		case tagged:
-			r.rev = taggedRevision(x, space, u.Slug, tagID)
+			r.rev = taggedRevision(hub, space, u.Slug, tagID)
 			if r.rev == 0 {
 				if unit != "" {
 					return nil, fmt.Errorf("%s: no revision of %s/%s is tagged %s", ref, space, u.Slug, tag)
@@ -174,7 +165,7 @@ func resolveRef(x Exec, ref string) ([]unitRev, error) {
 				continue // a unit the tag does not mark is not in the set
 			}
 		case num == 0:
-			r.rev = u.HeadRevisionNum
+			r.rev = u.Head
 		}
 		out = append(out, r)
 	}
@@ -185,27 +176,19 @@ func resolveRef(x Exec, ref string) ([]unitRev, error) {
 }
 
 // taggedRevision is the revision of a unit a tag marks, or 0.
-func taggedRevision(x Exec, space, unit, tagID string) int {
-	out, _, err := x(nil, "cub", "revision", "list", "--space", space, unit, "-o", "json")
+func taggedRevision(hub Hub, space, unit, tagID string) int {
+	revs, err := hub.Revisions(space, unit, "Tags ? '"+tagID+"'")
 	if err != nil {
 		return 0
 	}
-	var revs []map[string]any
-	if json.Unmarshal(out, &revs) != nil {
-		return 0
-	}
+	// A tag can mark more than one revision of a unit: the newest is meant.
+	newest := 0
 	for _, r := range revs {
-		rev := obj(r["Revision"])
-		if rev == nil {
-			rev = r
-		}
-		if _, ok := obj(rev["Tags"])[tagID]; ok {
-			if n, ok := rev["RevisionNum"].(float64); ok {
-				return int(n)
-			}
+		if r.Tags[tagID] && r.Num > newest {
+			newest = r.Num
 		}
 	}
-	return 0
+	return newest
 }
 
 // testCase is an object with its impact annotations taken off, so the

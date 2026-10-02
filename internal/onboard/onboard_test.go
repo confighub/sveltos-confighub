@@ -1272,7 +1272,20 @@ func TestCompareLive(t *testing.T) {
 		return base64.StdEncoding.EncodeToString([]byte(base64.StdEncoding.EncodeToString(gz.Bytes())))
 	}
 	const installed = "---\n# Source: p/templates/d.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\nspec:\n  replicas: 2\n"
-	world := func(pullMode bool, releases string, stored string) Runner {
+	// ConfigHub holds the unit at revision 3, the one last released.
+	var stored string
+	hub := &fakeHub{t: t,
+		unit: func(space, unit string) (HubUnit, error) {
+			return HubUnit{Slug: unit, SpaceSlug: space, Head: 4, Released: 3}, nil
+		},
+		data: func(space, unit string, revision int) ([]byte, error) {
+			if space != "s-a" || unit != "p" || revision != 3 {
+				t.Errorf("the released revision is what is compared: %s/%s@%d", space, unit, revision)
+			}
+			return []byte(stored), nil
+		}}
+	world := func(pullMode bool, releases string, held string) Runner {
+		stored = held
 		return func(name string, args ...string) ([]byte, error) {
 			all := name + " " + strings.Join(args, " ")
 			switch {
@@ -1285,10 +1298,6 @@ func TestCompareLive(t *testing.T) {
 				return []byte(`{"data":{"kubeconfig":"` + base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nkind: Config\n")) + `"}}`), nil
 			case strings.Contains(all, "--kubeconfig") && strings.Contains(all, "owner=helm,name=p,status=deployed"):
 				return []byte(releases), nil
-			case strings.Contains(all, "cub unit get --space s-a p"):
-				return []byte("3\n"), nil
-			case strings.Contains(all, "cub revision data --space s-a p 3"):
-				return []byte(stored), nil
 			}
 			t.Errorf("unexpected command: %s", all)
 			return nil, errors.New("unexpected")
@@ -1297,19 +1306,19 @@ func TestCompareLive(t *testing.T) {
 	check := LiveCheck{Context: "mgmt", ClusterKind: "SveltosCluster", ClusterNamespace: "projectsveltos", Cluster: "a", ReleaseNamespace: "p", Release: "p", Space: "s-a", Unit: "p"}
 	one := `{"items":[{"data":{"release":"` + record(installed) + `"}}]}`
 
-	r, err := CompareLive(world(false, one, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\n  namespace: p\nspec:\n  replicas: 2\n"), check)
+	r, err := CompareLive(world(false, one, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\n  namespace: p\nspec:\n  replicas: 2\n"), hub, check)
 	if err != nil || r.Skipped != "" || r.Comparison.Same != 1 || len(r.Comparison.Differences) != 0 {
 		t.Errorf("the same Deployment compares the same: %+v %v", r, err)
 	}
-	r, err = CompareLive(world(false, one, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\nspec:\n  replicas: 1\n"), check)
+	r, err = CompareLive(world(false, one, "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: p\nspec:\n  replicas: 1\n"), hub, check)
 	if err != nil || len(r.Comparison.Differences) != 1 || !strings.Contains(r.Comparison.Differences[0], "spec.replicas is 2 on the cluster, 1 stored") {
 		t.Errorf("a different replica count is a difference: %+v %v", r, err)
 	}
-	r, err = CompareLive(world(false, `{"items":[]}`, ""), check)
+	r, err = CompareLive(world(false, `{"items":[]}`, ""), hub, check)
 	if err != nil || !strings.Contains(r.Skipped, "no deployed record") {
 		t.Errorf("with no Helm record there is nothing to compare: %+v %v", r, err)
 	}
-	r, err = CompareLive(world(true, "", ""), check)
+	r, err = CompareLive(world(true, "", ""), hub, check)
 	if err != nil || !strings.Contains(r.Skipped, "pull mode") {
 		t.Errorf("a cluster in pull mode cannot be read from the management cluster: %+v %v", r, err)
 	}
