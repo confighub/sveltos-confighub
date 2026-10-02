@@ -107,6 +107,9 @@ func TestReportStatus(t *testing.T) {
 			return releases, nil
 		},
 		space: func(space string) (HubSpace, error) {
+			if space != "sveltos-kyverno-prod-eu" {
+				t.Errorf("the reading held is read from the variant's Space: %s", space)
+			}
 			return HubSpace{Slug: space, Annotations: map[string]string{LiveStatusAnnotation: held}}, nil
 		},
 		patch: func(space string, patch []byte) error {

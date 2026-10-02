@@ -19,9 +19,12 @@ import (
 type SDKHub struct {
 	agent string
 
-	mu      sync.Mutex
-	conn    *cubapi.Client
-	renewed bool
+	mu   sync.Mutex
+	conn *cubapi.Client
+	// context is the name of the cub context this process connected as, when
+	// it is known: the one cub passed, or the active one when run alone.
+	context string
+	stale   bool
 }
 
 // NewHub is the Hub the commands use. It connects on first use, so a command
@@ -34,58 +37,88 @@ func NewHub(version string) *SDKHub {
 // token this process was started with. A command that runs for days calls it
 // before each reading: a token expires, and cub auth login in another
 // terminal then reaches the running command, as it did when each reading ran
-// cub.
+// cub. It stays in the context it started in, on the same server.
 func (h *SDKHub) Renew() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.conn, h.renewed = nil, true
+	h.stale = h.conn != nil
 }
 
 func (h *SDKHub) client(ctx context.Context) (*cubapi.Client, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.conn != nil {
-		return h.conn, nil
-	}
 	opts := cubapi.ClientOptions{UserAgent: h.agent}
-	var c *cubapi.Client
-	var err error
-	if h.renewed {
-		c, err = savedLogin(ctx, opts)
+	if h.conn == nil {
+		c, name, err := connect(ctx, opts)
+		if err != nil {
+			return nil, fmt.Errorf("connecting to ConfigHub: %w", err)
+		}
+		h.conn, h.context = c, name
+		return c, nil
 	}
-	if c == nil {
-		// What cub passed this plugin, or the saved login when run alone.
-		c, err = cubapi.ResolveClient(ctx, opts)
+	if h.stale {
+		c, err := savedLogin(ctx, opts, h.context, h.conn.Server)
+		if err != nil {
+			return nil, fmt.Errorf("reading the saved login: %w", err)
+		}
+		if c != nil {
+			h.conn = c
+		}
+		h.stale = false
 	}
-	if err != nil {
-		return nil, fmt.Errorf("connecting to ConfigHub: %w", err)
-	}
-	h.conn = c
-	return c, nil
+	return h.conn, nil
 }
 
-// savedLogin is the login cub has saved for the context this process runs
-// in, or nil when there is none, as in a pipeline that passes only a token.
-func savedLogin(ctx context.Context, opts cubapi.ClientOptions) (*cubapi.Client, error) {
+// connect is the first connection: as cub passed this plugin, or as the
+// active context when run alone. It names the context it connected as.
+func connect(ctx context.Context, opts cubapi.ClientOptions) (*cubapi.Client, string, error) {
 	env, err := cubapi.LoadEnvironment(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	store, err := cubapi.LoadConfig(env.Config)
+	if env.HasCredentials() {
+		c, err := cubapi.NewClientFromEnvironment(ctx, opts)
+		return c, env.Context, err
+	}
+	// CUB_CONFIG names the directory the config is in, which is what
+	// LoadConfig reads when it is given no path.
+	store, err := cubapi.LoadConfig("")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if env.Context != "" {
 		if err := store.Use(env.Context); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
+	active, err := store.ActiveContext()
+	if err != nil {
+		return nil, "", err
+	}
 	c, err := cubapi.NewClientFromConfig(ctx, store, opts)
+	return c, active.Name, err
+}
+
+// savedLogin is the login cub has saved for the context this process
+// connected as. It is nil when there is none to use: no saved login at all,
+// as in a pipeline that passes only a token; a context that is gone or
+// logged out; or one that now names another server.
+func savedLogin(ctx context.Context, opts cubapi.ClientOptions, name, server string) (*cubapi.Client, error) {
+	store, err := cubapi.LoadConfig("")
 	if err != nil {
 		return nil, err
 	}
-	// A saved login for another server is not this process's login.
-	if env.Server != "" && !cubapi.SameServer(env.Server, c.Server) {
+	if name != "" {
+		if err := store.Use(name); err != nil {
+			return nil, nil
+		}
+	}
+	active, err := store.ActiveContext()
+	if err != nil || !cubapi.SameServer(active.Coordinate.ServerURL, server) {
+		return nil, nil
+	}
+	c, err := cubapi.NewClientFromConfig(ctx, store, opts)
+	if err != nil {
 		return nil, nil
 	}
 	return c, nil
@@ -297,10 +330,10 @@ func (h *SDKHub) RevisionData(space, unit string, revision int) ([]byte, error) 
 			return nil, err
 		}
 		if res.StatusCode() != http.StatusOK {
-			if apiErr := cubapi.InterpretErrorGeneric(nil, res); apiErr != nil {
-				return nil, apiErr
-			}
 			return nil, fmt.Errorf("reading revision %d of %s: %s", revision, unit, res.Status())
+		}
+		if len(res.Body) == 0 {
+			return nil, fmt.Errorf("no config data for revision %d of unit %s", revision, unit)
 		}
 		return res.Body, nil
 	}
@@ -356,8 +389,7 @@ func (h *SDKHub) ReleasedSpaces(prefix string) ([]string, error) {
 		return nil, err
 	}
 	where := fmt.Sprintf("Published = true AND Space.Slug LIKE '%s%%'", prefix)
-	include := "SpaceID"
-	res, err := c.API.ListAllReleasesWithResponse(ctx, &goclientnew.ListAllReleasesParams{Where: &where, Include: &include})
+	res, err := c.API.ListAllReleasesWithResponse(ctx, &goclientnew.ListAllReleasesParams{Where: &where})
 	if cubapi.IsAPIError(err, res) {
 		return nil, cubapi.InterpretErrorGeneric(err, res)
 	}
@@ -368,6 +400,8 @@ func (h *SDKHub) ReleasedSpaces(prefix string) ([]string, error) {
 	var unnamed []goclientnew.UUID
 	for _, er := range *res.JSON200 {
 		switch {
+		case er.Release != nil && er.Release.SpaceSlug != "":
+			seen[er.Release.SpaceSlug] = true
 		case er.Space != nil && er.Space.Slug != "":
 			seen[er.Space.Slug] = true
 		case er.Release != nil:

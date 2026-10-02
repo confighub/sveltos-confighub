@@ -181,12 +181,14 @@ func taggedRevision(hub Hub, space, unit, tagID string) int {
 	if err != nil {
 		return 0
 	}
+	// A tag can mark more than one revision of a unit: the newest is meant.
+	newest := 0
 	for _, r := range revs {
-		if r.Tags[tagID] {
-			return r.Num
+		if r.Tags[tagID] && r.Num > newest {
+			newest = r.Num
 		}
 	}
-	return 0
+	return newest
 }
 
 // testCase is an object with its impact annotations taken off, so the

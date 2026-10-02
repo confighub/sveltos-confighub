@@ -39,16 +39,18 @@ upgrade.
 **ConfigHub is asked through the SDK.** `check`, `status`, `impact`, `watch`,
 `compare` and `facts` read Spaces, units, revisions, releases, change orders
 and Targets, and write live status and attestations, through the ConfigHub SDK
-(v0.8.0) in the plugin's own process. They no longer run `cub` and read what
-it prints, so they do not break when its output changes. They use the login
-`cub` passes a plugin, or the active context. `status --watch` and `watch`
-read the saved login again before each reading, so `cub auth login` in another
-terminal reaches a watcher that is running.
+(v0.8.0) in the plugin's own process. For those questions they no longer run
+`cub` and read what it prints, so they do not break when its output changes.
+They use the login `cub` passes a plugin, or the active context. `status
+--watch` and `watch` read the login saved for that context again before each
+reading, so `cub auth login` in another terminal reaches a watcher that is
+running; a change of context in another terminal does not move it.
 
-Three things still run `cub`, because each is a `cub` command of its own: the
-validating function a `check` names (`cub function vet`), a cluster's facts
-(`cub k8s collect`), and a chart's rendering (`cub helm template`). The
-scripts `apply` writes still call `cub`: they are for you to read and run.
+`cub` is still run where a `cub` command is the thing wanted: the validating
+function a `check` names (`cub function vet`), a cluster's facts (`cub k8s
+collect`), and a chart's rendering (`cub helm template`). The scripts `apply`
+writes still call `cub`, for you to read and run; `watch` runs `apply.sh` for a
+cluster that joins.
 
 ## 0.11.0, 2026-09-30
 

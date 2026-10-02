@@ -10,7 +10,8 @@ import "time"
 // run themselves and not a question: the validating function a check names
 // (cub function vet), a cluster's facts (cub k8s collect), and a chart's
 // rendering (cub helm template). The scripts apply writes call cub too: they
-// are for a person to read and run.
+// are for a person to read and run, and watch runs apply.sh for a cluster
+// that joins.
 
 // Hub is what the plugin asks ConfigHub at run time. A space or unit is named
 // by its slug, or by its ID.

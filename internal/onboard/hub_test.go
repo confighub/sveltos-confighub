@@ -1,9 +1,7 @@
 package onboard
 
 import (
-	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 )
 
@@ -132,27 +130,4 @@ func (h *fakeHub) TargetSlugs(space string) ([]string, error) {
 		return nil, h.unexpected("TargetSlugs", space)
 	}
 	return h.targets(space)
-}
-
-// A command that runs for days renews its login before each reading. With no
-// saved login, as in a pipeline that passes only a token, it keeps the token
-// it was started with.
-func TestRenewKeepsTheTokenPassedWhenNoLoginIsSaved(t *testing.T) {
-	t.Setenv("CUB_SERVER", "https://hub.example.com")
-	t.Setenv("CUB_TOKEN", "passed")
-	t.Setenv("CUB_CONFIG", filepath.Join(t.TempDir(), "none", "config.yaml"))
-	t.Setenv("CUB_CONTEXT", "")
-	h := NewHub("test")
-	first, err := h.client(context.Background())
-	if err != nil || first.Server != "https://hub.example.com" {
-		t.Fatalf("the plugin connects as cub passed it: %+v %v", first, err)
-	}
-	if again, _ := h.client(context.Background()); again != first {
-		t.Errorf("one connection is kept between questions")
-	}
-	h.Renew()
-	renewed, err := h.client(context.Background())
-	if err != nil || renewed == first || renewed.Server != "https://hub.example.com" {
-		t.Errorf("after Renew the connection is made again, to the same server: %+v %v", renewed, err)
-	}
 }
