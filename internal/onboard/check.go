@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -64,15 +63,13 @@ type verdict struct {
 	Details []string
 }
 
-var recordedID = regexp.MustCompile(`attestation ([0-9a-f-]{36})`)
-
 // Check runs a validating function on each variant a change order has reached
 // in a stage, on the revisions the order marks there, and records the verdict
 // as an attestation of opts.Type: a Pass, or a rejection that blocks the
 // release until it is revoked. A stage whose releases require that type then
 // publishes only what passed; unlike a Trigger, nothing lets a release
 // through when the check has not run.
-func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
+func Check(run Runner, hub Hub, opts CheckOptions) ([]CheckResult, error) {
 	base, order, ok := strings.Cut(opts.ChangeOrder, "/")
 	if !ok || base == "" || order == "" || opts.Stage == "" || (len(opts.Function) == 0 && opts.Sandbox == nil) {
 		return nil, fmt.Errorf("check needs --change-order <base space>/<order>, --stage, and a function or a sandbox with policies")
@@ -80,21 +77,12 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 	if opts.Type == "" {
 		opts.Type = "PolicyCheck"
 	}
-	out, err := run("cub", "changeorder", "get", "--space", base, order, "-o", "json")
+	co, err := hub.ChangeOrder(base, order)
 	if err != nil {
-		return nil, err
-	}
-	var co struct {
-		ChangeOrder struct {
-			InScopeSpaceIDs []string
-			ChangeWorkflow  struct{ Stages []stageGate }
-		}
-	}
-	if err := json.Unmarshal(out, &co); err != nil {
 		return nil, fmt.Errorf("reading change order %s: %w", opts.ChangeOrder, err)
 	}
 	where := ""
-	for _, s := range co.ChangeOrder.ChangeWorkflow.Stages {
+	for _, s := range co.Stages {
 		if s.Name == opts.Stage {
 			where = s.WhereSpace
 		}
@@ -102,36 +90,25 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 	if where == "" {
 		return nil, fmt.Errorf("change order %s has no stage %s", opts.ChangeOrder, opts.Stage)
 	}
-	out, err = run("cub", "space", "list", "--where", where, "-o", "jq=[.[].Space | {SpaceID, Slug, Labels}]")
+	spaces, err := hub.Spaces(where)
 	if err != nil {
-		return nil, err
-	}
-	var spaces []struct {
-		SpaceID, Slug string
-		Labels        map[string]string
-	}
-	if err := json.Unmarshal(out, &spaces); err != nil {
 		return nil, fmt.Errorf("reading the Spaces of stage %s: %w", opts.Stage, err)
 	}
 	inScope := map[string]bool{}
-	for _, id := range co.ChangeOrder.InScopeSpaceIDs {
+	for _, id := range co.InScope {
 		inScope[id] = true
 	}
 	var results []CheckResult
 	subjects := map[string][]subject{}
 	var targets []target
 	for _, sp := range spaces {
-		if !inScope[sp.SpaceID] {
+		if !inScope[sp.ID] {
 			continue
 		}
 		r := CheckResult{Space: sp.Slug, Passed: true}
 		// The revisions the attestation would cover, which are the ones to check.
-		out, err := run("cub", "attestation", "create", "--space", sp.Slug, "--type", opts.Type, "--change-order", opts.ChangeOrder, "--dry-run", "-o", "json")
+		dry, err := hub.Attest(HubAttestation{Space: sp.Slug, Type: opts.Type, ChangeOrderID: co.ID}, true)
 		if err != nil {
-			return results, err
-		}
-		var dry struct{ Subjects []subject }
-		if err := json.Unmarshal(out, &dry); err != nil {
 			return results, fmt.Errorf("%s: reading what the attestation would cover: %w", sp.Slug, err)
 		}
 		if len(dry.Subjects) == 0 {
@@ -141,7 +118,7 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 		for _, s := range dry.Subjects {
 			r.Revisions = append(r.Revisions, fmt.Sprintf("%s/%d", s.UnitSlug, s.RevisionNum))
 			if opts.Sandbox != nil {
-				docs, err := revisionDocs(opts.Sandbox.Exec, sp.Slug, s.UnitSlug, s.RevisionNum)
+				docs, err := revisionDocs(hub, sp.Slug, s.UnitSlug, s.RevisionNum)
 				if err != nil {
 					return results, err
 				}
@@ -155,19 +132,20 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 		return nil, fmt.Errorf("no Space of stage %s is in change order %s", opts.Stage, opts.ChangeOrder)
 	}
 
-	checker, claim := "", ""
+	checker := ""
+	var claims map[string]string
 	var judged map[string]map[string]admission
 	var policies sourced
 	if opts.Sandbox != nil {
 		var err error
-		if judged, policies, err = sandboxJudge(*opts.Sandbox, targets); err != nil {
+		if judged, policies, err = sandboxJudge(*opts.Sandbox, hub, targets); err != nil {
 			return results, err
 		}
 		checker = "the policies " + strings.Join(policies.sorted, ", ")
-		claim = "check.confighub.com/policies=" + strings.Join(policies.sorted, ",")
+		claims = map[string]string{"check.confighub.com/policies": strings.Join(policies.sorted, ",")}
 	} else {
 		checker = opts.Function[0]
-		claim = "check.confighub.com/function=" + opts.Function[0]
+		claims = map[string]string{"check.confighub.com/function": opts.Function[0]}
 	}
 
 	for i := range results {
@@ -196,6 +174,8 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 				}
 				continue
 			}
+			// The function and its arguments are the user's, in cub's own
+			// syntax, so cub runs it.
 			args := append(append([]string{"function", "vet"}, opts.Function...), "--space", r.Space, "--revision", rev)
 			if opts.Worker != "" {
 				args = append(args, "--worker", opts.Worker)
@@ -217,19 +197,17 @@ func Check(run Runner, opts CheckOptions) ([]CheckResult, error) {
 				}
 			}
 		}
-		note := fmt.Sprintf("%s passed on %s", checker, strings.Join(r.Revisions, ", "))
-		args := []string{"attestation", "create", "--space", r.Space, "--type", opts.Type, "--change-order", opts.ChangeOrder, "--claim", claim}
+		verdict := HubAttestation{Space: r.Space, Type: opts.Type, ChangeOrderID: co.ID, Claims: claims,
+			Note: fmt.Sprintf("%s passed on %s", checker, strings.Join(r.Revisions, ", "))}
 		if !r.Passed {
-			note = clip(fmt.Sprintf("%s failed: %s", checker, strings.Join(r.Details, "; ")))
-			args = append(args, "--reject")
+			verdict.Note = clip(fmt.Sprintf("%s failed: %s", checker, strings.Join(r.Details, "; ")))
+			verdict.Reject = true
 		}
-		out, err := run("cub", append(args, "--note", note)...)
+		recorded, err := hub.Attest(verdict, false)
 		if err != nil {
 			return results, fmt.Errorf("%s: recording the verdict: %w", r.Space, err)
 		}
-		if m := recordedID.FindStringSubmatch(string(out)); m != nil {
-			r.Recorded = m[1]
-		}
+		r.Recorded = recorded.ID
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Space < results[j].Space })
 	return results, nil
@@ -262,8 +240,8 @@ func verdicts(out []byte) ([]verdict, error) {
 
 // sandboxJudge puts the policies in the sandbox and submits every object they
 // match, from each revision, with a server-side dry run.
-func sandboxJudge(o SandboxCheck, targets []target) (map[string]map[string]admission, sourced, error) {
-	set, err := readSources(o.Exec, o.Policies)
+func sandboxJudge(o SandboxCheck, hub Hub, targets []target) (map[string]map[string]admission, sourced, error) {
+	set, err := readSources(hub, o.Policies)
 	if err != nil {
 		return nil, set, err
 	}

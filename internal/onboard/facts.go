@@ -35,7 +35,7 @@ type FactsResult struct {
 // CRDs, storage and ingress classes) on its Target, with cub k8s collect,
 // reaching each cluster the way Sveltos does: through its kubeconfig Secret
 // on the management cluster. ConfigHub then knows each destination.
-func CollectFacts(run Runner, o FactsOptions) ([]FactsResult, error) {
+func CollectFacts(run Runner, hub Hub, o FactsOptions) ([]FactsResult, error) {
 	kubectl := func(args ...string) ([]byte, error) {
 		if o.Context != "" {
 			args = append([]string{"--context", o.Context}, args...)
@@ -56,12 +56,8 @@ func CollectFacts(run Runner, o FactsOptions) ([]FactsResult, error) {
 	}
 	targets := map[string]bool{}
 	if !o.DryRun {
-		out, err := run("cub", "target", "list", "--space", o.TargetsSpace, "-o", "jq=[.[].Target.Slug]")
+		slugs, err := hub.TargetSlugs(o.TargetsSpace)
 		if err != nil {
-			return nil, err
-		}
-		var slugs []string
-		if err := json.Unmarshal(out, &slugs); err != nil {
 			return nil, fmt.Errorf("reading the Targets of %s: %w", o.TargetsSpace, err)
 		}
 		for _, s := range slugs {

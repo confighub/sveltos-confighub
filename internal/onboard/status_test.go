@@ -80,7 +80,7 @@ func TestReportStatus(t *testing.T) {
 	  {"metadata":{"name":"hand-made"},"spec":{"policyRefs":[{"kind":"ConfigMap","name":"x","namespace":"default"}]}}]}`
 	summaries := `{"items":[{"metadata":{"labels":{"projectsveltos.io/cluster-profile-name":"kyverno-prod-eu"}},"spec":{"clusterNamespace":"projectsveltos","clusterName":"prod-eu"},
 	  "status":{"featureSummaries":[{"featureID":"Resources","status":"Provisioned","lastAppliedTime":"` + later.Format(time.RFC3339) + `"}]}}]}`
-	releases := `[{"Release":{"ReleaseNum":1,"Published":true,"ManifestDigest":"sha256:one","CreatedAt":"` + published.Format(time.RFC3339Nano) + `"}}]`
+	releases := []HubRelease{{Num: 1, Published: true, Digest: "sha256:one", CreatedAt: published}, {Num: 2, Digest: "sha256:draft", CreatedAt: later}}
 	held := ""
 	watching := `{"items":[]}`
 	run := func(name string, args ...string) ([]byte, error) {
@@ -92,19 +92,24 @@ func TestReportStatus(t *testing.T) {
 			return []byte(profiles), nil
 		case strings.HasPrefix(all, "kubectl --context mgmt get clustersummaries"):
 			return []byte(summaries), nil
-		case all == "cub release list --space sveltos-kyverno-prod-eu -o json":
-			return []byte(releases), nil
-		case all == "cub space get sveltos-kyverno-prod-eu -o json":
-			doc, _ := json.Marshal(map[string]any{"Space": map[string]any{"Annotations": map[string]string{LiveStatusAnnotation: held}}})
-			return doc, nil
 		}
 		t.Errorf("unexpected: %s", all)
 		return nil, errors.New("unexpected")
 	}
 	var writes []string
 	now := later.Add(time.Minute)
-	opts := StatusOptions{Context: "mgmt", Refresh: 10 * time.Minute, Now: func() time.Time { return now },
-		Write: func(space string, patch []byte) error {
+	opts := StatusOptions{Context: "mgmt", Refresh: 10 * time.Minute, Now: func() time.Time { return now }}
+	hub := &fakeHub{t: t,
+		releases: func(space string) ([]HubRelease, error) {
+			if space != "sveltos-kyverno-prod-eu" {
+				t.Errorf("releases are read for the Space the profile fetches from: %s", space)
+			}
+			return releases, nil
+		},
+		space: func(space string) (HubSpace, error) {
+			return HubSpace{Slug: space, Annotations: map[string]string{LiveStatusAnnotation: held}}, nil
+		},
+		patch: func(space string, patch []byte) error {
 			var p struct{ Annotations map[string]string }
 			if err := json.Unmarshal(patch, &p); err != nil {
 				t.Fatal(err)
@@ -114,7 +119,7 @@ func TestReportStatus(t *testing.T) {
 			return nil
 		}}
 
-	reports, err := ReportStatus(run, opts)
+	reports, err := ReportStatus(run, hub, opts)
 	if err != nil || len(reports) != 1 || !reports[0].Wrote || reports[0].Cluster != "prod-eu" {
 		t.Fatalf("one delivery profile, reported and written; a profile not from ConfigHub is left alone: %+v %v", reports, err)
 	}
@@ -123,12 +128,12 @@ func TestReportStatus(t *testing.T) {
 	}
 
 	now = now.Add(time.Minute)
-	reports, _ = ReportStatus(run, opts)
+	reports, _ = ReportStatus(run, hub, opts)
 	if reports[0].Wrote || reports[0].Why != "unchanged" || len(writes) != 1 {
 		t.Errorf("the same reading a minute later is not written again: %+v", reports[0])
 	}
 	now = now.Add(15 * time.Minute)
-	if reports, _ = ReportStatus(run, opts); !reports[0].Wrote {
+	if reports, _ = ReportStatus(run, hub, opts); !reports[0].Wrote {
 		t.Errorf("an unchanged reading is written again once the one held is older than --refresh")
 	}
 	// The profile's ClusterHealthCheck sees a workload go down after the
@@ -137,7 +142,7 @@ func TestReportStatus(t *testing.T) {
 	  {"clusterInfo":{"cluster":{"namespace":"projectsveltos","name":"prod-eu"}},"conditions":[{"type":"HealthCheck:workloads","name":"workloads","status":"False","lastTransitionTime":"` + later.Add(time.Minute).Format(time.RFC3339) + `",
 	   "message":"Deployment: kyverno/kyverno-cleanup-controller status is Degraded  \nMessage: kyverno-cleanup-controller: 0 of 1 available  \n"}]},
 	  {"clusterInfo":{"cluster":{"namespace":"projectsveltos","name":"prod-us"}},"conditions":[{"type":"HealthCheck:workloads","name":"workloads","status":"True"}]}]}}]}`
-	reports, _ = ReportStatus(run, opts)
+	reports, _ = ReportStatus(run, hub, opts)
 	if s := reports[0].Status; s.SyncStatus != "Synced" || s.HealthStatus != "Degraded" ||
 		s.Message != "ClusterHealthCheck sveltos-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available" {
 		t.Errorf("a workload down after the release is Degraded, naming it, and the release still Synced: %+v", s)
@@ -145,7 +150,7 @@ func TestReportStatus(t *testing.T) {
 
 	opts.DryRun = true
 	summaries = strings.Replace(summaries, `"Provisioned"`, `"Provisioning"`, 1)
-	if reports, _ = ReportStatus(run, opts); reports[0].Wrote || reports[0].Why != "dry run" || reports[0].Status.SyncStatus != "OutOfSync" {
+	if reports, _ = ReportStatus(run, hub, opts); reports[0].Wrote || reports[0].Why != "dry run" || reports[0].Status.SyncStatus != "OutOfSync" {
 		t.Errorf("a dry run reports a changed reading, and writes nothing: %+v", reports[0])
 	}
 }

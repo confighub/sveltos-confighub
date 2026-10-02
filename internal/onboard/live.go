@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/confighub/sveltos-confighub/chartrender"
@@ -60,7 +59,7 @@ type LiveResult struct {
 // the manifest Helm recorded for the release on the cluster, reaching the
 // cluster the way Sveltos does, through its kubeconfig Secret on the
 // management cluster.
-func CompareLive(run Runner, c LiveCheck) (LiveResult, error) {
+func CompareLive(run Runner, hub Hub, c LiveCheck) (LiveResult, error) {
 	kubectl := func(args ...string) ([]byte, error) {
 		if c.Context != "" {
 			args = append([]string{"--context", c.Context}, args...)
@@ -86,7 +85,7 @@ func CompareLive(run Runner, c LiveCheck) (LiveResult, error) {
 	if err != nil {
 		return LiveResult{}, fmt.Errorf("reading Helm's record on the cluster: %w. If the cluster's API server is at an address only the management cluster reaches, put a kubeconfig that reaches it at <dir>/%s.kubeconfig and set CLUSTER_KUBECONFIGS=<dir>", err, c.Cluster)
 	}
-	return compareRelease(run, c, out)
+	return compareRelease(hub, c, out)
 }
 
 func fileExists(p string) bool {
@@ -164,7 +163,7 @@ func sveltosKubeconfig(kubectl func(...string) ([]byte, error), c LiveCheck) (st
 
 // compareRelease compares Helm's deployed record of the release with what
 // ConfigHub last released for the variant's unit.
-func compareRelease(run Runner, c LiveCheck, out []byte) (LiveResult, error) {
+func compareRelease(hub Hub, c LiveCheck, out []byte) (LiveResult, error) {
 	var releases struct {
 		Items []struct {
 			Data map[string]string `json:"data"`
@@ -181,15 +180,14 @@ func compareRelease(run Runner, c LiveCheck, out []byte) (LiveResult, error) {
 		return LiveResult{}, err
 	}
 
-	out, err = run("cub", "unit", "get", "--space", c.Space, c.Unit, "-o", "jq=.Unit.LastReleasedRevisionNum")
+	unit, err := hub.Unit(c.Space, c.Unit)
 	if err != nil {
 		return LiveResult{}, err
 	}
-	released, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || released == 0 {
+	if unit.Released == 0 {
 		return LiveResult{}, errors.New(c.Space + "/" + c.Unit + " has not been released yet: run apply.sh first")
 	}
-	stored, err := run("cub", "revision", "data", "--space", c.Space, c.Unit, strconv.Itoa(released))
+	stored, err := hub.RevisionData(c.Space, c.Unit, unit.Released)
 	if err != nil {
 		return LiveResult{}, err
 	}

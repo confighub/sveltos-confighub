@@ -20,8 +20,6 @@ func TestCollectFacts(t *testing.T) {
 		switch {
 		case all == "kubectl --context mgmt get sveltosclusters -A -o json":
 			return []byte(`{"items":[{"metadata":{"name":"eu-central-test1","namespace":"projectsveltos"}},{"metadata":{"name":"stray","namespace":"projectsveltos"}},{"metadata":{"name":"edge","namespace":"projectsveltos"}}]}`), nil
-		case all == "cub target list --space mer-targets -o jq=[.[].Target.Slug]":
-			return []byte(`["eu-central-test1","edge"]`), nil
 		case strings.HasPrefix(all, "kubectl --context mgmt get sveltoscluster -n projectsveltos eu-central-test1"):
 			return []byte(`{"spec":{}}`), nil
 		case strings.HasPrefix(all, "kubectl --context mgmt get sveltoscluster -n projectsveltos edge"):
@@ -39,7 +37,13 @@ func TestCollectFacts(t *testing.T) {
 		t.Errorf("unexpected: %s", all)
 		return nil, errors.New("unexpected")
 	}
-	results, err := CollectFacts(run, FactsOptions{Context: "mgmt", TargetsSpace: "mer-targets"})
+	hub := &fakeHub{t: t, targets: func(space string) ([]string, error) {
+		if space != "mer-targets" {
+			t.Errorf("the Targets are read from the Targets Space: %s", space)
+		}
+		return []string{"eu-central-test1", "edge"}, nil
+	}}
+	results, err := CollectFacts(run, hub, FactsOptions{Context: "mgmt", TargetsSpace: "mer-targets"})
 	if err != nil || len(results) != 3 {
 		t.Fatalf("%+v %v", results, err)
 	}

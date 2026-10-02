@@ -1,10 +1,8 @@
 package onboard
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -58,18 +56,6 @@ type StatusOptions struct {
 	// is this old, so a reader can tell the reporter is still running.
 	Refresh time.Duration
 	Now     func() time.Time
-	// Write writes a Space's annotations patch; cub space update when nil.
-	Write func(space string, patch []byte) error
-}
-
-// writeSpacePatch patches a Space's fields from JSON, with cub.
-func writeSpacePatch(space string, patch []byte) error {
-	cmd := exec.Command("cub", "space", "update", "--patch", space, "--from-stdin", "--quiet")
-	cmd.Stdin = bytes.NewReader(patch)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("cub space update %s: %s", space, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 // statusSource names the reporter to ConfigHub.
@@ -86,7 +72,7 @@ type release struct {
 // ReportStatus reads every delivery profile on the management cluster, the
 // ClusterSummary Sveltos keeps for it, and its variant's published releases,
 // and writes each reading to the variant's Space.
-func ReportStatus(run Runner, opts StatusOptions) ([]StatusReport, error) {
+func ReportStatus(run Runner, hub Hub, opts StatusOptions) ([]StatusReport, error) {
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
@@ -141,7 +127,7 @@ func ReportStatus(run Runner, opts StatusOptions) ([]StatusReport, error) {
 		}
 		summary := byProfile[name]
 		report := StatusReport{Profile: name, Space: space, Cluster: str(obj(summary["spec"])["clusterName"])}
-		releases, err := publishedReleases(run, space)
+		releases, err := publishedReleases(hub, space)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", space, err)
 		}
@@ -151,7 +137,7 @@ func ReportStatus(run Runner, opts StatusOptions) ([]StatusReport, error) {
 		if w, ok := watched[watchingProfile(watched, name)][cluster]; ok {
 			report.Status = w.apply(report.Status, appliedAt(summary))
 		}
-		if err := writeStatus(run, &report, opts, now()); err != nil {
+		if err := writeStatus(hub, &report, opts, now()); err != nil {
 			return nil, fmt.Errorf("%s: %w", space, err)
 		}
 		reports = append(reports, report)
@@ -160,30 +146,17 @@ func ReportStatus(run Runner, opts StatusOptions) ([]StatusReport, error) {
 	return reports, nil
 }
 
-func publishedReleases(run Runner, space string) ([]release, error) {
-	out, err := run("cub", "release", "list", "--space", space, "-o", "json")
+func publishedReleases(hub Hub, space string) ([]release, error) {
+	all, err := hub.Releases(space)
 	if err != nil {
 		return nil, err
 	}
-	var rows []map[string]any
-	if err := json.Unmarshal(out, &rows); err != nil {
-		return nil, err
-	}
 	var releases []release
-	for _, row := range rows {
-		r := row
-		if inner, ok := row["Release"].(map[string]any); ok {
-			r = inner
-		}
-		if published, _ := r["Published"].(bool); !published {
+	for _, r := range all {
+		if !r.Published || r.CreatedAt.IsZero() {
 			continue
 		}
-		created, err := time.Parse(time.RFC3339Nano, str(r["CreatedAt"]))
-		if err != nil {
-			continue
-		}
-		num, _ := r["ReleaseNum"].(float64)
-		releases = append(releases, release{num: int(num), digest: str(r["ManifestDigest"]), createdAt: created})
+		releases = append(releases, release{num: r.Num, digest: r.Digest, createdAt: r.CreatedAt})
 	}
 	sort.Slice(releases, func(i, j int) bool { return releases[i].num < releases[j].num })
 	return releases, nil
@@ -390,21 +363,13 @@ func clip(s string) string {
 
 // writeStatus writes a reading to the Space unless ConfigHub already holds
 // the same one, recently enough.
-func writeStatus(run Runner, r *StatusReport, opts StatusOptions, now time.Time) error {
-	out, err := run("cub", "space", "get", r.Space, "-o", "json")
+func writeStatus(hub Hub, r *StatusReport, opts StatusOptions, now time.Time) error {
+	space, err := hub.Space(r.Space)
 	if err != nil {
 		return err
 	}
-	var got map[string]any
-	if err := json.Unmarshal(out, &got); err != nil {
-		return err
-	}
-	space := obj(got["Space"])
-	if len(space) == 0 {
-		space = got
-	}
 	var held LiveStatus
-	if text := str(obj(space["Annotations"])[LiveStatusAnnotation]); text != "" && json.Unmarshal([]byte(text), &held) == nil && held.same(r.Status) {
+	if text := space.Annotations[LiveStatusAnnotation]; text != "" && json.Unmarshal([]byte(text), &held) == nil && held.same(r.Status) {
 		if at, err := time.Parse(time.RFC3339, held.ObservedAt); err == nil && now.Sub(at) < opts.Refresh {
 			r.Why = "unchanged"
 			return nil
@@ -422,11 +387,7 @@ func writeStatus(run Runner, r *StatusReport, opts StatusOptions, now time.Time)
 	if err != nil {
 		return err
 	}
-	write := opts.Write
-	if write == nil {
-		write = writeSpacePatch
-	}
-	if err := write(r.Space, patch); err != nil {
+	if err := hub.PatchSpace(r.Space, patch); err != nil {
 		return err
 	}
 	r.Wrote = true

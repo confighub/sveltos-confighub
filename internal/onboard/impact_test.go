@@ -37,73 +37,86 @@ type impactBench struct {
 	inForce     map[string]int
 }
 
-func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, []byte, error) {
-	all := name + " " + strings.Join(args, " ")
-	switch {
-	case strings.HasPrefix(all, "cub unit list --space mer-policies "):
-		var slugs []string
-		for u := range b.policyHeads {
-			slugs = append(slugs, u)
-		}
-		sort.Strings(slugs)
-		var rows []map[string]any
-		for _, u := range slugs {
-			rows = append(rows, map[string]any{"Unit": map[string]any{"Slug": u, "HeadRevisionNum": b.policyHeads[u]}})
-		}
-		data, _ := json.Marshal(rows)
-		return data, nil, nil
-	case strings.HasPrefix(all, "cub unit get --space mer-policies "):
-		head, ok := b.policyHeads[args[4]]
-		if !ok {
-			return nil, []byte("not found"), errors.New("exit 1")
-		}
-		return []byte(fmt.Sprintf(`{"Unit":{"Slug":%q,"HeadRevisionNum":%d}}`, args[4], head)), nil, nil
-	case all == "cub tag get --space mer-policies in-force -o json":
-		return []byte(`{"Tag":{"TagID":"tag-in-force","Slug":"in-force"}}`), nil, nil
-	case strings.HasPrefix(all, "cub tag get "):
-		return nil, []byte("not found"), errors.New("exit 1")
-	case strings.HasPrefix(all, "cub revision list --space mer-policies "):
-		var revs []map[string]any
-		for n := b.policyHeads[args[4]]; n >= 1; n-- {
-			rev := map[string]any{"RevisionNum": n}
-			if b.inForce[args[4]] == n {
-				rev["Tags"] = map[string]string{"tag-in-force": ""}
+// hub is the ConfigHub half of the bench.
+func (b *impactBench) hub() *fakeHub {
+	return &fakeHub{t: b.t,
+		spaces: func(where string) ([]HubSpace, error) {
+			if !strings.HasPrefix(where, "Component.Slug = 'mer-kyverno'") {
+				b.t.Errorf("the targets are the component's cluster variants: %s", where)
 			}
-			revs = append(revs, map[string]any{"Revision": rev})
-		}
-		data, _ := json.Marshal(revs)
-		return data, nil, nil
-	case strings.HasPrefix(all, "cub space list --where Component.Slug = 'mer-kyverno'"):
-		return []byte(`[{"Space":{"Slug":"mer-kyverno-eu-central-test1","Labels":{"Stage":"test","Cluster":"eu-central-test1"}}},
-		  {"Space":{"Slug":"mer-kyverno-eu-central-prod1","Labels":{"Stage":"prod","Cluster":"eu-central-prod1"}}}]`), nil, nil
-	case strings.HasPrefix(all, "cub unit list --space "):
-		space := args[3]
-		up := b.upstream[space]
-		return []byte(fmt.Sprintf(`[{"Unit":{"Slug":"kyverno","HeadRevisionNum":9,"LastReleasedRevisionNum":7,"UpstreamUnitID":"u-%s","UpstreamSpaceID":"%s"}}]`, up, up)), nil, nil
-	case strings.HasPrefix(all, "cub unit get --space "):
-		space := args[3]
-		return []byte(fmt.Sprintf(`{"Unit":{"Slug":"kyverno","SpaceSlug":"%s","HeadRevisionNum":12}}`, space)), nil, nil
-	case strings.HasPrefix(all, "cub revision data --space "):
-		key := fmt.Sprintf("%s/%s@%s", args[3], args[4], args[5])
-		data, ok := b.units[key]
-		if !ok {
-			b.t.Errorf("no data for %s", key)
-		}
-		return []byte(data), nil, nil
-	case strings.HasPrefix(all, "cub space get "):
-		return []byte(`{"Stage":"bases"}`), nil, nil
-	case strings.HasPrefix(all, "cub revision list --space "):
-		var revs []map[string]any
-		for _, n := range b.failing[args[3]] {
-			revs = append(revs, map[string]any{"Revision": map[string]any{"RevisionNum": n, "ValidationErrors": map[string]bool{"mer-policies/kyverno/vet-kyverno-server": true}}})
-		}
-		revs = append(revs, map[string]any{"Revision": map[string]any{"RevisionNum": 5}})
-		data, _ := json.Marshal(revs)
-		return data, nil, nil
+			return []HubSpace{
+				{Slug: "mer-kyverno-eu-central-test1", Labels: map[string]string{"Stage": "test", "Cluster": "eu-central-test1"}},
+				{Slug: "mer-kyverno-eu-central-prod1", Labels: map[string]string{"Stage": "prod", "Cluster": "eu-central-prod1"}}}, nil
+		},
+		space: func(space string) (HubSpace, error) {
+			return HubSpace{Slug: space, Labels: map[string]string{"Stage": "bases"}}, nil
+		},
+		units: func(space string) ([]HubUnit, error) {
+			if space == "mer-policies" {
+				var slugs []string
+				for u := range b.policyHeads {
+					slugs = append(slugs, u)
+				}
+				sort.Strings(slugs)
+				var units []HubUnit
+				for _, u := range slugs {
+					units = append(units, HubUnit{Slug: u, SpaceSlug: space, Head: b.policyHeads[u]})
+				}
+				return units, nil
+			}
+			up := b.upstream[space]
+			return []HubUnit{{Slug: "kyverno", SpaceSlug: space, Head: 9, Released: 7, UpstreamUnitID: "u-" + up, UpstreamSpaceID: up}}, nil
+		},
+		unit: func(space, unit string) (HubUnit, error) {
+			if space == "mer-policies" {
+				head, ok := b.policyHeads[unit]
+				if !ok {
+					return HubUnit{}, errors.New("not found")
+				}
+				return HubUnit{Slug: unit, SpaceSlug: space, Head: head}, nil
+			}
+			return HubUnit{Slug: "kyverno", SpaceSlug: space, Head: 12}, nil
+		},
+		tagID: func(space, tag string) (string, error) {
+			if space == "mer-policies" && tag == "in-force" {
+				return "tag-in-force", nil
+			}
+			return "", errors.New("not found")
+		},
+		revisions: func(space, unit, where string) ([]HubRevision, error) {
+			var revs []HubRevision
+			if space == "mer-policies" {
+				if where != "Tags ? 'tag-in-force'" {
+					b.t.Errorf("a tagged revision is asked for by its tag: %q", where)
+				}
+				if n := b.inForce[unit]; n > 0 {
+					revs = append(revs, HubRevision{Num: n, Tags: map[string]bool{"tag-in-force": true}})
+				}
+				return revs, nil
+			}
+			for _, n := range b.failing[space] {
+				revs = append(revs, HubRevision{Num: n, Failing: true})
+			}
+			return append(revs, HubRevision{Num: 5}), nil
+		},
+		data: func(space, unit string, revision int) ([]byte, error) {
+			key := fmt.Sprintf("%s/%s@%d", space, unit, revision)
+			data, ok := b.units[key]
+			if !ok {
+				b.t.Errorf("no data for %s", key)
+			}
+			return []byte(data), nil
+		},
 	}
+}
 
+func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, []byte, error) {
+	if name == "cub" {
+		b.t.Errorf("impact asks ConfigHub through the Hub, not cub: %s", strings.Join(args, " "))
+		return nil, nil, errors.New("unexpected")
+	}
 	args = args[2:] // --kubeconfig <file>
-	all = name + " " + strings.Join(args, " ")
+	all := name + " " + strings.Join(args, " ")
 	switch {
 	case all == "kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings -o json":
 		items := []map[string]any{}
@@ -216,7 +229,7 @@ func rowFor(t *testing.T, r *ImpactReport, target string) ImpactRow {
 
 func TestImpactApplicationToPolicies(t *testing.T) {
 	b := newImpactBench(t)
-	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
+	r, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
 		Policies: []string{policy("replica-limits.yaml"), policy("disallow-latest-tag.yaml")}})
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +245,7 @@ func TestImpactApplicationToPolicies(t *testing.T) {
 
 func TestImpactPolicyToEstate(t *testing.T) {
 	b := newImpactBench(t)
-	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Settle: 1,
+	r, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Settle: 1,
 		Policies:   []string{policy("replica-limits.yaml"), policy("disallow-latest-tag.yaml")},
 		Candidates: []string{policy("candidates/replica-limits-prod-2.yaml")}})
 	if err != nil {
@@ -253,7 +266,7 @@ func TestImpactPolicyToEstate(t *testing.T) {
 func TestImpactCorpusShowsWhatAWeakerPolicyAllows(t *testing.T) {
 	b := newImpactBench(t)
 	b.failing = map[string][]int{"mer-kyverno-base": {6}}
-	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Corpus: []string{"mer-kyverno-base"}, Settle: 1,
+	r, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Corpus: []string{"mer-kyverno-base"}, Settle: 1,
 		Policies:   []string{policy("disallow-latest-tag.yaml")},
 		Candidates: []string{policy("candidates/disallow-latest-tag-exempt-kyverno.yaml")}})
 	if err != nil {
@@ -281,7 +294,7 @@ spec:
   validations:
     - expression: "request.userInfo.groups.exists(g, g == 'platform')"
 `), 0o644)
-	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Settle: 1,
+	r, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Settle: 1,
 		Policies: []string{policy("replica-limits.yaml")}, Candidates: []string{who}})
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +303,7 @@ spec:
 	if row.Verdict != Unknown || !strings.Contains(row.Why, "reads request.userInfo") || row.Current != "allowed" || row.Proposed != "unknown" {
 		t.Errorf("a candidate that reads the requesting user cannot be judged from configuration, while the policies in force can: %+v", row)
 	}
-	if _, err := Impact(b.exec, ImpactOptions{Component: "mer-kyverno", Policies: []string{policy("replica-limits.yaml")}}); err == nil {
+	if _, err := Impact(b.exec, b.hub(), ImpactOptions{Component: "mer-kyverno", Policies: []string{policy("replica-limits.yaml")}}); err == nil {
 		t.Errorf("with neither a candidate nor --next there is nothing to compare")
 	}
 }
@@ -301,7 +314,7 @@ spec:
 func TestImpactRemovesOnlyWhatNoSetHas(t *testing.T) {
 	b := newImpactBench(t)
 	b.leftover = []string{"an-old-policy"}
-	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Settle: 1,
+	r, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Settle: 1,
 		Policies: []string{policy("replica-limits.yaml")}, Candidates: []string{policy("candidates/replica-limits-prod-2.yaml")}})
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +329,7 @@ func TestImpactRemovesOnlyWhatNoSetHas(t *testing.T) {
 // not in force, and a unit of test cases is not a policy.
 func TestImpactReadsPoliciesFromConfigHub(t *testing.T) {
 	b := newImpactBench(t)
-	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
+	r, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
 		Policies: []string{"mer-policies@Tag:in-force"}})
 	if err != nil {
 		t.Fatal(err)
@@ -330,7 +343,7 @@ func TestImpactReadsPoliciesFromConfigHub(t *testing.T) {
 	}
 
 	// The proposal at the head of replica-limits raises test's ceiling to 6.
-	r, err = Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
+	r, err = Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1,
 		Policies: []string{"mer-policies@Tag:in-force"}, Candidates: []string{"mer-policies/replica-limits"}})
 	if err != nil {
 		t.Fatal(err)
@@ -343,7 +356,7 @@ func TestImpactReadsPoliciesFromConfigHub(t *testing.T) {
 	}
 
 	for _, bad := range []string{"mer-policies/nothing-here", "mer-policies/replica-limits@0", "mer-policies/platform-team-only@Tag:in-force", "mer-policies@Tag:no-such-tag"} {
-		if _, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1, Policies: []string{bad}}); err == nil {
+		if _, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Component: "mer-kyverno", Next: true, Settle: 1, Policies: []string{bad}}); err == nil {
 			t.Errorf("%s names no policy, and is an error", bad)
 		}
 	}
@@ -353,7 +366,7 @@ func TestImpactReadsPoliciesFromConfigHub(t *testing.T) {
 // force get wrong is reported, and so is a known-bad case the candidate admits.
 func TestImpactTests(t *testing.T) {
 	b := newImpactBench(t)
-	r, err := Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Settle: 1,
+	r, err := Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Settle: 1,
 		Policies: []string{"mer-policies@Tag:in-force"}, Candidates: []string{"mer-policies/replica-limits@3"},
 		Tests: []string{"mer-policies/policy-tests@Tag:in-force"}})
 	if err != nil {
@@ -379,7 +392,7 @@ func TestImpactTests(t *testing.T) {
 	dir := t.TempDir()
 	wrong := filepath.Join(dir, "wrong.yaml")
 	os.WriteFile(wrong, []byte(strings.Replace(deployment("uat-five", 5, "k:v1"), "metadata:\n", "metadata:\n  annotations: {impact.confighub.com/stage: uat, impact.confighub.com/expect: allowed}\n", 1)), 0o644)
-	r, err = Impact(b.exec, ImpactOptions{SandboxKubeconfig: "sandbox", Settle: 1, Policies: []string{"mer-policies@Tag:in-force"}, Tests: []string{wrong}})
+	r, err = Impact(b.exec, b.hub(), ImpactOptions{SandboxKubeconfig: "sandbox", Settle: 1, Policies: []string{"mer-policies@Tag:in-force"}, Tests: []string{wrong}})
 	if err != nil {
 		t.Fatal(err)
 	}

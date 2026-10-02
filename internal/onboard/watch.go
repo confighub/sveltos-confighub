@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -33,8 +32,6 @@ type WatchOptions struct {
 	// Script runs apply.sh in Out with PROPOSE_ONLY=1, and returns what it
 	// printed.
 	Script func(dir, context string) ([]byte, error)
-	// Write patches a Space, as the status reporter does.
-	Write func(space string, patch []byte) error
 }
 
 // Join is one variant proposed for a cluster that joined.
@@ -72,6 +69,7 @@ type WatchReport struct {
 // fleet whose clusters have not changed is not rendered again.
 type Watcher struct {
 	run  Runner
+	hub  Hub
 	opts WatchOptions
 	seen string
 	plan *Plan
@@ -81,17 +79,14 @@ type Watcher struct {
 }
 
 // NewWatcher is a watcher over one onboarded fleet.
-func NewWatcher(run Runner, opts WatchOptions) *Watcher {
+func NewWatcher(run Runner, hub Hub, opts WatchOptions) *Watcher {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
 	if opts.Script == nil {
 		opts.Script = runProposeOnly
 	}
-	if opts.Write == nil {
-		opts.Write = writeSpacePatch
-	}
-	return &Watcher{run: run, opts: opts, told: map[string]bool{}, approvals: map[string]int{}}
+	return &Watcher{run: run, hub: hub, opts: opts, told: map[string]bool{}, approvals: map[string]int{}}
 }
 
 func runProposeOnly(dir, context string) ([]byte, error) {
@@ -162,24 +157,16 @@ func (w *Watcher) Once() (WatchReport, error) {
 		}
 	}
 
-	out, err = w.run("cub", "space", "list", "-o", "jq=[.[].Space.Slug]")
+	spaces, err := w.hub.Spaces("")
 	if err != nil {
-		return report, err
-	}
-	var slugs []string
-	if err := json.Unmarshal(out, &slugs); err != nil {
 		return report, fmt.Errorf("reading the Spaces: %w", err)
 	}
 	exists := map[string]bool{}
-	for _, s := range slugs {
-		exists[s] = true
+	for _, s := range spaces {
+		exists[s.Slug] = true
 	}
-	out, err = w.run("cub", "release", "list", "--space", "*", "--where", fmt.Sprintf("Published = true AND Space.Slug LIKE '%s-%%'", plan.Prefix), "-o", "jq=[.[] | (.Release // .) | .SpaceSlug] | unique")
+	releasedSlugs, err := w.hub.ReleasedSpaces(plan.Prefix + "-")
 	if err != nil {
-		return report, err
-	}
-	var releasedSlugs []string
-	if err := json.Unmarshal(out, &releasedSlugs); err != nil {
 		return report, fmt.Errorf("reading the releases: %w", err)
 	}
 	released := map[string]bool{}
@@ -224,17 +211,15 @@ func (w *Watcher) Once() (WatchReport, error) {
 			continue
 		}
 		report.Waiting = append(report.Waiting, order)
-		out, err := w.run("cub", "changeorder", "get", "--space", p.BaseSpace, p.ReleaseOrder, "-o", "jq=.ChangeOrder.ChangeOrderID")
+		co, err := w.hub.ChangeOrder(p.BaseSpace, p.ReleaseOrder)
 		if err != nil {
 			approvals[order], needed = 0, true
 			continue
 		}
-		id := strings.Trim(strings.TrimSpace(string(out)), `"`)
-		out, err = w.run("cub", "attestation", "list", "--where", fmt.Sprintf("ChangeOrderID = '%s'", id), "-o", "jq=length")
+		n, err := w.hub.AttestationCount(co.ID)
 		if err != nil {
 			return report, err
 		}
-		n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 		approvals[order] = n
 		if last, ran := w.approvals[order]; !ran || last != n {
 			needed = true
@@ -280,7 +265,7 @@ func (w *Watcher) Once() (WatchReport, error) {
 	for _, j := range report.Joins {
 		doc, _ := json.Marshal(j)
 		patch, _ := json.Marshal(map[string]any{"Annotations": map[string]string{JoinAnnotation: string(doc)}})
-		if werr := w.opts.Write(j.Space, patch); werr != nil {
+		if werr := w.hub.PatchSpace(j.Space, patch); werr != nil {
 			report.Recorded = append(report.Recorded, werr.Error())
 		}
 	}
