@@ -214,12 +214,14 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    measured on 2026-09-26, ConfigHub records that but does not yet refuse a
    plain publish outside a change order, so send every release through one
    yourself.
-4. **Name the cluster's destination**: a Target needs a BridgeWorker that
-   has run and announced support for its ConfigType, and workers are
-   space-scoped, so mint each cluster's named Target in your
-   infrastructure Space against its registered OCI-capable worker:
-   `cub target create <cluster> '{}' <worker> --space <infra-space> --provider OCI --toolchain Any --allow-exists`,
-   then set it as the variant Space's release target and the record's
+4. **Name the cluster's destination**: mint each cluster's named Target in
+   your infrastructure Space, and grant the identity Sveltos pulls with View
+   and ViewChildren on it:
+   `cub target create <cluster> --space <infra-space> --permission View:<bot user> --permission ViewChildren:<bot user> --allow-exists`.
+   That is the form since `cub` v0.7.0. The recorded chapters were made
+   before it, when a Target was created against a worker
+   (`cub target create <cluster> '{}' <worker> --provider OCI --toolchain Any`),
+   and their live runners still use that form. Then set it as the variant Space's release target and the record's
    target (the reference crosses Spaces, which is the long-standing
    pattern). `--allow-exists` keeps each cluster's Target stable across
    runs: one cluster, one destination identity. One Target per cluster,

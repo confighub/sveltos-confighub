@@ -75,12 +75,12 @@ plugin installation stays CLI-only.
 | `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
 | `cub sveltos check` | Runs a policy check, such as Kyverno, on a change in one stage, and records the verdict in ConfigHub. Each stage's release can require a Pass. |
 | `cub sveltos impact` | Previews what a policy change, or a change's next promotion, would do to each cluster, before anything ships. |
-| `cub sveltos version` | Prints the version. The current release is **v0.10.0**; see [what's new](docs/whats-new.md). |
+| `cub sveltos version` | Prints the version. The current release is **v0.11.1**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
 ConfigHub's own `cub` commands, shown below.
 
-You need the `cub` CLI (`cub auth login`), `kubectl` access to your Sveltos
+You need the `cub` CLI, v0.7.0 or newer (`cub auth login`), `kubectl` access to your Sveltos
 management cluster, and Sveltos v1.14.0 or newer.
 
 ## What you can do with it
@@ -484,7 +484,7 @@ cluster: `npm run verify` and `go test ./...`.
 
 ## Status
 
-`cub sveltos` v0.10.0 is tested on kind with stock Sveltos v1.15.0. It has not
+`cub sveltos` v0.11.1 needs `cub` v0.7.0 or newer, and is tested on kind with stock Sveltos v1.15.0. It has not
 run in a production fleet yet.
 
 To stop a rollout part-way, abort its change order, then undo it in each Space

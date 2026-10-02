@@ -201,6 +201,7 @@ case "$*" in
   "unit list "*) echo 99 ;;
   "changeworkflow get "*) echo staging,prod ;;
   "worker get "*) echo x ;;
+  "target create --help") [ -n "$OLD_CUB" ] || echo "      --permission strings" ;;
   "release publish "*)
     for s in $WAITING; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
     for s in $NEEDS; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
@@ -263,6 +264,11 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a release waiting for approval is not a failure: %v\n%s", err, out)
 	}
+	// Targets take the reading identity as permissions, with no worker,
+	// provider or parameters.
+	if !strings.Contains(calls, `cub target create prod-us --space sveltos-targets --allow-exists --quiet --permission View:x --permission ViewChildren:x`) || strings.Contains(calls, "--provider") {
+		t.Errorf("each Target grants the worker's bot user View and ViewChildren:\n%s", calls)
+	}
 	if strings.Contains(calls, "cub variant approve") {
 		t.Errorf("PROPOSE_ONLY approves nothing")
 	}
@@ -292,6 +298,13 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		!strings.Contains(calls, "-l sveltos.confighub.com/variant=sveltos-kyverno-prod-us") {
 		t.Errorf("once approved, the next run publishes and delivers: %v\n%s", err, out)
 	}
+
+	t.Setenv("OLD_CUB", "1")
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err == nil || !strings.Contains(out, "cub is older than "+MinimumCub) || strings.Contains(calls, "space create") {
+		t.Errorf("a cub whose Targets still take a worker stops the script before it changes anything: %v\n%s", err, out)
+	}
+	os.Unsetenv("OLD_CUB")
 
 	out, calls, err = run("", "", true)
 	if err != nil || strings.Contains(calls, "changeorder create") || strings.Contains(calls, "release publish") || !strings.Contains(out, "every variant in this plan is released") {

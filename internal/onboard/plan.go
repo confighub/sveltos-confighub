@@ -25,7 +25,10 @@ const (
 	fetchInterval = "1m0s"
 	// MinimumSveltos is the first release whose addon controller reads the
 	// gzipped layers the ConfigHub gateway serves.
-	MinimumSveltos    = "v1.14.0"
+	MinimumSveltos = "v1.14.0"
+	// MinimumCub is the first cub whose Targets take permissions in place of
+	// a worker, which apply.sh relies on.
+	MinimumCub        = "v0.7.0"
 	secretNamespace   = "projectsveltos"
 	secretType        = "addons.projectsveltos.io/cluster-profile"
 	profileAPIVersion = "config.projectsveltos.io/v1beta1"

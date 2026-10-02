@@ -21,7 +21,7 @@ variant's latest approved release from ConfigHub's OCI gateway. If your
 profiles are live, the handover moves them over in the numbered order, with
 nothing reinstalled.
 
-You need the `cub` CLI logged in to your ConfigHub organization
+You need the `cub` CLI, v0.7.0 or newer, logged in to your ConfigHub organization
 (`cub auth login`), `kubectl` access to your management cluster, which must
 run Sveltos v1.14.0 or newer, and two plugins:
 
@@ -234,8 +234,9 @@ read the gzipped layers ConfigHub's gateway serves), then:
 The whole script is safe to re-run. It picks up where ConfigHub says each
 step stands, and it never writes over a change made in ConfigHub since.
 
-Sveltos reads the gateway as the Targets' server worker. That credential does
-not expire, it can pull only the releases of those Targets, and the script
+Sveltos reads the gateway as a server-hosted worker, whose bot user each
+Target grants View and ViewChildren. That credential does not expire, it can
+pull only the releases of those Targets, and the script
 moves it from `cub` into the Secret without writing it to disk or showing it.
 
 ### The management cluster's record, delivered from ConfigHub

@@ -125,6 +125,8 @@ watch_health() {
 
 step "0/6 Check before changing anything"
 cub space list --quiet >/dev/null || { echo "cub is not logged in: run cub auth login"; exit 1; }
+# A Target has had no worker, provider or parameters since cub v0.7.0.
+cub target create --help 2>&1 | grep -q -- --permission || { echo "cub is older than v0.7.0, which this script needs: run cub upgrade"; exit 1; }
 image=$(k get deployment addon-controller -n projectsveltos -o jsonpath='{.spec.template.spec.containers[0].image}')
 version=${image##*:}
 if [ "$(printf '%s\n' v1.14.0 "$version" | sort -V | head -1)" != v1.14.0 ]; then
@@ -134,12 +136,14 @@ fi
 step "1/6 One named Target per cluster, in sveltos-targets"
 cub space create sveltos-targets --allow-exists --quiet
 # A server-hosted worker has no process behind it and no role in the
-# organization; it holds the Targets and is the credential Sveltos reads with.
+# organization; it is the credential Sveltos reads with. Its bot user holds
+# View and ViewChildren on each Target, to find it and pull its Releases.
 cub worker create --space sveltos-targets server-worker --is-server-worker --org-role none --allow-exists --quiet
-cub target create mgmt '{}' server-worker --space sveltos-targets --provider OCI --toolchain Any --allow-exists --quiet
-cub target create prod-eu '{}' server-worker --space sveltos-targets --provider OCI --toolchain Any --allow-exists --quiet
-cub target create prod-us '{}' server-worker --space sveltos-targets --provider OCI --toolchain Any --allow-exists --quiet
-cub target create staging-eu '{}' server-worker --space sveltos-targets --provider OCI --toolchain Any --allow-exists --quiet
+bot_user="$(cub worker get --space sveltos-targets server-worker -o jq=.BridgeWorker.UserID | tr -d '"\n')"
+cub target create mgmt --space sveltos-targets --allow-exists --quiet --permission "View:${bot_user}" --permission "ViewChildren:${bot_user}"
+cub target create prod-eu --space sveltos-targets --allow-exists --quiet --permission "View:${bot_user}" --permission "ViewChildren:${bot_user}"
+cub target create prod-us --space sveltos-targets --allow-exists --quiet --permission "View:${bot_user}" --permission "ViewChildren:${bot_user}"
+cub target create staging-eu --space sveltos-targets --allow-exists --quiet --permission "View:${bot_user}" --permission "ViewChildren:${bot_user}"
 # Each cluster's facts (Kubernetes version, CRDs, storage and ingress classes)
 # on its Target, read through the kubeconfig Sveltos reaches it with. A cluster
 # only the management cluster reaches needs CLUSTER_KUBECONFIGS=<dir> holding
