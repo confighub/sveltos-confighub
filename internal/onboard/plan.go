@@ -25,7 +25,10 @@ const (
 	fetchInterval = "1m0s"
 	// MinimumSveltos is the first release whose addon controller reads the
 	// gzipped layers the ConfigHub gateway serves.
-	MinimumSveltos    = "v1.14.0"
+	MinimumSveltos = "v1.14.0"
+	// MinimumCub is the first cub whose Targets take permissions in place of
+	// a worker, which apply.sh relies on.
+	MinimumCub        = "v0.7.0"
 	secretNamespace   = "projectsveltos"
 	secretType        = "addons.projectsveltos.io/cluster-profile"
 	profileAPIVersion = "config.projectsveltos.io/v1beta1"
@@ -36,9 +39,9 @@ var clusterRefAPI = map[string]string{
 	"Cluster":        "cluster.x-k8s.io/v1beta1",
 }
 
-// One gateway Secret per Targets Space: the gateway lets a Target's own worker
-// pull its releases and refuses any other worker, so two onboardings that
-// shared a Secret would lock one of them out.
+// One gateway Secret per Targets Space: the gateway lets a worker pull only
+// the releases of Targets that grant its bot user access, so two onboardings
+// that shared a Secret would lock one of them out.
 func gatewaySecretName(targetsSpace string) string { return "confighub-" + targetsSpace }
 
 // Options are the plan's choices beyond its input.

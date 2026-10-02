@@ -21,6 +21,22 @@ stores each cluster's facts on its Target.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## 0.11.1, 2026-10-02
+
+Needs `cub` v0.7.0 or newer.
+
+**Targets without a worker.** Since `cub` v0.7.0 a Target has no worker,
+provider or parameters: the identity that pulls its releases is granted View
+and ViewChildren on it. `apply.sh` now creates each cluster's Target that way,
+and grants the bot user of the server-hosted worker Sveltos reads with. A
+Target from an earlier run gets the same grant. With `cub` v0.7.0, the
+`apply.sh` of `cub sveltos` 0.11.0 and earlier stops at step 1
+("unknown flag: --provider"). With a `cub` whose `target create` still takes
+`--provider`, the new script stops before it changes anything and says to
+upgrade.
+
+The plugin is built on the ConfigHub SDK v0.8.0.
+
 ## 0.11.0, 2026-09-30
 
 Explore a fleet before adding a ConfigHub server. `plan --format json` exports a

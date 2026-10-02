@@ -370,6 +370,11 @@ func ApplyScript(plan *Plan) string {
 		"",
 		`step "0/6 Check before changing anything"`,
 		`cub space list --quiet >/dev/null || { echo "cub is not logged in: run cub auth login"; exit 1; }`,
+		"# Since cub "+MinimumCub+" a Target has no worker, provider or parameters, and takes",
+		"# --permission. The help text is read into a variable first: a pipe into",
+		"# grep -q would end cub early, which pipefail reports as a failure.",
+		`case "$(cub target create --help 2>&1)" in *--provider*) old_cub=1 ;; *--permission*) old_cub= ;; *) old_cub=1 ;; esac`,
+		fmt.Sprintf(`[ -z "$old_cub" ] || { echo "cub is older than %s, which this script needs: run cub upgrade"; exit 1; }`, MinimumCub),
 		`image=$(k get deployment addon-controller -n projectsveltos -o jsonpath='{.spec.template.spec.containers[0].image}')`,
 		`version=${image##*:}`,
 		fmt.Sprintf(`if [ "$(printf '%%s\n' %s "$version" | sort -V | head -1)" != %s ]; then`, MinimumSveltos, MinimumSveltos),
@@ -379,11 +384,19 @@ func ApplyScript(plan *Plan) string {
 		fmt.Sprintf(`step "1/6 One named Target per cluster, in %s"`, plan.TargetsSpace),
 		line("cub", "space", "create", plan.TargetsSpace, "--allow-exists", "--quiet"),
 		"# A server-hosted worker has no process behind it and no role in the",
-		"# organization; it holds the Targets and is the credential Sveltos reads with.",
+		"# organization; it is the credential Sveltos reads with. Its bot user holds",
+		"# View and ViewChildren on each Target, to find it and pull its Releases.",
 		line("cub", "worker", "create", "--space", plan.TargetsSpace, workerSlug, "--is-server-worker", "--org-role", "none", "--allow-exists", "--quiet"),
+		fmt.Sprintf(`bot_user="$(%s | tr -d '"\n')"`, line("cub", "worker", "get", "--space", plan.TargetsSpace, workerSlug, "-o", "jq=.BridgeWorker.UserID")),
+		fmt.Sprintf(`case "$bot_user" in ""|null) echo "the worker %s in %s has no bot user to grant the Targets to"; exit 1 ;; esac`, workerSlug, plan.TargetsSpace),
+		"# --allow-exists leaves a Target that already exists as it is, so the grant",
+		"# is made again with update, which adds it to a Target from an earlier run.",
+		`grant=(--permission "View:${bot_user}" --permission "ViewChildren:${bot_user}")`,
 	)
 	for _, t := range plan.Targets {
-		L = append(L, line("cub", "target", "create", t.Target, "{}", workerSlug, "--space", plan.TargetsSpace, "--provider", "OCI", "--toolchain", "Any", "--allow-exists", "--quiet"))
+		L = append(L,
+			line("cub", "target", "create", t.Target, "--space", plan.TargetsSpace, "--allow-exists", "--quiet")+` "${grant[@]}"`,
+			line("cub", "target", "update", t.Target, "--space", plan.TargetsSpace, "--quiet")+` "${grant[@]}"`)
 	}
 	L = append(L,
 		"# Each cluster's facts (Kubernetes version, CRDs, storage and ingress classes)",
@@ -530,8 +543,9 @@ func ApplyScript(plan *Plan) string {
 	if plan.Management != nil {
 		worker := fmt.Sprintf("cub worker get --space %s %s", plan.TargetsSpace, workerSlug)
 		L = append(L, "", `step "6/6 Point Sveltos at ConfigHub (your management cluster)"`,
-			"# Sveltos reads the gateway as the Targets' server worker: a credential that",
-			"# does not expire and can pull only the releases of those Targets. The ID and",
+			"# Sveltos reads the gateway as the server-hosted worker the Targets grant",
+			"# access to: a credential that does not expire and can pull only the",
+			"# releases of those Targets. The ID and",
 			"# secret go from cub into the Secret through file descriptors, never to disk,",
 			"# the command line, or the terminal.",
 			fmt.Sprintf(`k create secret generic %s --namespace %s --type %s \`, gatewaySecretName(plan.TargetsSpace), secretNamespace, secretType),
