@@ -11,6 +11,7 @@
 #
 #   bash $DEMO/setup/grant-agents.sh
 set -euo pipefail
+[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 bot() { cub worker get --space chaos-agents "$1" -o jq=.BridgeWorker.UserID | tr -d '"\n'; }
 reporter=$(bot reporter)
 devil=$(bot devil)

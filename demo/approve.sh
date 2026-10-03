@@ -9,6 +9,7 @@
 # default, or the agent named; or REQUEST, when set) and approve it, or say
 # why not.
 set -euo pipefail
+[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")" && pwd)/env.sh"
 here=$(cd "$(dirname "$0")" && pwd)
 who=$1 order=$2 stage=$3
 case $who in

@@ -8,6 +8,7 @@
 #
 # Name it every time: --sandbox-kubeconfig "$AI_CHAOS_DIR/sandbox.kubeconfig".
 set -euo pipefail
+[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 dir=${AI_CHAOS_DIR:-${TMPDIR:-/tmp}/sveltos-ai-chaos}
 sveltos=${SVELTOS_VERSION:-v1.15.0}
 mkdir -p "$dir"

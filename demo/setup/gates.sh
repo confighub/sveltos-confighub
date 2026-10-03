@@ -11,6 +11,7 @@
 # For manual approvals only, run it with APPROVERS=$YOU_ID; for Milton only,
 # APPROVERS=$MILTON_ID. The default counts either.
 set -euo pipefail
+[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 approvers=${APPROVERS:-"${YOU_ID:?source demo/env.sh after setup/identities.sh} ${MILTON_ID:?}"}
 for c in shop platform; do
   cub component update --patch "chaos-$c" --change-workflow-required --allowed-change-workflow "chaos-$c-base/rollout" --quiet

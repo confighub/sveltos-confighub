@@ -3,6 +3,7 @@
 #
 #   bash $DEMO/agents/last-request.sh <run-name> [agent]       (agent defaults to angel)
 set -euo pipefail
+[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 run=$1 agent=${2:-angel}
 f=$(ls -t "${CHAOS_RUNS:?source demo/env.sh first}/$run/$agent"-*.jsonl | head -1)
 python3 - "$f" <<'PY'
