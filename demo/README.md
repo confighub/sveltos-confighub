@@ -53,7 +53,10 @@ ConfigHub plans to replace that with service accounts, so later versions of
 - **A machine** with Docker and room for six kind clusters. We used 18 cores
   and 48 GB.
 - **A ConfigHub organization** with 20 free Spaces, and a user who may create
-  Spaces, workers and components there.
+  Spaces, workers and components there. The scripts act through your current
+  `cub` context. If it points at another organization, run
+  `export CUB_CONTEXT=<your context>` in each terminal, setup and teardown
+  included.
 - **Claude Code**, signed in. The agents' runs cost about $30 to $50 in all,
   and the whole demo takes two to three hours.
 - **The plugins:**
