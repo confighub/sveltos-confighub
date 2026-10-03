@@ -486,7 +486,7 @@ func (s sandbox) ensure() error {
 		if len(running) > 3 {
 			running = append(running[:3], fmt.Sprintf("and %d more", len(running)-3))
 		}
-		return fmt.Errorf("the cluster named as the sandbox runs %s, so it is not a sandbox: its admission policies would be replaced. Name a disposable cluster that runs nothing but Kubernetes", strings.Join(running, ", "))
+		return fmt.Errorf("the cluster named as the sandbox runs %s, so it is not a sandbox: its admission policies would be replaced. Name a disposable cluster with no Deployment, StatefulSet or DaemonSet outside kube-system and local-path-storage", strings.Join(running, ", "))
 	}
 	return nil
 }

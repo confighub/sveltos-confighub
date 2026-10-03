@@ -30,9 +30,10 @@ with neither `--sandbox-kubeconfig` nor `--sandbox-context`, they took the
 current kubectl context as the sandbox. From a shell whose context was a
 management cluster, a preview put its policy there, and Sveltos was refused its
 own writes of ClusterProfiles until a release replaced the policy. Now a sandbox
-has to be named. A cluster that runs anything outside `kube-system` and
-`local-path-storage` is refused before anything is applied, with what it runs in
-the message. A kind cluster made for the purpose passes as it is.
+has to be named. A cluster that runs a Deployment, StatefulSet or DaemonSet
+outside `kube-system` and `local-path-storage` is refused before anything is
+applied, with what it runs in the message. A kind cluster made for the purpose
+passes as it is.
 
 ## 0.12.0, 2026-10-02
 
