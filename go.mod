@@ -3,7 +3,7 @@ module github.com/confighub/sveltos-confighub
 go 1.25.0
 
 require (
-	github.com/confighub/sdk/core v0.8.0
+	github.com/confighub/sdk/core v0.8.1
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/gopher-lua v1.1.2

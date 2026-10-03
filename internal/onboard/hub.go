@@ -65,6 +65,10 @@ type HubUnit struct {
 	Head, Released int
 	// The unit it was cloned from, when it has one.
 	UpstreamSpaceID, UpstreamUnitID string
+	// Guards are the reasons its paths carry, as cub unit set-guard records
+	// them: by resource, as Object.Resource names it, then by path ("" for the
+	// resource as a whole), then key to value.
+	Guards map[string]map[string]map[string]string
 }
 
 // HubRevision is one revision of a Unit.

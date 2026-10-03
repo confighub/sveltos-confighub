@@ -283,7 +283,7 @@ func ApplyScript(plan *Plan) string {
 		"# stage. Only the stages are patched, so approval settings made since stay.",
 		`stages_are() { [ "$(cub changeworkflow get --space "$1" "$2" -o 'jq=[.ChangeWorkflow.Stages[].Name] | join(",")')" = "$3" ]; }`,
 	}
-	if plan.Gates.Policy != "" || len(plan.Gates.Require) > 0 {
+	if plan.Gates.any() {
 		L = append(L,
 			"# gated <space> <workflow> <expression>: the workflow already has every gate",
 			"# the plan adds. When it lacks one, the gate is added beside what is there,",
@@ -424,7 +424,7 @@ func ApplyScript(plan *Plan) string {
 			line("cub", "changeworkflow", "create", "--space", p.BaseSpace, workflowSlug, "--filename", p.Name+"/change-workflow.yaml", "--allow-exists", "--quiet"),
 			fmt.Sprintf("stages_are %s %s %s || %s | %s", p.BaseSpace, workflowSlug, strings.Join(workflowStages(p), ","),
 				line("echo", stagesJSON(p.Stages, len(p.Classes) > 0, plan.Gates)), line("cub", "changeworkflow", "update", "--patch", "--space", p.BaseSpace, workflowSlug, "--from-stdin", "--quiet")))
-		if plan.Gates.Policy != "" || len(plan.Gates.Require) > 0 {
+		if plan.Gates.any() {
 			has, merged := gatesJQ(p.Stages, len(p.Classes) > 0, plan.Gates)
 			L = append(L, fmt.Sprintf("gated %s %s %s || %s | %s", p.BaseSpace, workflowSlug, q(has),
 				line("cub", "changeworkflow", "get", "--space", p.BaseSpace, workflowSlug, "-o", "jq="+merged),

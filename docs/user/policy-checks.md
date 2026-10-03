@@ -196,6 +196,69 @@ of each per variant.
 for its check as well as its approval, and the watcher prints the
 `cub attestation create` it needs.
 
+### Prod as staging ran it: a parity check
+
+A change that passed staging can still fail in prod when prod holds something
+staging does not: a memory limit set in prod's class base and declared nowhere.
+`check --parity-with` compares each variant of a stage with the variants of an
+earlier stage, field by field. On each side it reads every unit at the revision
+the order marks, or, where it marks none, at the last release: what each
+variant runs, or will run.
+
+```bash
+cub sveltos check --change-order shop-base/bigger-cache --stage prod --parity-with staging
+```
+
+A prod variant may depart from staging only where a guard declares it. Record
+the guard with `cub unit set-guard`, on the field, on a path that holds it, or
+on the whole object, with the reason as its value. An object only prod has is
+declared by a guard on the object. The check reads the guards as they stand
+when it runs.
+
+```bash
+cub unit set-guard shop --space shop-prod-eu \
+  --guard "apps/v1/Deployment:shop/api:spec.replicas=departure=prod-capacity"
+```
+
+Any other difference fails the check, naming the field and both values (a
+Secret's values are never shown, only that they differ). So does a unit
+staging runs and prod does not. Lists Kubernetes merges by a field other than
+`name`, such as `ports` and `volumeMounts`, are compared whole: declare them on
+the list.
+
+```
+shop-prod-us: FAILED on shop/9; recorded a rejection (...), which holds its release:
+  - shop/9: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "48Mi" here and unset in shop-staging, and no guard departure=<why> declares it
+```
+
+The verdict is recorded as a ParityCheck attestation. The command prints each
+declared departure with its reason, and the Pass's note names as many as fit,
+with their count, so whoever approves prod can see them. Use `--declared-by` to
+declare with a guard key other than `departure`.
+
+The check should gate prod alone, since staging has no earlier stage to match.
+`--require` gates every stage, so add the requirement to prod's stage of the
+workflow instead:
+
+```bash
+cub changeworkflow update --space shop-base rollout \
+  --attestation-prerequisite approval --attestation-prerequisite parity \
+  --attestation-prerequisite-type parity=ParityCheck \
+  --stage-release-prerequisites 'prod=approval;parity'
+```
+
+Name every attestation prerequisite the workflow keeps: the list given is the
+list it has. A change order copies its workflow when it is created, so the
+requirement holds for orders created after this edit. Any ParityCheck counts,
+whoever records it; to count only the identity that runs the check, add
+`--attestation-prerequisite-from-user-ids parity=<user ID>`.
+
+A guard is a declaration, not a permission: anyone who can edit the unit can
+add one. What it gives is a reason on the record, read by the check and shown to
+the approver. ConfigHub also enforces it: a later write to that path, a
+promotion included, is withheld as a conflict unless cleared for the reason,
+and changing the guard itself needs `--clearance`.
+
 ## Before anything ships: preview a change's impact
 
 The gates stop a change that breaks a policy. `cub sveltos impact` answers the

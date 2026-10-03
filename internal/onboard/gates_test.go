@@ -3,6 +3,7 @@ package onboard
 import (
 	"encoding/json"
 	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -42,7 +43,7 @@ func TestGatesInTheWorkflow(t *testing.T) {
 			t.Errorf("stage %s waits for %q, want %q", name, got[name], g)
 		}
 	}
-	if len(w.AttestationPrerequisites) != 2 || w.AttestationPrerequisites[1] != (requirement{Name: "policycheck", Type: "PolicyCheck", Count: 1, AllowAuthors: true}) {
+	if len(w.AttestationPrerequisites) != 2 || !reflect.DeepEqual(w.AttestationPrerequisites[1], requirement{Name: "policycheck", Type: "PolicyCheck", Count: 1, AllowAuthors: true}) {
 		t.Errorf("the required type is an attestation requirement: %+v", w.AttestationPrerequisites)
 	}
 	var patch struct{ Stages []stageGate }
@@ -55,7 +56,17 @@ func TestGatesInTheWorkflow(t *testing.T) {
 	if strings.Count(plain, "- Validated") != 1 {
 		t.Errorf("without class bases, the first stage has no stage ahead to be validated:\n%s", plain)
 	}
-	for _, g := range []Gates{{Policy: "no-slash"}, {Policy: "a/b/c"}, {Require: []string{"Approval"}}, {Require: []string{"X", "x"}}} {
+	// Named approvers: only their approvals count, and never the author's.
+	const approver = "c5818f81-ae4b-4d17-987f-743f19bdb0ca"
+	named := workflowText([]string{"staging", "prod"}, false, Gates{Approvers: []string{approver}})
+	if !strings.Contains(named, "    AllowAuthors: false\n    FromUserIDs:\n      - "+approver) || strings.Contains(named, "AllowAuthors: true") {
+		t.Errorf("with an approver named, the approval counts only theirs and never the author's:\n%s", named)
+	}
+	has, merged := gatesJQ([]string{"staging", "prod"}, false, Gates{Approvers: []string{approver}})
+	if !strings.Contains(has, `select(.Name == "approval")`) || !strings.Contains(merged, `.FromUserIDs = ["`+approver+`"] | .AllowAuthors = false`) {
+		t.Errorf("a workflow made before the approvers were named takes them on a re-run:\n%s\n%s", has, merged)
+	}
+	for _, g := range []Gates{{Policy: "no-slash"}, {Policy: "a/b/c"}, {Require: []string{"Approval"}}, {Require: []string{"X", "x"}}, {Approvers: []string{"someone@example.com"}}} {
 		if len(g.problems()) == 0 {
 			t.Errorf("%+v is refused", g)
 		}

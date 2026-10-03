@@ -42,6 +42,7 @@ type planFlags struct {
 	includeHooks string
 	policy       string
 	require      string
+	approvers    []string
 	mgmtRelease  bool
 }
 
@@ -55,6 +56,7 @@ func (f *planFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.includeHooks, "include-hooks", "", "keep these charts' Helm hook manifests as plain objects, comma-separated release names or all")
 	c.Flags().StringVar(&f.policy, "policy", "", "a trigger Filter, <space>/<filter>, whose Triggers every base and variant runs; a change that fails one is not promoted or released")
 	c.Flags().StringVar(&f.require, "require", "", "attestation types each stage's release also waits for, comma-separated, such as PolicyCheck")
+	c.Flags().StringArrayVar(&f.approvers, "approver", nil, "a ConfigHub user ID whose approval counts (repeatable); with any named, no one else's does, and never the change's author's. cub user list shows each user's ID")
 	c.Flags().BoolVar(&f.mgmtRelease, "management-release", false, "deliver the management record from ConfigHub: its Space publishes releases, and one root profile on the management cluster fetches them")
 }
 
@@ -77,7 +79,7 @@ func (f *planFlags) options() onboard.Options {
 		Profiles:          split(f.profiles),
 		ClassLabel:        f.classLabel,
 		IncludeHooks:      split(f.includeHooks),
-		Gates:             onboard.Gates{Policy: f.policy, Require: split(f.require)},
+		Gates:             onboard.Gates{Policy: f.policy, Require: split(f.require), Approvers: f.approvers},
 		ManagementRelease: f.mgmtRelease,
 	}
 }
@@ -404,8 +406,9 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 
 	var co onboard.CheckOptions
 	var sandboxCheck onboard.SandboxCheck
+	var parityCheck onboard.ParityCheck
 	checkCmd := &cobra.Command{
-		Use:   "check --change-order <base>/<order> --stage <stage> ([--worker <space>/<worker>] <function> [arguments...] | --sandbox-kubeconfig <file> --policy <source>...)",
+		Use:   "check --change-order <base>/<order> --stage <stage> ([--worker <space>/<worker>] <function> [arguments...] | --sandbox-kubeconfig <file> --policy <source>... | --parity-with <stage>)",
 		Short: "Check a change as it stands in a stage, and record the verdict as an attestation its release waits for",
 		Long: `Check a change as it stands in a stage, and record the verdict as an attestation.
 
@@ -421,6 +424,19 @@ variant's stage. The attestation then names the policy revisions it was judged
 by, so the change a preview showed is released under the policies it was
 previewed against.
 
+With --parity-with, it compares each variant with the variants of an earlier
+stage, field by field: what the order marks there, or what they last released.
+A variant may depart from them only where a guard declares it, recorded with
+cub unit set-guard on the path, a path that holds it, or the whole object, with
+the reason as its value (--declared-by, departure by default):
+
+  cub unit set-guard shop --space shop-prod-eu \
+    --guard "apps/v1/Deployment:shop/api:spec.replicas=departure=prod-capacity"
+
+Any other difference fails the check, naming the field and both values. The
+verdict is recorded as a ParityCheck, and the Pass lists the declared departures
+with their reasons, so the approver of prod sees each one.
+
 Plan with --require PolicyCheck and each stage's release waits for a Pass. Unlike
 a Trigger, which ConfigHub stops running if its worker is gone long enough,
 nothing releases a change this has not passed.
@@ -429,10 +445,21 @@ nothing releases a change this has not passed.
     --worker platform-policies/kyverno-checker vet-kyverno-server
 
   cub sveltos check --change-order mer-kyverno-base/six-replicas --stage test \
-    --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force`,
+    --sandbox-kubeconfig sandbox.kubeconfig --policy mer-policies@Tag:in-force
+
+  cub sveltos check --change-order shop-base/bigger-cache --stage prod --parity-with staging`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(c *cobra.Command, args []string) error {
 			co.Function = args
+			if parityCheck.With != "" {
+				if len(args) > 0 || sandboxCheck.Kubeconfig != "" || len(sandboxCheck.Policies) > 0 {
+					return fmt.Errorf("check parity, with a function, or with the sandbox: one of them")
+				}
+				co.Parity = &parityCheck
+				if !c.Flags().Changed("type") {
+					co.Type = "ParityCheck"
+				}
+			}
 			if sandboxCheck.Kubeconfig != "" || sandboxCheck.Context != "" || len(sandboxCheck.Policies) > 0 {
 				if len(args) > 0 {
 					return fmt.Errorf("check with a function or with the sandbox, not both")
@@ -449,6 +476,9 @@ nothing releases a change this has not passed.
 					fmt.Fprintf(w, "%s: not checked: %s\n", r.Space, r.Skipped)
 				case r.Passed:
 					fmt.Fprintf(w, "%s: passed %s; recorded a Pass (%s)\n", r.Space, strings.Join(r.Revisions, ", "), r.Recorded)
+					for _, d := range r.Declared {
+						fmt.Fprintf(w, "  declared: %s\n", d)
+					}
 				default:
 					failed = true
 					fmt.Fprintf(w, "%s: FAILED on %s; recorded a rejection (%s), which holds its release:\n", r.Space, strings.Join(r.Revisions, ", "), r.Recorded)
@@ -475,6 +505,8 @@ nothing releases a change this has not passed.
 	checkCmd.Flags().StringArrayVar(&sandboxCheck.Policies, "policy", nil, "policies to judge by: a file, or <space>[/<unit>][@<revision>] in ConfigHub, such as mer-policies@Tag:in-force; repeat for more")
 	checkCmd.Flags().StringVar(&sandboxCheck.StageLabel, "stage-label", "Stage", "the Space label that gives each variant's stage, which bindings select by")
 	checkCmd.Flags().DurationVar(&sandboxCheck.Settle, "settle", 5*time.Second, "how long to give the sandbox after its policies change")
+	checkCmd.Flags().StringVar(&parityCheck.With, "parity-with", "", "the stage each variant must match, such as staging, instead of a function or the sandbox")
+	checkCmd.Flags().StringVar(&parityCheck.DeclaredBy, "declared-by", "departure", "the guard key that declares where a variant may depart from that stage")
 
 	var io_ onboard.ImpactOptions
 	var impactJSON, impactAll bool
@@ -524,7 +556,7 @@ the next create or update would be refused.`,
 				enc.SetIndent("", "  ")
 				return enc.Encode(r)
 			}
-			fmt.Fprintf(w, "policies in force: %s\n", strings.Join(r.Policies, ", "))
+			fmt.Fprintf(w, "policies in force: %s\n", firstNonEmpty(strings.Join(r.Policies, ", "), "none yet"))
 			if len(r.Candidates) > 0 {
 				fmt.Fprintf(w, "candidate:         %s\n", strings.Join(r.Candidates, ", "))
 			}
@@ -720,4 +752,11 @@ func Execute() {
 		}
 		os.Exit(1)
 	}
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

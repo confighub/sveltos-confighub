@@ -63,8 +63,10 @@ func (p fieldPath) key(k string) fieldPath {
 
 func (p fieldPath) named(name string) fieldPath {
 	return fieldPath{
-		yq:    p.yq + "[] | select(.name == " + jsonString(name) + ")",
-		ch:    p.ch + ".?name=" + name,
+		yq: p.yq + "[] | select(.name == " + jsonString(name) + ")",
+		// ConfigHub escapes the dots in a merge key's value, as it does in a
+		// key, so env.?name=a~1b is the variable a.b and not a field b of a.
+		ch:    p.ch + ".?name=" + strings.ReplaceAll(name, ".", "~1"),
 		shown: p.shown + "[" + name + "]",
 		piped: true,
 	}
@@ -93,10 +95,24 @@ func namesOf(l []any) []string {
 	return names
 }
 
+// keyedByName is whether ConfigHub keys the list at this path by name. The
+// lists Kubernetes merges by another field, though their entries may have a
+// name, are compared whole, which is a path ConfigHub holds too.
+func keyedByName(at fieldPath) bool {
+	last := at.ch[strings.LastIndex(at.ch, ".")+1:]
+	switch last {
+	case "ports", "volumeMounts", "volumeDevices", "hostAliases":
+		return false
+	}
+	return true
+}
+
 type fieldChange struct {
 	at      fieldPath
 	value   any
 	removed bool
+	// old is the value the field had before; nil when it was unset.
+	old any
 }
 
 // fieldChanges are the fields that turn one object into another. A map is
@@ -123,7 +139,7 @@ func fieldChanges(from, to any, at fieldPath) []fieldChange {
 		for _, k := range sorted {
 			tv, inTo := tm[k]
 			if !inTo {
-				out = append(out, fieldChange{at: at.key(k), removed: true})
+				out = append(out, fieldChange{at: at.key(k), removed: true, old: fm[k]})
 				continue
 			}
 			out = append(out, fieldChanges(fm[k], tv, at.key(k))...)
@@ -134,7 +150,7 @@ func fieldChanges(from, to any, at fieldPath) []fieldChange {
 	tl, tlok := to.([]any)
 	if flok && tlok {
 		fn, tn := namesOf(fl), namesOf(tl)
-		if fn != nil && tn != nil && strings.Join(fn, "\x00") == strings.Join(tn, "\x00") {
+		if fn != nil && tn != nil && strings.Join(fn, "\x00") == strings.Join(tn, "\x00") && keyedByName(at) {
 			var out []fieldChange
 			for i, name := range fn {
 				out = append(out, fieldChanges(fl[i], tl[i], at.named(name))...)
@@ -145,7 +161,7 @@ func fieldChanges(from, to any, at fieldPath) []fieldChange {
 	if reflectEqual(from, to) {
 		return nil
 	}
-	return []fieldChange{{at: at, value: to}}
+	return []fieldChange{{at: at, value: to, old: from}}
 }
 
 // departuresOf are what a class's unit holds differently from the root's:
