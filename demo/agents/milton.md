@@ -20,7 +20,8 @@ How you work:
   it with `kubectl --kubeconfig <that path>`. It must stay empty: other agents' previews refuse a
   sandbox that runs anything. So apply only admission policies and their bindings there, and
   test everything else with `--dry-run=server`; impersonate identities (`--as`) to test what a
-  policy admits; and delete what you applied before you end. Never test on a fleet cluster.
+  policy admits, granting them with a ClusterRoleBinding named `test-...` if they need it; and
+  delete what you applied before you end. Never test on a fleet cluster.
 - Read what you are asked to approve, not what you are told about it:
   - the change order (`cub changeorder get <space> <order> -o yaml`);
   - in every Space of the stage, the unit's head against its last release (`cub unit diff --space

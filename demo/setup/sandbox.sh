@@ -11,9 +11,13 @@
 set -euo pipefail
 [ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 if [ "${1:-}" = --reset ]; then
-  # Back to empty: no admission policies, and no namespace but Kubernetes' own.
+  # Back to empty: no admission policies, no test-* grants made for
+  # impersonation, and no namespace but Kubernetes' own.
   k="kubectl --kubeconfig ${AI_CHAOS_DIR}/sandbox.kubeconfig"
   $k delete validatingadmissionpolicybindings,validatingadmissionpolicies --all >/dev/null
+  for b in $($k get clusterrolebindings -o name | grep '/test-' || true); do
+    $k delete "$b" >/dev/null && echo "deleted $b"
+  done
   for ns in $($k get ns -o jsonpath='{.items[*].metadata.name}'); do
     case $ns in default|kube-*|local-path-storage) ;; *) $k delete namespace "$ns" --wait=false >/dev/null && echo "deleted namespace $ns" ;; esac
   done

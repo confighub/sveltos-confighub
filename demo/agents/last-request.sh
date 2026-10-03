@@ -6,7 +6,9 @@
 #   bash $DEMO/agents/last-request.sh <run-name> [agent] [--all]       (agent defaults to angel)
 set -euo pipefail
 [ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
-run=$1 agent=${2:-angel} all=${3:-}
+run=${1:?usage: last-request.sh <run-name> [agent] [--all]}; shift
+agent=angel all=
+for a in "$@"; do case $a in --all) all=--all ;; *) agent=$a ;; esac; done
 if [ "$all" = --all ]; then files=$(ls -tr "$CHAOS_RUNS/$run/$agent"-*.jsonl); else files=$(ls -t "$CHAOS_RUNS/$run/$agent"-*.jsonl | head -1); fi
 python3 - $files <<'PY'
 import json, os, sys

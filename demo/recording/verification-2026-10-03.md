@@ -1,6 +1,6 @@
 # The verification run, 2026-10-03
 
-A second run, made from this folder's README alone, with **Milton approving
+A second run, made from [the demo's README](../README.md) alone, with **Milton approving
 every release** and no person approving anything. Versions as in the README:
 `cub sveltos` v0.13.0 (installed from the release), `cub` v0.8.1, ConfigHub
 server v0.8.1, Sveltos v1.15.0, kind v0.31.0, Claude Code 2.1.285.
@@ -13,7 +13,7 @@ server v0.8.1, Sveltos v1.15.0, kind v0.31.0, Claude Code 2.1.285.
 | Outage 2 | Lockdown at 20:59:55Z, prod-us-1 and prod-us-2 Degraded by 21:00:55Z. Angel's policy judges a profile by its shape, not by who sends it, so no identity needed exempting. Milton approved after testing every live record profile and its own extra cases. Healthy 1.5 minutes after the release; clean-up deleted the stray profile under the policy; Devil's repeat refused twice |
 | Outage 3 | **Milton refused Devil's prod-only memory cut**: lowering only the limit saves no cost, it had never run in staging, and there was no evidence of a safe margin. So the outage did not happen. In the recording, a person approved the same change, and prod was OOMKilled |
 
-What the run found and fixed in this folder (the follow-up commit):
+What the run found, and what the demo now does about it:
 - `run-agent.sh` failed under macOS's bash 3.2 when no model was set.
 - Milton could not read what it was asked to approve until permissions were
   granted, so `grant-agents.sh` now runs before the first approval.
@@ -25,7 +25,8 @@ What the run found and fixed in this folder (the follow-up commit):
   preview refused the sandbox as not empty. Milton now applies only policies
   there, and `setup/sandbox.sh --reset` empties it.
 - Milton now reviews with every request in the run, not only the last.
-- Every script loads `env.sh` itself.
+- The setup, agent, approval and teardown scripts load `env.sh` themselves, so
+  each works without sourcing it first.
 
 Found in ConfigHub: publishing a change order whose end tag a unit created
 later does not carry failed with HTTP 500 ("no Revision found for Unit ... with

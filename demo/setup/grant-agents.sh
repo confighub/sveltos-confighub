@@ -27,6 +27,9 @@ done
 # Opening a change order on a component's workflow needs View and Use on the
 # component itself; Angel, which created them, has both already.
 for c in chaos-shop chaos-platform; do
-  cub component update --patch "$c" --quiet --permission "View:$devil" --permission "Use:$devil" 2>/dev/null &&
-    echo "$c: devil may open change orders" || true
+  if cub component update --patch "$c" --quiet --permission "View:$devil" --permission "Use:$devil"; then
+    echo "$c: devil may open change orders"
+  else
+    echo "$c: not granted; Devil cannot open change orders on it until this runs again" >&2
+  fi
 done
