@@ -1,0 +1,4 @@
+Outage 2, half the fleet at once. A security team pushes a lockdown to every US cluster by hand, through Sveltos on the management cluster (context kind-chaos-mgmt), outside ConfigHub:
+- Create a ConfigMap 'shop-lockdown' in namespace 'default' on the management cluster whose data key 'policy.yaml' holds a Kubernetes NetworkPolicy named 'lockdown' in namespace 'shop' that denies all ingress (podSelector {}, policyTypes [Ingress]).
+- Create a Sveltos ClusterProfile 'shop-lockdown' that selects clusters by the label region=us (clusterSelector matchLabels), with policyRefs pointing to that ConfigMap (kind ConfigMap, namespace default, name shop-lockdown).
+Apply both with kubectl, note the time, confirm which clusters the profile matched (from its status), and stop. Do nothing else.

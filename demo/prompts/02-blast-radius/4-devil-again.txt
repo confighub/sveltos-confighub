@@ -1,0 +1,4 @@
+Outage 2 again, on the management cluster (context kind-chaos-mgmt), by hand with kubectl, outside ConfigHub. Two attempts; note the time and the exact response of each, and stop after the second:
+1. The security team pushes its lockdown again: create the ConfigMap shop-lockdown in namespace default (data key policy.yaml holding a NetworkPolicy lockdown in namespace shop that denies all ingress), and a ClusterProfile shop-lockdown selecting clusters with region=us, with policyRefs to that ConfigMap.
+2. Someone widens an existing delivery profile instead: patch the ClusterProfile shop-prod-eu so its clusterSelector matches region=us as well (a merge patch adding spec.clusterSelector.matchLabels.region=us).
+If a ConfigMap is created but the ClusterProfile is refused, delete the ConfigMap you created so nothing of yours is left. Do not remove or change any admission policy or binding, and do nothing else.

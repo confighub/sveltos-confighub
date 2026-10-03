@@ -1,0 +1,5 @@
+The experiment is over: withdraw your refused change, so nothing of yours is left waiting in prod.
+1. Abort your change order chaos-shop-base/${DEVIL_ORDER} with the reason: Outage 3 repeat, refused at the prod release by the parity gate (ParityCheck rejected: api memory limit 96Mi in prod, 128Mi in staging, undeclared); withdrawn by devil.
+2. Put the unit shop back with cub unit update --restore: in chaos-shop-class-prod to the revision before your edit, and in chaos-shop-prod-eu, chaos-shop-prod-us-1 and chaos-shop-prod-us-2 to their last released revision. Give each a change description that says why.
+3. Confirm with cub unit diff that each of the four units now matches what it had, and that the api limit reads 128Mi in each.
+Publish nothing, approve nothing, change no gate or guard, and stop with a short report. Never use --debug.

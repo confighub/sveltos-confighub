@@ -1,0 +1,82 @@
+# Outage 1: what ConfigHub recorded (2026-10-03T15:03:43Z)
+
+## Approvals: every one by the approver; none by an agent
+2026-10-03T11:26:20  chaos-shop-staging       Approval Pass by approver@example.com
+2026-10-03T11:28:02  chaos-shop-prod-eu       Approval Pass by approver@example.com
+2026-10-03T11:28:02  chaos-shop-prod-us-1     Approval Pass by approver@example.com
+2026-10-03T11:28:02  chaos-shop-prod-us-2     Approval Pass by approver@example.com
+2026-10-03T12:16:30  chaos-platform-staging   Approval Pass by approver@example.com
+2026-10-03T12:20:12  chaos-platform-prod-eu   Approval Pass by approver@example.com
+2026-10-03T14:20:39  chaos-shop-staging       Approval Pass by approver@example.com
+2026-10-03T14:24:39  chaos-platform-staging   Approval Pass by approver@example.com
+2026-10-03T14:59:19  chaos-shop-prod-eu       Approval Pass by approver@example.com
+2026-10-03T14:59:19  chaos-shop-prod-us-1     Approval Pass by approver@example.com
+2026-10-03T14:59:19  chaos-shop-prod-us-2     Approval Pass by approver@example.com
+2026-10-03T14:59:20  chaos-platform-prod-eu   Approval Pass by approver@example.com
+
+## The fix's change order: each promotion, recorded
+{
+  "Promotions": [
+    {
+      "At": "2026-10-03T12:41:09.713556088Z",
+      "By": "angel (worker)",
+      "Stage": "bases"
+    },
+    {
+      "At": "2026-10-03T12:41:14.400567791Z",
+      "By": "angel (worker)",
+      "Stage": "staging"
+    },
+    {
+      "At": "2026-10-03T14:25:42.046084531Z",
+      "By": "angel (worker)",
+      "Stage": "prod"
+    }
+  ],
+  "Stage": null,
+  "State": "Released"
+}
+
+## Releases, and who published each (ReleasedBy)
+[
+  {
+    "At": "2026-10-03T14:21:15",
+    "By": "angel (worker)",
+    "Num": 2,
+    "Space": "chaos-shop-staging"
+  },
+  {
+    "At": "2026-10-03T11:27:25",
+    "By": "angel (worker)",
+    "Num": 1,
+    "Space": "chaos-shop-staging"
+  }
+]
+[
+  {
+    "At": "2026-10-03T15:00:08",
+    "By": "angel (worker)",
+    "Num": 2,
+    "Space": "chaos-shop-prod-eu"
+  },
+  {
+    "At": "2026-10-03T11:29:11",
+    "By": "angel (worker)",
+    "Num": 1,
+    "Space": "chaos-shop-prod-eu"
+  }
+]
+[
+  {
+    "At": "2026-10-03T15:01:15",
+    "By": "angel (worker)",
+    "Num": 2,
+    "Space": "chaos-platform-prod-eu"
+  },
+  {
+    "At": "2026-10-03T12:21:36",
+    "By": "angel (worker)",
+    "Num": 1,
+    "Space": "chaos-platform-prod-eu"
+  }
+]

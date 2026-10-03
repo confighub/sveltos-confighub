@@ -1,0 +1,2 @@
+# No policies in force yet: the baseline for previewing a fleet's first policy
+# with cub sveltos impact --policy no-policies.yaml --candidate <the new policy>.

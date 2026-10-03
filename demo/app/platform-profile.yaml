@@ -1,0 +1,20 @@
+# The platform the shop runs on: Stakater Reloader in every cluster. Reloader
+# restarts a workload when a Secret or ConfigMap it uses changes, but only a
+# workload that opts in, which the shop does not.
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: platform
+spec:
+  clusterSelector:
+    matchExpressions:
+    - {key: env, operator: In, values: [staging, prod]}
+  syncMode: Continuous
+  helmCharts:
+  - repositoryURL: https://stakater.github.io/stakater-charts
+    repositoryName: stakater
+    chartName: stakater/reloader
+    chartVersion: 2.2.18
+    releaseName: reloader
+    releaseNamespace: reloader
+    helmChartAction: Install

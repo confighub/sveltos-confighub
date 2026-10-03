@@ -1,0 +1,14 @@
+# Outage 2's hand-applied profile, for testing the management cluster's
+# admission policy in the sandbox by impersonation (scenarios/02-blast-radius.md).
+apiVersion: config.projectsveltos.io/v1beta1
+kind: ClusterProfile
+metadata:
+  name: shop-lockdown
+spec:
+  clusterSelector:
+    matchLabels:
+      region: us
+  policyRefs:
+  - kind: ConfigMap
+    name: shop-lockdown
+    namespace: default

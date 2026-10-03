@@ -1,0 +1,28 @@
+# guardrails@5 in the policy sandbox, 2026-10-03T15:34:34Z
+## 1 kubernetes-admin creates shop-lockdown (expect refused)
+Error from server (Forbidden): error when creating "lockdown.yaml": clusterprofiles.config.projectsveltos.io "shop-lockdown" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: ClusterPro
+## 2 register-mgmt-cluster creates it (expect refused now)
+Error from server (Forbidden): error when creating "lockdown.yaml": clusterprofiles.config.projectsveltos.io "shop-lockdown" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: ClusterPro
+## 3 projectsveltos (the record) creates it (expect allowed)
+clusterprofile.config.projectsveltos.io/shop-lockdown created
+## 4 kubernetes-admin changes its selector (expect refused)
+Error from server (Forbidden): clusterprofiles.config.projectsveltos.io "shop-lockdown" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: ClusterProfile shop-lockdown may not be written
+## 5 projectsveltos changes its selector (expect allowed)
+clusterprofile.config.projectsveltos.io/shop-lockdown patched
+## 6 addon-controller adds a finalizer, spec unchanged (expect allowed)
+Warning: metadata.finalizers: "clusterprofilefinalizer.projectsveltos.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+clusterprofile.config.projectsveltos.io/shop-lockdown patched
+## 7 addon-controller changes spec (expect refused)
+Error from server (Forbidden): clusterprofiles.config.projectsveltos.io "shop-lockdown" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: ClusterProfile shop-lockdown may not be written
+## 8 addon-controller writes status (expect allowed)
+clusterprofile.config.projectsveltos.io/shop-lockdown patched
+## 9 kubernetes-admin deletes it (expect refused)
+Error from server (Forbidden): clusterprofiles.config.projectsveltos.io "shop-lockdown" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: ClusterProfile shop-lockdown may not be written
+## 10 register-mgmt-cluster deletes it (expect refused now)
+Error from server (Forbidden): clusterprofiles.config.projectsveltos.io "shop-lockdown" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: ClusterProfile shop-lockdown may not be written
+## 11 addon-controller removes its finalizer (expect allowed)
+clusterprofile.config.projectsveltos.io/shop-lockdown patched
+## 12 projectsveltos deletes it (expect allowed)
+clusterprofile.config.projectsveltos.io "shop-lockdown" deleted
+## 13 kubernetes-admin creates a Profile (expect refused)
+Error from server (Forbidden): error when creating "STDIN": profiles.config.projectsveltos.io "lockdown-as-profile" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: Profile lockdown-as

@@ -1,0 +1,74 @@
+# Outage 3: what ConfigHub recorded (2026-10-03T18:19:18Z)
+
+## The gate on prod, as it stands (changed at 17:58:54 under the approver's login, on their word)
+  prerequisite approval: 1 Approval, from approver@example.com, authors counted: false
+  prerequisite parity: 1 ParityCheck, from angel (Worker), authors counted: true
+  stage bases: release needs 
+  stage staging: release needs approval
+  stage prod: release needs approval, parity
+
+## Attestations since 16:00 on the shop's variants: approvals all by the approver, parity checks all by Angel
+2026-10-03T17:09:40  chaos-shop-prod-us-1  Approval Pass by approver@example.com on api-memory-limit-40mi-prod
+    note: the approver in chat: "Proceed" (reply to approval request 6: outage 3 step 1, prod-only api memory 40Mi)
+2026-10-03T17:09:40  chaos-shop-prod-us-2  Approval Pass by approver@example.com on api-memory-limit-40mi-prod
+    note: the approver in chat: "Proceed" (reply to approval request 6: outage 3 step 1, prod-only api memory 40Mi)
+2026-10-03T17:09:40  chaos-shop-prod-eu  Approval Pass by approver@example.com on api-memory-limit-40mi-prod
+    note: the approver in chat: "Proceed" (reply to approval request 6: outage 3 step 1, prod-only api memory 40Mi)
+2026-10-03T17:30:11  chaos-shop-staging  Approval Pass by approver@example.com on api-response-cache
+    note: the approver in chat: "Approve outage 3 cache, staging then prod"
+2026-10-03T17:35:36  chaos-shop-prod-us-1  Approval Pass by approver@example.com on api-response-cache
+    note: the approver in chat: "Approve outage 3 cache, staging then prod"; recorded after staging ran it Healthy
+2026-10-03T17:35:36  chaos-shop-prod-us-2  Approval Pass by approver@example.com on api-response-cache
+    note: the approver in chat: "Approve outage 3 cache, staging then prod"; recorded after staging ran it Healthy
+2026-10-03T17:35:36  chaos-shop-prod-eu  Approval Pass by approver@example.com on api-response-cache
+    note: the approver in chat: "Approve outage 3 cache, staging then prod"; recorded after staging ran it Healthy
+2026-10-03T17:43:01  chaos-shop-prod-us-1  ParityCheck Pass by angel (Worker) on api-memory-limit-restore-128mi-prod
+    note: parity with chaos-shop-staging/shop@4 passed on shop/6
+2026-10-03T17:43:02  chaos-shop-prod-us-2  ParityCheck Pass by angel (Worker) on api-memory-limit-restore-128mi-prod
+    note: parity with chaos-shop-staging/shop@4 passed on shop/6
+2026-10-03T17:43:02  chaos-shop-prod-eu  ParityCheck Pass by angel (Worker) on api-memory-limit-restore-128mi-prod
+    note: parity with chaos-shop-staging/shop@4 passed on shop/6
+2026-10-03T17:58:18  chaos-shop-prod-us-1  Approval Pass by approver@example.com on api-memory-limit-restore-128mi-prod
+    note: the approver in chat: "Proceed" (reply to approval request 8: outage 3 fix, restore 128Mi in prod)
+2026-10-03T17:58:18  chaos-shop-prod-us-2  Approval Pass by approver@example.com on api-memory-limit-restore-128mi-prod
+    note: the approver in chat: "Proceed" (reply to approval request 8: outage 3 fix, restore 128Mi in prod)
+2026-10-03T17:58:18  chaos-shop-prod-eu  Approval Pass by approver@example.com on api-memory-limit-restore-128mi-prod
+    note: the approver in chat: "Proceed" (reply to approval request 8: outage 3 fix, restore 128Mi in prod)
+2026-10-03T18:15:57  chaos-shop-prod-us-1  ParityCheck Fail by angel (Worker) on api-memory-limit-96mi-prod
+    note: parity with chaos-shop-staging/shop@4 failed: shop/7: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "96Mi" here and "128Mi" in chaos-shop-staging, and no guard departure=<why> declares it
+2026-10-03T18:15:58  chaos-shop-prod-us-2  ParityCheck Fail by angel (Worker) on api-memory-limit-96mi-prod
+    note: parity with chaos-shop-staging/shop@4 failed: shop/7: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "96Mi" here and "128Mi" in chaos-shop-staging, and no guard departure=<why> declares it
+2026-10-03T18:15:58  chaos-shop-prod-eu  ParityCheck Fail by angel (Worker) on api-memory-limit-96mi-prod
+    note: parity with chaos-shop-staging/shop@4 failed: shop/7: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "96Mi" here and "128Mi" in chaos-shop-staging, and no guard departure=<why> declares it
+
+## Releases since 16:00, and who published each (ReleasedBy)
+2026-10-03T17:10:44  chaos-shop-prod-eu  release 3 by devil (Worker) for api-memory-limit-40mi-prod
+2026-10-03T17:11:08  chaos-shop-prod-us-1  release 3 by devil (Worker) for api-memory-limit-40mi-prod
+2026-10-03T17:11:12  chaos-shop-prod-us-2  release 3 by devil (Worker) for api-memory-limit-40mi-prod
+2026-10-03T17:30:59  chaos-shop-staging  release 3 by devil (Worker) for api-response-cache
+2026-10-03T17:36:20  chaos-shop-prod-eu  release 4 by devil (Worker) for api-response-cache
+2026-10-03T17:36:24  chaos-shop-prod-us-1  release 4 by devil (Worker) for api-response-cache
+2026-10-03T17:36:28  chaos-shop-prod-us-2  release 4 by devil (Worker) for api-response-cache
+2026-10-03T17:58:47  chaos-shop-prod-eu  release 5 by angel (Worker) for api-memory-limit-restore-128mi-prod
+2026-10-03T18:02:58  chaos-shop-prod-us-1  release 5 by angel (Worker) for api-memory-limit-restore-128mi-prod
+2026-10-03T18:07:10  chaos-shop-prod-us-2  release 5 by angel (Worker) for api-memory-limit-restore-128mi-prod
+
+## The change orders of outage 3, and how each ended
+2026-10-03T16:31:52  api-memory-limit-40mi-prod  Released
+2026-10-03T17:18:01  api-response-cache  Released
+2026-10-03T17:41:59  api-memory-limit-restore-128mi-prod  Released
+2026-10-03T18:14:12  api-memory-limit-96mi-prod  Aborted
+    aborted: Outage 3 repeat, refused at prod release by the parity gate (ParityCheck rejected: api memory limit 96Mi in prod, 128Mi in staging, undeclared); withdrawn by devil.
+2026-10-03T16:29:53  chaos-shop-class-prod/api-memory-limit-40mi-prod  Aborted
+    aborted: Opened by devil in the wrong shape: it lived in chaos-shop-class-prod, so staging could never take it and the rollout workflow would not let it into prod. Replaced by chaos-shop-base/api-memory-limit-40mi-prod. The 40Mi revision in chaos-shop-class-prod/shop (revision 4) is kept, not restored.
+
+## Devil again, 18:14:51 (devil-20261003T181152Z.md)
+Failed: HTTP 422 for req AzbigWbJKXytebydhUxmBbLueSyCIkoo: unable to publish a release of change order 'api-memory-limit-96mi-prod' in stage 'prod': requires approval: 1 Approval attestation(s) from eligible attesters who did not write the change; shop revision 7 has 0 of 1; requires parity: 1 ParityCheck attestation(s) from eligible attesters; shop revision 7 has 0 of 1
+
+## The parity check on Devil's order, 18:15 (angel-20261003T181535Z.md)
+chaos-shop-prod-eu: FAILED on shop/7; recorded a rejection (99815d50-aa20-495d-8281-691cbb9e5223), which holds its release:
+  - shop/7: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "96Mi" here and "128Mi" in chaos-shop-staging, and no guard departure=<why> declares it
+chaos-shop-prod-us-1: FAILED on shop/7; recorded a rejection (7a197b0d-e579-47a7-9f02-24767918c52e), which holds its release:
+  - shop/7: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "96Mi" here and "128Mi" in chaos-shop-staging, and no guard departure=<why> declares it
+chaos-shop-prod-us-2: FAILED on shop/7; recorded a rejection (ba4e5086-23cd-40fd-866c-2160cb46d834), which holds its release:
+  - shop/7: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "96Mi" here and "128Mi" in chaos-shop-staging, and no guard departure=<why> declares it

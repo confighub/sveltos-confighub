@@ -1,0 +1,4 @@
+# Outage 2: the gate on the management record (2026-10-03T15:07:20Z)
+
+$ cub release publish chaos-management   # as angel, with no change order
+Failed: HTTP 400: component chaos-management requires a ChangeWorkflow; use a ChangeOrder that has one
