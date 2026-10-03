@@ -31,6 +31,7 @@ type impactBench struct {
 	applies  int
 	leftover []string // policies the sandbox holds from an earlier run
 	deleted  []string
+	runs     string // the workloads the sandbox runs, as kubectl lists them
 	// the policies held in ConfigHub, in mer-policies: each unit's head, and
 	// the revision tagged in-force
 	policyHeads map[string]int
@@ -118,6 +119,8 @@ func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, [
 	args = args[2:] // --kubeconfig <file>
 	all := name + " " + strings.Join(args, " ")
 	switch {
+	case strings.HasPrefix(all, "kubectl get deployments,statefulsets,daemonsets -A"):
+		return []byte(b.runs), nil, nil
 	case all == "kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings -o json":
 		items := []map[string]any{}
 		for _, n := range b.leftover {
@@ -190,7 +193,7 @@ func newImpactBench(t *testing.T) *impactBench {
 	if testAtSix == limits {
 		t.Fatal("could not raise test's ceiling in the example")
 	}
-	return &impactBench{t: t, stageOf: map[string]string{}, ceilings: map[string]int{},
+	return &impactBench{t: t, stageOf: map[string]string{}, ceilings: map[string]int{}, runs: "kube-system/coredns\nlocal-path-storage/local-path-provisioner\nkube-system/kindnet\n",
 		policyHeads: map[string]int{"replica-limits": 3, "disallow-latest-tag": 2, "platform-team-only": 1, "policy-tests": 2},
 		inForce:     map[string]int{"replica-limits": 2, "disallow-latest-tag": 2, "policy-tests": 2},
 		upstream:    map[string]string{"mer-kyverno-eu-central-test1": "mer-kyverno-class-test", "mer-kyverno-eu-central-prod1": "mer-kyverno-class-prod"},
@@ -398,5 +401,24 @@ func TestImpactTests(t *testing.T) {
 	}
 	if len(r.FailingNow) != 1 || !strings.Contains(r.FailingNow[0], "tests/uat-five: expects allowed, and the policies in force give denied") {
 		t.Errorf("a case the policies in force get wrong is reported: %v", r.FailingNow)
+	}
+}
+
+// The sandbox's admission policies are replaced, so impact never takes the
+// current context as one, and refuses a cluster that runs anything but
+// Kubernetes itself: on a management cluster, the policies would refuse
+// Sveltos its own writes.
+func TestImpactRefusesWhatIsNotASandbox(t *testing.T) {
+	b := newImpactBench(t)
+	opts := ImpactOptions{Component: "mer-kyverno", Settle: 1,
+		Policies:   []string{policy("replica-limits.yaml")},
+		Candidates: []string{policy("candidates/replica-limits-prod-2.yaml")}}
+	if _, err := Impact(b.exec, b.hub(), opts); err == nil || !strings.Contains(err.Error(), "name the sandbox") || b.applies != 0 {
+		t.Errorf("no sandbox named: refused before anything is applied: %v, %d applies", err, b.applies)
+	}
+	b.runs = "kube-system/coredns\nprojectsveltos/addon-controller\nprojectsveltos/sc-manager\n"
+	opts.SandboxKubeconfig = "sandbox"
+	if _, err := Impact(b.exec, b.hub(), opts); err == nil || !strings.Contains(err.Error(), "runs projectsveltos/addon-controller, projectsveltos/sc-manager, so it is not a sandbox") || b.applies != 0 {
+		t.Errorf("a management cluster named as the sandbox: refused before anything is applied: %v, %d applies", err, b.applies)
 	}
 }

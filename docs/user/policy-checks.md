@@ -207,7 +207,14 @@ question before that, in both directions:
   it newly let through?
 
 It evaluates each target twice in a **sandbox**: a disposable API server that
-holds policies and nothing else. It runs once under the policies in force, and
+holds policies and nothing else. Name it with `--sandbox-kubeconfig` or
+`--sandbox-context`. Its admission policies are replaced, so `impact` and
+`check` never take the current context as the sandbox. They also refuse a
+cluster that runs anything but Kubernetes itself. Measured, before that rule
+existed: run with no sandbox named, from a shell whose context was a
+management cluster, the preview put its policy there, and Sveltos was refused
+its own writes until a release replaced the policy. It runs once under the
+policies in force, and
 once under the candidate. Each object a policy matches is submitted with a
 server-side dry run, so the verdict is the API server's own, and nothing is
 created. Each object comes out as one of four:

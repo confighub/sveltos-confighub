@@ -254,6 +254,9 @@ func sandboxJudge(o SandboxCheck, hub Hub, targets []target) (map[string]map[str
 	}
 	var removed []string
 	s := sandbox{x: o.Exec, o: ImpactOptions{SandboxKubeconfig: o.Kubeconfig, SandboxContext: o.Context, Settle: o.Settle}, removed: &removed}
+	if err := s.ensure(); err != nil {
+		return nil, set, err
+	}
 	kinds, err := s.discover(policies, targets)
 	if err != nil {
 		return nil, set, err
