@@ -18,7 +18,7 @@ case $who in
   milton)
     run=${4:?name the run whose request Milton reviews}
     REQUEST=${REQUEST:-$(bash "$here/agents/last-request.sh" "$run" "${5:-angel}")} ORDER=$order STAGE=$stage \
-      bash "$here/agents/run-agent.sh" milton "$run" "$here/prompts/milton-review.txt"
+      bash "$here/agents/run-agent.sh" milton "$run" "$here/prompts/milton-review.txt" || exit 1
     bash "$here/agents/last-request.sh" "$run" milton ;;
   *) echo "who approves: me or milton" >&2; exit 2 ;;
 esac

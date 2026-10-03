@@ -5,7 +5,7 @@
 #   angel     fixes them and writes what prevents them (org role editor)
 #   reporter  writes live status (org role editor)
 #   milton    reviews and approves, when you let it (org role viewer;
-#             setup/grant-agents.sh gives it Approve on the demo's Spaces)
+#             setup/grant-agents.sh gives it ApproveChildren on the demo's Spaces)
 # Then writes $AI_CHAOS_DIR/ids.env with your user ID and Milton's, which the
 # workflows name as the approvers.
 #

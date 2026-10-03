@@ -24,7 +24,7 @@ with `cub attestation list --space <space>`, or `evidence.sh`.
 
 | Claim | How to check |
 | --- | --- |
-| Each agent has its own identity, and none can approve | Workers page. `cub space get chaos-shop-prod-eu -o yaml`: under Permissions, Approve names only `milton` |
+| Each agent has its own identity, and none can approve | Workers page. `cub space get chaos-shop-prod-eu -o yaml`: under Permissions, ApproveChildren names only `milton`. Approving also needs Use on the change order (UseChildren on its base Space) |
 | Only you or Milton may approve, never a change's author | `evidence.sh`, Gates: `approval = 1 Approval from <you>, milton; authors counted: False` |
 | A component takes changes only through its workflow | `cub component get chaos-shop -o yaml`: `ChangeWorkflowRequired: true` |
 | The management record can't be published directly | `cub release publish chaos-management` is refused: "requires a ChangeWorkflow" |

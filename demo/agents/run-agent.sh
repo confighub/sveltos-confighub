@@ -73,7 +73,7 @@ cd "$work"
 model=()
 [ -n "${MODEL:-}" ] && model=(--model "$MODEL")
 CUB_CONTEXT="chaos-$agent" KUBECONFIG="$fleet" AI_CHAOS_DIR="$AI_CHAOS_DIR" \
-  claude -p "$task" "${model[@]}" --setting-sources project \
+  claude -p "$task" ${model[@]+"${model[@]}"} --setting-sources project \
     --append-system-prompt "$(sed -e "s|\$AI_CHAOS_DIR|$AI_CHAOS_DIR|g" -e "s|\$DEMO|$DEMO|g" "$here/$agent.md")" \
     --tools "$tools" --strict-mcp-config \
     --output-format stream-json --verbose \

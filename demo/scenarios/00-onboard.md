@@ -14,7 +14,14 @@ source demo/env.sh
 bash $DEMO/setup/onboard.sh
 ```
 
-It stops at staging. It names two change orders, one per component: `chaos-shop-base/onboard-<id>` and
+It stops at staging. Give Devil, the reporter and Milton their permissions on
+the Spaces Angel just created; Milton cannot review what it cannot read:
+
+```bash
+bash $DEMO/setup/grant-agents.sh
+```
+
+`onboard.sh` names two change orders, one per component: `chaos-shop-base/onboard-<id>` and
 `chaos-platform-base/onboard-<id>`. See them with:
 
 ```bash
@@ -43,7 +50,8 @@ releases. Nothing is reinstalled; the pods keep running.
 bash $DEMO/setup/onboard.sh --handover
 ```
 
-Then the permissions, the gates and live status:
+Then the permissions again (the handover adds Spaces), the gates and live
+status:
 
 ```bash
 bash $DEMO/setup/grant-agents.sh     # Devil, the reporter and Milton on every chaos-* Space
