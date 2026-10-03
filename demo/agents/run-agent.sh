@@ -55,7 +55,8 @@ case $agent in
              "Bash(cub unit get:*)" "Bash(cub unit list:*)" "Bash(cub unit data:*)" "Bash(cub unit diff:*)"
              "Bash(cub revision:*)" "Bash(cub variant diff:*)" "Bash(cub space get:*)" "Bash(cub space list:*)"
              "Bash(cub attestation list:*)" "Bash(cub release list:*)" "Bash(cub release get:*)"
-             "Bash(cub changeworkflow get:*)" "Bash(cub sveltos impact:*)" "Bash(cub sveltos status:*)"
+             "Bash(cub changeworkflow get:*)" "Bash(cub target get:*)" "Bash(cub target list:*)"
+             "Bash(cub sveltos impact:*)" "Bash(cub sveltos status:*)"
              "Bash(kubectl get:*)" "Bash(kubectl describe:*)" "Bash(kubectl auth can-i:*)"
              "Bash(kubectl --kubeconfig $AI_CHAOS_DIR/sandbox.kubeconfig:*)"
              "Bash(bash $DEMO/proof/token-subject.sh:*)" "Bash(date:*)")
