@@ -1,0 +1,15 @@
+# time (UTC, 2026-10-03)	who	what	source
+12:29:55	devil	Rotates the shop's token Secret on all four clusters, outside ConfigHub	devil-20261003T122911Z.md
+12:30:49	fleet	web goes unready: it still sends the old token; api reads the new one	kubectl, evidence in the run
+12:31:15	confighub	Live status Degraded on all four clusters, naming shop/web	status-watch, screenshot 10
+12:39:10	angel	Starts, launched on ConfigHub's Degraded status (by the session, not yet by an alert)	runs.log
+12:41:09	angel	Fix proposed as change order web-reload-on-token-rotation (Reloader annotation, one-time roll)	evidence.txt, Promotions
+12:51:45	angel	Prevention proposed: admission policy secret-env-needs-reload, 11 known cases, previewed. Asks for approval: fix first, then the policy	angel-20261003T124430Z.md
+14:20:39	approver	Approves staging (in chat; Claude runs cub variant approve with their words)	evidence.txt, Approvals
+14:21:15	sveltos	Angel publishes the fix to staging; Sveltos delivers it	evidence.txt, Releases
+14:23:48	confighub	Staging Healthy	status-watch
+14:24:39	approver	Approves the policy for staging	evidence.txt
+14:26:34	devil	Rotates again: Reloader rolls web, no outage. Deploys web-copy without the annotation: refused at admission	devil-20261003T142634Z.md
+14:59:19	approver	Approves prod, for the fix and the policy	evidence.txt
+15:00:08	sveltos	Angel publishes the fix, then the policy, to the three prod clusters; Sveltos delivers them	evidence.txt, Releases
+15:02:31	confighub	All four clusters Healthy	status-watch, screenshot 19

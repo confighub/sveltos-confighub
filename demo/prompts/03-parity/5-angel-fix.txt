@@ -1,0 +1,8 @@
+ConfigHub's live status says the shop is Degraded in prod, and it may come and go. Find out why and where, fix it through ConfigHub, and make sure this kind of outage cannot happen again.
+What you need to know:
+- The component chaos-shop accepts changes only through its workflow chaos-shop-base/rollout: stages bases, staging, prod; each stage's release needs the approver's approval.
+- The policy sandbox is ${AI_CHAOS_DIR}/sandbox.kubeconfig. If you preview with cub sveltos impact, or check with --sandbox-kubeconfig, name it explicitly; the tool refuses to run without one. Never point it at a fleet cluster.
+- cub sveltos check --parity-with <stage> compares each variant of a stage with what an earlier stage runs, field by field, and records a ParityCheck attestation; a difference passes only where a guard departure=<why> declares it (cub unit set-guard). Read its --help before using it.
+- The workflow's gates (for example, which attestations prod's release requires) change only under the approver's own login, on their word: if you want one changed, write the exact command in your request and do not run it.
+- Never use --debug.
+Fix first, prevention second. Propose both, check what you can, and stop at the approver's approval with one approval request that says what to release, and in what order.

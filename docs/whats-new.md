@@ -11,7 +11,8 @@ ConfigHub, with known cases, and checks each change by the same policies it was
 previewed against. Version 0.10 watches each cluster's health after every
 release too, can deliver the management cluster's record from ConfigHub, and
 stores each cluster's facts on its Target. Version 0.12 works with `cub`
-v0.7.0's Targets, and asks ConfigHub through its SDK.
+v0.7.0's Targets, and asks ConfigHub through its SDK. Version 0.13 checks that
+prod runs what staging ran.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -21,6 +22,29 @@ v0.7.0's Targets, and asks ConfigHub through its SDK.
 
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
+
+## 0.13.0, 2026-10-03
+
+**A parity check: prod runs what staging ran.** `cub sveltos check --parity-with
+staging` compares each variant of a stage with what the earlier stage runs under
+the same change order, field by field. A difference passes only where a guard
+`departure=<why>` declares it, and the check names any other, with both values.
+It records the verdict as a ParityCheck attestation, so prod's release can
+require it. A Secret's values are never shown. See
+[policy checks](user/policy-checks.md#prod-as-staging-ran-it-a-parity-check).
+
+**Named approvers.** `plan` and `apply` take `--approver <user ID>`, repeatable.
+Only the named users' approvals count, and never the author's.
+
+**A first policy can be previewed.** `impact --candidate` works with no policies
+in force yet.
+
+**The demo.** [`demo/`](../demo/README.md) runs "AI chaos in production"
+yourself:
+- AI agents with their own ConfigHub identities cause three outages on a kind
+  fleet, fix them through ConfigHub, and add what prevents them.
+- You or a reviewing agent approve every release.
+- It has the prompts, the scripts, each proof point, and teardown.
 
 ## 0.12.1, 2026-10-03
 

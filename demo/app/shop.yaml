@@ -1,0 +1,122 @@
+# The shop: api checks a shared token on every request; web calls api with
+# it. api reads the token from a mounted file, so it sees a rotation within
+# a minute or so. web reads it once, from the environment, at start; its
+# readiness probe calls api, so a stale token makes web unready.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shop
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shop-code
+  namespace: shop
+data:
+  api.py: |
+    import http.server
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == "/healthz":
+                return self.reply(200, "ok")
+            token = open("/etc/shop-token/token").read().strip()
+            if self.headers.get("Authorization") != "Bearer " + token:
+                return self.reply(401, "bad token")
+            self.reply(200, "hello from api")
+        def reply(self, code, text):
+            self.send_response(code); self.end_headers(); self.wfile.write(text.encode())
+        def log_message(self, *a): pass
+    http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()
+  web.py: |
+    import http.server, os, urllib.request
+    TOKEN = os.environ["SHOP_TOKEN"]
+    def call_api():
+        req = urllib.request.Request("http://api:8080/", headers={"Authorization": "Bearer " + TOKEN})
+        return urllib.request.urlopen(req, timeout=2).read().decode()
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            try:
+                body, code = call_api(), 200
+            except Exception as e:
+                body, code = "api refused: %s" % e, 502
+            self.send_response(code); self.end_headers(); self.wfile.write(body.encode())
+        def log_message(self, *a): pass
+    http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()
+  ready.py: |
+    import os, sys, urllib.request
+    req = urllib.request.Request("http://api:8080/", headers={"Authorization": "Bearer " + os.environ["SHOP_TOKEN"]})
+    try:
+        urllib.request.urlopen(req, timeout=2)
+    except Exception as e:
+        print(e); sys.exit(1)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: shop
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: api}}
+  template:
+    metadata: {labels: {app: api}}
+    spec:
+      containers:
+      - name: api
+        image: python:3.12-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "/app/api.py"]
+        ports: [{containerPort: 8080}]
+        readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 5}
+        resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}
+        volumeMounts:
+        - {name: code, mountPath: /app}
+        - {name: token, mountPath: /etc/shop-token, readOnly: true}
+      volumes:
+      - {name: code, configMap: {name: shop-code}}
+      - {name: token, secret: {secretName: shop-token}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: shop
+spec:
+  selector: {app: api}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: shop
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec:
+      containers:
+      - name: web
+        image: python:3.12-alpine
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "/app/web.py"]
+        ports: [{containerPort: 8080}]
+        env:
+        - name: SHOP_TOKEN
+          valueFrom: {secretKeyRef: {name: shop-token, key: token}}
+        readinessProbe: {exec: {command: ["python3", "/app/ready.py"]}, periodSeconds: 5, timeoutSeconds: 4}
+        resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {memory: 128Mi}}
+        volumeMounts:
+        - {name: code, mountPath: /app}
+      volumes:
+      - {name: code, configMap: {name: shop-code}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: shop
+spec:
+  selector: {app: web}
+  ports: [{port: 8080, targetPort: 8080}]

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -52,7 +53,9 @@ func hubServer(t *testing.T) (*httptest.Server, *[]asked) {
 		case r.Method == "GET" && r.URL.Path == "/api/attestation":
 			fmt.Fprint(w, `[{"Attestation":{}},{"Attestation":{}}]`)
 		case r.Method == "GET" && r.URL.Path == "/api/unit":
-			fmt.Fprintf(w, `[{"Unit":{"UnitID":%q,"SpaceID":%q,"Slug":"u","SpaceSlug":"s","HeadRevisionNum":4,"LastReleasedRevisionNum":3}}]`, unitID, spaceID)
+			fmt.Fprintf(w, `[{"Unit":{"UnitID":%q,"SpaceID":%q,"Slug":"u","SpaceSlug":"s","HeadRevisionNum":4,"LastReleasedRevisionNum":3,`+
+				`"PathAnnotations":[{"Resource":{"ResourceType":"apps/v1/Deployment","ResourceName":"shop/api"},`+
+				`"PathAnnotationMap":{"spec.replicas":{"Guard":{"departure":"prod-capacity"}}},"ResourceAnnotations":{"Guard":{"owner":"platform"}}}]}}]`, unitID, spaceID)
 		case r.Method == "GET" && r.URL.Path == revisions:
 			fmt.Fprintf(w, `[{"Revision":{"RevisionID":%q,"RevisionNum":3,"Tags":{"tag-a":""},"ValidationErrors":{"policies/vet":true}}},
 			  {"Revision":{"RevisionID":%q,"RevisionNum":4,"Tags":{"tag-a":""}}}]`, revisionID, emptyRevisionID)
@@ -196,8 +199,10 @@ func TestSDKHubRevisions(t *testing.T) {
 	h := NewHub("test")
 
 	u, err := h.Unit("s", "u")
-	if err != nil || u != (HubUnit{Slug: "u", SpaceSlug: "s", Head: 4, Released: 3}) {
-		t.Errorf("a unit with its head, its released revision and no upstream: %+v %v", u, err)
+	guards := map[string]map[string]map[string]string{"apps/v1/Deployment:shop/api": {
+		"spec.replicas": {"departure": "prod-capacity"}, "": {"owner": "platform"}}}
+	if err != nil || !reflect.DeepEqual(u, HubUnit{Slug: "u", SpaceSlug: "s", Head: 4, Released: 3, Guards: guards}) {
+		t.Errorf("a unit with its head, its released revision, its guards and no upstream: %+v %v", u, err)
 	}
 	revs, err := h.Revisions("s", "u", "Tags ? 'tag-a'")
 	if err != nil || len(revs) != 2 || !revs[0].Tags["tag-a"] || !revs[0].Failing || revs[1].Failing {

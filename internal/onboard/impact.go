@@ -143,8 +143,10 @@ func Impact(x Exec, hub Hub, o ImpactOptions) (*ImpactReport, error) {
 		return nil, err
 	}
 	current := cur.policies()
-	if len(current) == 0 {
-		return nil, fmt.Errorf("no policies in force: give --policy")
+	// With no policies in force yet, a fleet's first policy is previewed
+	// against an admission that allows everything.
+	if len(current) == 0 && len(o.Candidates) == 0 {
+		return nil, fmt.Errorf("no policies in force: give --policy, or --candidate for a first policy")
 	}
 	cand, candidate := cur, current
 	var candSources []string

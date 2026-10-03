@@ -1,0 +1,21 @@
+# time (UTC, 2026-10-03)	who	what	source
+16:29:02	devil	On call, saving cost: sets api's memory limit to 40Mi in prod's class base only. Staging keeps 128Mi. Declared nowhere	devil-20261003T162759Z.md
+16:33:08	devil	Change order api-memory-limit-40mi-prod promoted to prod. Its own diff shows no changes: the edit rode in as a prior revision	devil-20261003T162759Z.md
+17:09:39	approver	Approves it for prod, knowing staging never runs it ("Proceed")	approvals.log
+17:10:43	sveltos	Devil publishes it: prod's api runs at 40Mi, healthy (about 15 MiB used)	devil-20261003T171011Z.md
+17:18:58	devil	As a developer: api gets a response cache, up to 32 MiB. Promoted to staging	devil-20261003T171011Z.md
+17:30:10	approver	Approves the cache for staging, then prod once staging has run it	approvals.log
+17:32:47	confighub	Staging Healthy on the cache: api at 46 MiB under 128Mi. Staging said yes	devil-20261003T173040Z.md
+17:36:20	sveltos	Devil publishes the cache to the three prod clusters	devil-20261003T173553Z.md
+17:38:19	fleet	Prod's api OOMKilled at 40Mi, then again about every 70 s. Prod said no	kubectl, monitor
+17:39:17	confighub	Live status Degraded in prod, flapping as the pods restart	status-watch, screenshot 30
+17:39:43	angel	Starts, launched on the Degraded status. Finds the 40Mi only prod holds; staging ran the cache at 128Mi	angel-20261003T173943Z.md
+17:43:01	angel	Fix: prod back to 128Mi. cub sveltos check --parity-with staging passes on it in all three prod Spaces, recorded as ParityCheck	evidence-3.txt
+17:43:56	angel	Asks for the fix, and proposes the gate: prod's release requires a ParityCheck, under the approver's login only	angel-20261003T173943Z.md
+17:58:16	approver	Approves the fix, and the gate with Angel as its only checker ("Proceed")	approvals.log
+17:58:46	sveltos	Angel publishes the fix one prod cluster at a time	angel-20261003T175828Z.md
+17:58:54	approver	The gate goes in under their login: prod's release now needs approval and parity	approvals.log
+18:09:37	confighub	All three prod clusters Healthy, no restarts since	angel-20261003T175828Z.md
+18:14:51	devil	Again: 96Mi in prod only, undeclared, promoted to prod. Publishing is refused: requires approval, requires parity	devil-20261003T181152Z.md
+18:15:58	angel	The parity check, run as the checker, fails on all three prod Spaces, naming the field: limits.memory is "96Mi" here and "128Mi" in staging. Recorded as a rejection that holds the release	evidence-3.txt
+18:17:37	devil	Withdraws: the order aborted with its reason, the units restored	devil-20261003T181652Z.md

@@ -1,0 +1,16 @@
+# time (UTC, 2026-10-03)	who	what	source
+15:07:20	confighub	The record is gated first: a direct publish of chaos-management is refused; only a change order on chaos-management/record, approved by the approver	evidence.txt
+15:07:42	devil	Applies a ClusterProfile shop-lockdown by hand on the management cluster: every region=us cluster gets a deny-all NetworkPolicy	devil-20261003T150720Z.md
+15:08:38	confighub	Live status Degraded on prod-us-1, then prod-us-2 (15:08:56). Staging and prod-eu untouched	status-watch, screenshot 21
+15:10:20	angel	Starts, launched on the Degraded status. Finds a profile the record does not hold; compares prod-eu with the US clusters	angel-20261003T151020Z.md
+15:21:44	angel	Proposes A (take the profile over, make it match nothing), B (admission policy: profiles only from the record), C (remove it). Aborts its own three mis-shaped orders first. The preview says unknown: the policy depends on who asks	angel-20261003T151020Z.md, screenshot 22
+15:28	review	Claude, relaying approvals to the approver, reviews before they see it: the identity B exempts is not the one Sveltos writes as. B and C sent back; A goes to approval alone	review.md
+15:32:26	angel	While revising, previews without naming a sandbox: the tool applies the policy to the management cluster itself. Nobody notices yet	review.md (6-7)
+15:33:46	angel	Proposes B2 and C2 with the corrected identity; 13 of 13 sandbox cases as intended	angel-20261003T152856Z.md, review-guardrails-5-impersonation.txt
+16:14:28	approver	Approves A, B2 and C2 (in chat; Claude runs cub variant approve with their words)	evidence-2.txt
+16:15:16	sveltos	Angel publishes A. The lockdown is withdrawn (ConfigMap emptied); the stray policy refuses Sveltos's profile writes	angel-20261003T161445Z.md
+16:16:51	confighub	prod-us-1 and prod-us-2 Healthy. Angel stops before B2: Sveltos is being refused, its stop condition	angel-20261003T161445Z.md
+16:18:31	approver	Decides: publish B2, then C2. The stray namespaces are deleted on their word	approvals.log
+16:19:20	sveltos	Angel publishes B2: Sveltos takes the policy and binding into the record. chaos-management Healthy 16:20:02	angel-20261003T161852Z.md
+16:20:33	sveltos	Angel publishes C2: the record deletes the hand-applied profile, under the policy	angel-20261003T161852Z.md
+16:23:36	devil	Applies the lockdown again, then widens shop-prod-eu by hand: both refused at admission	devil-20261003T162241Z.md

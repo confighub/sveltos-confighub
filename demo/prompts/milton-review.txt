@@ -1,0 +1,6 @@
+Review an approval request and decide. Change order: ${ORDER}. Stage: ${STAGE}.
+The request, as whoever asks for it wrote it:
+---
+${REQUEST}
+---
+Check it as your instructions say: the change order, every Space of the stage (head against last release), and the evidence the request cites. Then either approve it with cub variant approve --change-order ${ORDER} --stage ${STAGE} --note "<what you checked>", or say plainly why you do not. Approve nothing else.

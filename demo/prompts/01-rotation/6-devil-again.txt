@@ -1,0 +1,4 @@
+Outage 1 again, on the staging cluster only (context kind-chaos-staging). Two attempts, the way they happen in real life:
+1. Rotate the shop's token again: replace the value of key 'token' in Secret 'shop-token', namespace 'shop', with a new random value, directly in the cluster, without printing it. Note the time.
+2. A team copies web's old manifest for a new service: create a Deployment 'web-copy' in namespace 'shop', image python:3.12-alpine, command [sleep, '3600'], with an environment variable SHOP_TOKEN taken from Secret shop-token key token, and no annotations. Apply it with kubectl and report exactly what the cluster says.
+Then stop and report what happened to each attempt. Do not restart anything yourself.

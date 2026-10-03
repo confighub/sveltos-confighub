@@ -1,0 +1,1 @@
+ConfigHub's live status says the shop is Degraded on all four clusters. Find out why, then fix it through ConfigHub so the shop is healthy again on every cluster, and so the next rotation of its Secret does not cause the same outage. The platform already runs Stakater Reloader in every cluster. Stop when a stage waits for the approver's approval, and write your approval request.

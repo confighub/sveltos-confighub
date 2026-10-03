@@ -3,6 +3,7 @@ package onboard
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -19,7 +20,16 @@ type Gates struct {
 	// release waits for as well: a Pass recorded against the change as it
 	// stands in that stage. Unlike a Trigger, a requirement never fails open.
 	Require []string
+	// Approvers are the ConfigHub user IDs whose approvals count. With any
+	// named, an approval from anyone else, or from the change's author,
+	// counts for nothing.
+	Approvers []string
 }
+
+// any says whether the plan adds gates beyond an approval anyone may give.
+func (g Gates) any() bool { return g.Policy != "" || len(g.Require) > 0 || len(g.Approvers) > 0 }
+
+var userID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // requirement is one attestation a stage's release can wait for.
 type requirement struct {
@@ -27,6 +37,8 @@ type requirement struct {
 	Type         string `json:"Type"`
 	Count        int    `json:"Count"`
 	AllowAuthors bool   `json:"AllowAuthors"`
+	// FromUserIDs are the users whose attestations count; anyone's when empty.
+	FromUserIDs []string `json:"FromUserIDs,omitempty"`
 }
 
 // stageGate is one stage of the workflow and what it waits for.
@@ -38,7 +50,7 @@ type stageGate struct {
 }
 
 func (g Gates) requirements() []requirement {
-	out := []requirement{{Name: "approval", Type: "Approval", Count: 1, AllowAuthors: true}}
+	out := []requirement{{Name: "approval", Type: "Approval", Count: 1, AllowAuthors: len(g.Approvers) == 0, FromUserIDs: g.Approvers}}
 	for _, t := range g.Require {
 		out = append(out, requirement{Name: Slug(t), Type: t, Count: 1, AllowAuthors: true})
 	}
@@ -80,6 +92,11 @@ func (g Gates) problems() []string {
 			out = append(out, fmt.Sprintf("--policy %s names a trigger Filter as <space>/<filter>", g.Policy))
 		}
 	}
+	for _, a := range g.Approvers {
+		if !userID.MatchString(a) {
+			out = append(out, fmt.Sprintf("--approver %s is not a ConfigHub user ID; cub user list shows each user's", a))
+		}
+	}
 	seen := map[string]bool{"approval": true}
 	for _, t := range g.Require {
 		switch n := Slug(t); {
@@ -101,9 +118,16 @@ func workflowText(stages []string, bases bool, g Gates) string {
 		"# The order a change moves through this profile's clusters, and what each",
 		"# stage waits for. ConfigHub enforces both on the server.",
 		"#",
-		"# AllowAuthors: true lets the person who promoted a change also approve it,",
-		"# which one person trying this needs. Set it to false once a second person",
-		"# approves: ConfigHub then refuses an approval from the change's author.",
+	}
+	if len(g.Approvers) > 0 {
+		lines = append(lines,
+			"# Only the approvals of the users in FromUserIDs count, and never one from",
+			"# the person or agent that wrote the change.")
+	} else {
+		lines = append(lines,
+			"# AllowAuthors: true lets the person who promoted a change also approve it,",
+			"# which one person trying this needs. Set it to false once a second person",
+			"# approves: ConfigHub then refuses an approval from the change's author.")
 	}
 	if g.Policy != "" {
 		lines = append(lines,
@@ -125,6 +149,12 @@ func workflowText(stages []string, bases bool, g Gates) string {
 			"    Type: "+r.Type,
 			fmt.Sprintf("    Count: %d", r.Count),
 			fmt.Sprintf("    AllowAuthors: %t", r.AllowAuthors))
+		if len(r.FromUserIDs) > 0 {
+			lines = append(lines, "    FromUserIDs:")
+			for _, id := range r.FromUserIDs {
+				lines = append(lines, "      - "+id)
+			}
+		}
 	}
 	lines = append(lines, "Stages:")
 	for _, st := range g.stages(stages, bases) {
@@ -169,7 +199,13 @@ func gatesJQ(stages []string, bases bool, g Gates) (has, merged string) {
 	}
 	data, _ := json.Marshal(map[string]any{"req": g.requirements(), "stages": want})
 	head := ".ChangeWorkflow as $w | " + string(data) + " as $g | "
-	has = head +
+	// The approval requirement is kept as it is in ConfigHub, unless the plan
+	// names approvers: then who may approve is the plan's.
+	approvers := ""
+	if len(g.Approvers) > 0 {
+		approvers = `([($w.AttestationPrerequisites // [])[] | select(.Name == "approval") | (.FromUserIDs // []) == ($g.req[0].FromUserIDs) and (.AllowAuthors // false) == false] | all) and `
+	}
+	has = head + approvers +
 		`(($g.req | map(.Name)) - [($w.AttestationPrerequisites // [])[].Name] | length == 0) and ` +
 		`([$w.Stages[] | . as $s | [$g.stages[] | select(.Name == $s.Name)][0] as $want | ` +
 		`$want == null or ((($want.Prerequisites // []) - ($s.Prerequisites // []) | length == 0) and ` +
@@ -178,8 +214,19 @@ func gatesJQ(stages []string, bases bool, g Gates) (has, merged string) {
 		return fmt.Sprintf(`| .%[1]s = (($s.%[1]s // []) + [($want.%[1]s // [])[] | select(. as $p | ($s.%[1]s // []) | index($p) | not)]) | if (.%[1]s | length) == 0 then del(.%[1]s) else . end `, key)
 	}
 	merged = head +
-		`{AttestationPrerequisites: (($w.AttestationPrerequisites // []) + [$g.req[] | select(.Name as $n | [($w.AttestationPrerequisites // [])[].Name] | index($n) | not)]), ` +
+		`{AttestationPrerequisites: ([($w.AttestationPrerequisites // [])[] | ` + approvalFrom(g) + `] + [$g.req[] | select(.Name as $n | [($w.AttestationPrerequisites // [])[].Name] | index($n) | not)]), ` +
 		`Stages: [$w.Stages[] | . as $s | [$g.stages[] | select(.Name == $s.Name)][0] as $want | ` +
 		`if $want == null then $s else $s ` + add("Prerequisites") + add("ReleasePrerequisites") + `end]}`
 	return has, merged
+}
+
+// approvalFrom is a jq step over one attestation prerequisite: with approvers
+// named, the approval requirement takes them, and no longer counts the
+// change's author; anything else passes through.
+func approvalFrom(g Gates) string {
+	if len(g.Approvers) == 0 {
+		return "."
+	}
+	ids, _ := json.Marshal(g.Approvers)
+	return fmt.Sprintf(`if .Name == "approval" then .FromUserIDs = %s | .AllowAuthors = false else . end`, ids)
 }

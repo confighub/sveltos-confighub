@@ -1,0 +1,35 @@
+# Outage 2: what ConfigHub recorded (2026-10-03T16:24:41Z)
+
+## Approvals on the record's change orders: every one by the approver; none by an agent
+2026-10-03T16:14:29  Approval Pass by approver@example.com on outage-2-a-take-over-shop-lockdown
+    note: the approver in chat: "Approve outage 2 A, B2 and C2"
+2026-10-03T16:14:30  Approval Pass by approver@example.com on outage-2-b2-profiles-only-from-record
+    note: the approver in chat: "Approve outage 2 A, B2 and C2"
+2026-10-03T16:14:31  Approval Pass by approver@example.com on outage-2-c2-remove-shop-lockdown
+    note: the approver in chat: "Approve outage 2 A, B2 and C2"
+
+## Releases of the record, and who published each (ReleasedBy)
+2026-10-03T11:30:34  release 1 published=true by angel (Worker) for no change order
+2026-10-03T12:22:56  release 2 published=true by angel (Worker) for no change order
+2026-10-03T16:15:16  release 3 published=true by angel (Worker) for outage-2-a-take-over-shop-lockdown
+2026-10-03T16:19:20  release 4 published=true by angel (Worker) for outage-2-b2-profiles-only-from-record
+2026-10-03T16:20:33  release 5 published=true by angel (Worker) for outage-2-c2-remove-shop-lockdown
+
+## Every change order on the record, and how it ended
+2026-10-03T15:18:33  outage-2-take-over-shop-lockdown  Aborted
+    aborted: Opened by Angel in the wrong shape: the unit guardrails did not exist at this boundary, so publishing it would have shipped the policy with the fix. Superseded by outage-2-a-take-over-shop-lockdown.
+2026-10-03T15:18:54  outage-2-profiles-only-from-record  Aborted
+    aborted: Opened by Angel as part of a mis-shaped series. Superseded by outage-2-b-profiles-only-from-record.
+2026-10-03T15:19:08  outage-2-remove-shop-lockdown  Aborted
+    aborted: Opened by Angel as part of a mis-shaped series. Superseded by outage-2-c-remove-shop-lockdown.
+2026-10-03T15:20:19  outage-2-a-take-over-shop-lockdown  Released
+2026-10-03T15:20:27  outage-2-b-profiles-only-from-record  Aborted
+    aborted: Sent back in review before approval: the policy exempts system:serviceaccount:projectsveltos:register-mgmt-cluster, but Sveltos writes to the management cluster as system:serviceaccount:projectsveltos:projectsveltos (the kubeconfig in Secret mgmt/mgmt-sveltos-kubeconfig, key re-kubeconfig). Bound as written it would refuse the releases of the record itself. Replaced by outage-2-b2-profiles-only-from-record.
+2026-10-03T15:20:36  outage-2-c-remove-shop-lockdown  Aborted
+    aborted: Sent back in review before approval: it follows B, whose policy exempted the wrong identity (register-mgmt-cluster, not system:serviceaccount:projectsveltos:projectsveltos as which Sveltos writes), so the delete this release asks for would have been refused. Its end also pins guardrails@4, the wrong policy. Replaced by outage-2-c2-remove-shop-lockdown.
+2026-10-03T15:31:38  outage-2-b2-profiles-only-from-record  Released
+2026-10-03T15:31:48  outage-2-c2-remove-shop-lockdown  Released
+
+## Devil again, 16:23 (devil-20261003T162241Z.md)
+Error from server (Forbidden): error when creating "$AGENT_HOME/e3be31af-8e9e-44b2-84b9-c84e41aca78a/scratchpad/shop-lockdown-cp.yaml": clusterprofiles.config.projectsveltos.io "shop-lockdown" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied 
+Error from server (Forbidden): clusterprofiles.config.projectsveltos.io "shop-prod-eu" is forbidden: ValidatingAdmissionPolicy 'profiles-only-from-record' with binding 'profiles-only-from-record' denied request: ClusterProfile shop-prod-eu may not be written by kubernetes-admin: profiles on the management cluster come only from the record. Change a unit in the Space chaos-management and release it

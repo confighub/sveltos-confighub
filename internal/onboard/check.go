@@ -28,6 +28,22 @@ type CheckOptions struct {
 	// the policies, in a namespace labelled with the variant's stage. The
 	// attestation then names the policy revisions it was judged by.
 	Sandbox *SandboxCheck
+	// Parity, in place of a function or a sandbox, compares each variant with
+	// the variants of an earlier stage, field by field.
+	Parity *ParityCheck
+}
+
+// ParityCheck is the stage a variant must match, and the guard that declares
+// where it may depart from it.
+type ParityCheck struct {
+	// With is the stage to match, such as staging. Each of its variants is
+	// read at the revision the change order marks there, or, where the order
+	// marks none, at its last release: what it runs, or will run.
+	With string
+	// DeclaredBy is the guard key that declares a departure, recorded with cub
+	// unit set-guard on the path or an object that holds it, with the reason
+	// as its value: departure=prod-capacity.
+	DeclaredBy string
 }
 
 // SandboxCheck is the sandbox and the policies a check is judged by.
@@ -48,6 +64,8 @@ type CheckResult struct {
 	Revisions []string
 	Passed    bool
 	Details   []string
+	// Declared are the departures a parity check found declared, with why.
+	Declared []string
 	// Recorded is the attestation's ID; Skipped says why none was recorded.
 	Recorded string
 	Skipped  string
@@ -71,11 +89,25 @@ type verdict struct {
 // through when the check has not run.
 func Check(run Runner, hub Hub, opts CheckOptions) ([]CheckResult, error) {
 	base, order, ok := strings.Cut(opts.ChangeOrder, "/")
-	if !ok || base == "" || order == "" || opts.Stage == "" || (len(opts.Function) == 0 && opts.Sandbox == nil) {
-		return nil, fmt.Errorf("check needs --change-order <base space>/<order>, --stage, and a function or a sandbox with policies")
+	if !ok || base == "" || order == "" || opts.Stage == "" || (len(opts.Function) == 0 && opts.Sandbox == nil && opts.Parity == nil) {
+		return nil, fmt.Errorf("check needs --change-order <base space>/<order>, --stage, and a function, a sandbox with policies, or --parity-with <stage>")
 	}
 	if opts.Type == "" {
 		opts.Type = "PolicyCheck"
+		if opts.Parity != nil {
+			opts.Type = "ParityCheck"
+		}
+	}
+	if opts.Parity != nil {
+		if opts.Parity.DeclaredBy == "" {
+			opts.Parity.DeclaredBy = "departure"
+		}
+		if opts.Parity.With == opts.Stage {
+			return nil, fmt.Errorf("a stage cannot be checked for parity with itself")
+		}
+		if len(opts.Function) > 0 || opts.Sandbox != nil || opts.Worker != "" {
+			return nil, fmt.Errorf("check parity, with a function, or with the sandbox: one of them")
+		}
 	}
 	co, err := hub.ChangeOrder(base, order)
 	if err != nil {
@@ -144,9 +176,23 @@ func Check(run Runner, hub Hub, opts CheckOptions) ([]CheckResult, error) {
 		}
 		checker = "the policies " + strings.Join(policies.sorted, ", ")
 		claims = map[string]string{"check.confighub.com/policies": strings.Join(policies.sorted, ",")}
+	} else if opts.Parity != nil {
+		checker = "parity with " + opts.Parity.With
+		claims = map[string]string{"check.confighub.com/parity-with": opts.Parity.With}
 	} else {
 		checker = opts.Function[0]
 		claims = map[string]string{"check.confighub.com/function": opts.Function[0]}
+	}
+	var parity map[string]*parityFinding
+	toCheck := false
+	for _, subs := range subjects {
+		toCheck = toCheck || len(subs) > 0
+	}
+	if opts.Parity != nil && toCheck {
+		var err error
+		if parity, err = parityJudge(hub, co, opts, subjects); err != nil {
+			return nil, err
+		}
 	}
 
 	for i := range results {
@@ -154,7 +200,16 @@ func Check(run Runner, hub Hub, opts CheckOptions) ([]CheckResult, error) {
 		if r.Skipped != "" {
 			continue
 		}
+		if f := parity[r.Space]; f != nil {
+			r.Details = append(r.Details, f.undeclared...)
+			r.Declared = f.declared
+			r.Passed = len(f.undeclared) == 0
+			checker = "parity with " + strings.Join(f.against, ", ")
+		}
 		for _, s := range subjects[r.Space] {
+			if opts.Parity != nil {
+				break
+			}
 			rev := fmt.Sprintf("%s/%d", s.UnitSlug, s.RevisionNum)
 			if opts.Sandbox != nil {
 				verdicts := judged[fmt.Sprintf("%s/%s@%d", r.Space, s.UnitSlug, s.RevisionNum)]
@@ -200,6 +255,9 @@ func Check(run Runner, hub Hub, opts CheckOptions) ([]CheckResult, error) {
 		}
 		verdict := HubAttestation{Space: r.Space, Type: opts.Type, ChangeOrderID: co.ID, Claims: claims,
 			Note: fmt.Sprintf("%s passed on %s", checker, strings.Join(r.Revisions, ", "))}
+		if len(r.Declared) > 0 {
+			verdict.Note = clip(fmt.Sprintf("%s; declared departures (%d): %s", verdict.Note, len(r.Declared), strings.Join(r.Declared, "; ")))
+		}
 		if !r.Passed {
 			verdict.Note = clip(fmt.Sprintf("%s failed: %s", checker, strings.Join(r.Details, "; ")))
 			verdict.Reject = true

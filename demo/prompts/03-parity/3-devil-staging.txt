@@ -1,0 +1,5 @@
+Outage 3, step 4, still as the developer. The approver has approved your change order chaos-shop-base/${CACHE_ORDER} for staging.
+1. Publish its release to chaos-shop-staging with --revision ChangeOrder:chaos-shop-base/${CACHE_ORDER}. Note the time.
+2. Confirm, read-only, that staging runs the new api (CACHE_MB=32 in the pods), that api and web are 2 of 2 available, and, after at least three minutes so the cache has filled, how much memory each api container uses (kubectl exec into each api pod and read /sys/fs/cgroup/memory.current; read only that file). Also read ConfigHub's live status for chaos-shop-staging. Re-run read commands to wait; do not sleep.
+3. If staging is healthy, promote the change order into the prod stage (cub variant promote --change-order chaos-shop-base/${CACHE_ORDER} --target-stage prod). Do not publish anything to prod; prod's release needs the approver's approval.
+Stop there, and report the times, the memory you measured, and the state of the change order. Never use --debug.

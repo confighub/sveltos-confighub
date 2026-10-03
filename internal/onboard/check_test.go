@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -121,5 +122,206 @@ func TestCheckWithTheSandbox(t *testing.T) {
 	}
 	if _, err := Check(run, hub, CheckOptions{ChangeOrder: "mer-kyverno-base/six-replicas", Stage: "test"}); err == nil {
 		t.Errorf("a check with neither a function nor a sandbox is an error")
+	}
+}
+
+// A parity check compares each prod variant with what staging runs under the
+// same order: a difference a guard declares passes, with its reason; any other
+// fails, naming the field and both values.
+func TestCheckParity(t *testing.T) {
+	shop := func(replicas int, limit string) string {
+		resources := ""
+		if limit != "" {
+			resources = "\n        resources:\n          limits:\n            memory: " + limit
+		}
+		return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: shop
+spec:
+  replicas: %d
+  template:
+    spec:
+      containers:
+      - name: api
+        image: python:3.12-alpine%s
+`, replicas, resources)
+	}
+	data := map[string]string{
+		"shop-staging/shop@7":  shop(2, ""),
+		"shop-staging/shop@6":  shop(2, ""),
+		"shop-prod-eu/shop@9":  shop(3, ""),
+		"shop-prod-us/shop@9":  shop(3, "48Mi"),
+		"shop-staging/cache@2": "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: cache, namespace: shop}\n",
+	}
+	replicasDeclared := map[string]map[string]map[string]string{"apps/v1/Deployment:shop/api": {"spec.replicas": {"departure": "prod-capacity"}}}
+	stagingMarks := []subject{{UnitSlug: "shop", RevisionNum: 7}}
+	stagingCache := false
+	var recorded []HubAttestation
+	hub := &fakeHub{t: t,
+		order: func(space, order string) (HubChangeOrder, error) {
+			return HubChangeOrder{ID: "order-id", InScope: []string{"id-staging", "id-eu", "id-us"},
+				Stages: []stageGate{{Name: "staging", WhereSpace: "Labels.Stage = 'staging'"}, {Name: "prod", WhereSpace: "Labels.Stage = 'prod'"}}}, nil
+		},
+		spaces: func(where string) ([]HubSpace, error) {
+			if where == "Labels.Stage = 'staging'" {
+				return []HubSpace{{ID: "id-staging", Slug: "shop-staging"}}, nil
+			}
+			return []HubSpace{{ID: "id-eu", Slug: "shop-prod-eu"}, {ID: "id-us", Slug: "shop-prod-us"}}, nil
+		},
+		units: func(space string) ([]HubUnit, error) {
+			units := []HubUnit{{Slug: "shop", SpaceSlug: space, Released: 6}}
+			if space == "shop-staging" && stagingCache {
+				units = append(units, HubUnit{Slug: "cache", SpaceSlug: space, Released: 2})
+			}
+			return units, nil
+		},
+		unit: func(space, unit string) (HubUnit, error) {
+			return HubUnit{Slug: unit, SpaceSlug: space, Guards: replicasDeclared}, nil
+		},
+		data: func(space, unit string, revision int) ([]byte, error) {
+			d, ok := data[fmt.Sprintf("%s/%s@%d", space, unit, revision)]
+			if !ok {
+				t.Errorf("unexpected revision %s/%s@%d", space, unit, revision)
+			}
+			return []byte(d), nil
+		},
+		attest: func(a HubAttestation, dryRun bool) (HubAttested, error) {
+			if a.Type != "ParityCheck" {
+				t.Errorf("a ParityCheck: %+v", a)
+			}
+			if dryRun {
+				if a.Space == "shop-staging" {
+					return HubAttested{Subjects: stagingMarks}, nil
+				}
+				return HubAttested{Subjects: []subject{{UnitSlug: "shop", RevisionNum: 9}}}, nil
+			}
+			recorded = append(recorded, a)
+			return HubAttested{ID: "att-" + a.Space}, nil
+		}}
+	run := func(name string, args ...string) ([]byte, error) {
+		t.Errorf("a parity check runs nothing: %s %s", name, strings.Join(args, " "))
+		return nil, errors.New("unexpected")
+	}
+	opts := CheckOptions{ChangeOrder: "shop-base/bigger-cache", Stage: "prod", Parity: &ParityCheck{With: "staging"}}
+	results, err := Check(run, hub, opts)
+	if err != nil || len(results) != 2 {
+		t.Fatalf("%+v %v", results, err)
+	}
+	eu, us := results[0], results[1]
+	if !eu.Passed || len(eu.Declared) != 1 || eu.Declared[0] != "shop/9: Deployment shop/api spec.replicas is 3 here and 2 in shop-staging (departure=prod-capacity)" {
+		t.Errorf("prod-eu departs only where a guard declares it, and the reason is kept: %+v", eu)
+	}
+	if us.Passed || len(us.Details) != 1 || us.Details[0] != `shop/9: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory is "48Mi" here and unset in shop-staging, and no guard departure=<why> declares it` {
+		t.Errorf("prod-us departs where nothing declares it, named with both values: %+v", us)
+	}
+	if len(recorded) != 2 || recorded[0].Reject || !recorded[1].Reject ||
+		recorded[0].Claims["check.confighub.com/parity-with"] != "staging" ||
+		!strings.Contains(recorded[0].Note, "parity with shop-staging/shop@7 passed on shop/9; declared departures (1): shop/9: Deployment shop/api spec.replicas") ||
+		!strings.Contains(recorded[1].Note, "parity with shop-staging/shop@7 failed: shop/9: Deployment shop/api spec.template.spec.containers[api].resources.limits.memory") {
+		t.Errorf("a Pass listing the declared departure, a rejection naming the field: %+v", recorded)
+	}
+
+	// Where the order marks nothing in staging, staging's last release is what
+	// prod must match.
+	stagingMarks, recorded = nil, nil
+	if results, err := Check(run, hub, opts); err != nil || !results[0].Passed ||
+		!strings.Contains(recorded[0].Note, "parity with shop-staging/shop@6") {
+		t.Errorf("compared with staging's release: %+v %+v %v", results, recorded, err)
+	}
+
+	// A guard on the field itself declares it.
+	replicasDeclared["apps/v1/Deployment:shop/api"]["spec.template.spec.containers.?name=api.resources.limits.memory"] = map[string]string{"departure": "prod-memory-cap"}
+	if results, err := Check(run, hub, opts); err != nil || !results[1].Passed ||
+		!strings.Contains(results[1].Declared[1], "resources.limits.memory is \"48Mi\" here and unset in shop-staging (departure=prod-memory-cap)") {
+		t.Errorf("declared by a guard on the field: %+v %v", results, err)
+	}
+	delete(replicasDeclared["apps/v1/Deployment:shop/api"], "spec.template.spec.containers.?name=api.resources.limits.memory")
+
+	// A guard on a path that holds the field, or on the object, declares it too.
+	replicasDeclared["apps/v1/Deployment:shop/api"]["spec.template.spec.containers.?name=api"] = map[string]string{"departure": "prod-memory"}
+	recorded = nil
+	if results, err := Check(run, hub, opts); err != nil || !results[1].Passed ||
+		!strings.Contains(results[1].Declared[1], "(departure=prod-memory)") {
+		t.Errorf("declared by the container's guard: %+v %v", results, err)
+	}
+	// A unit staging runs and prod does not is a departure no guard in prod
+	// can declare.
+	stagingCache = true
+	if results, err := Check(run, hub, opts); err != nil || results[0].Passed ||
+		results[0].Details[0] != "shop-staging runs unit cache (revision 2), and this variant does not" {
+		t.Errorf("prod lacks a unit staging runs: %+v %v", results, err)
+	}
+	stagingCache = false
+	if r, err := Check(run, hub, CheckOptions{ChangeOrder: "shop-base/bigger-cache", Stage: "prod", Parity: &ParityCheck{With: "canary"}}); err == nil || r != nil {
+		t.Errorf("a stage to match that the order does not have is an error, and no variant reads as passed: %+v %v", r, err)
+	}
+	if _, err := Check(run, hub, CheckOptions{ChangeOrder: "shop-base/bigger-cache", Stage: "prod", Parity: &ParityCheck{With: "prod"}}); err == nil {
+		t.Errorf("parity of a stage with itself is an error")
+	}
+}
+
+// What a parity check reads and prints, field by field: a variable whose name
+// has a dot is its own path, an object only prod has is declared by a guard on
+// the object, a Secret's values are never shown, and a unit staging runs that
+// prod does not is a departure.
+func TestParityDepartures(t *testing.T) {
+	objects := func(yaml string) []Object {
+		o, err := objectsOf([]byte(yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	api := func(env string) string {
+		return `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api, namespace: shop}
+spec:
+  template:
+    spec:
+      containers:
+      - name: api
+        env:
+        - {name: a, value: "1"}
+        - {name: a.b, value: "` + env + `"}
+        ports:
+        - {name: http, containerPort: 8080}
+`
+	}
+	spots := parityDepartures(objects(api("x")), objects(api("y")), "staging")
+	if len(spots) != 1 || spots[0].path != "spec.template.spec.containers.?name=api.env.?name=a~1b.value" {
+		t.Fatalf("the variable a.b, escaped as ConfigHub escapes it: %+v", spots)
+	}
+	guards := map[string]map[string]map[string]string{"apps/v1/Deployment:shop/api": {"spec.template.spec.containers.?name=api.env.?name=a": {"departure": "wrong"}}}
+	if _, ok := declaredBy(guards, spots[0], "departure"); ok {
+		t.Errorf("a guard on the variable a does not declare a.b")
+	}
+	guards["apps/v1/Deployment:shop/api"]["spec.template.spec.containers.?name=api.env.?name=a~1b"] = map[string]string{"departure": "prod-endpoint"}
+	guards["apps/v1/Deployment:shop/api"][""] = map[string]string{"departure": "whole"}
+	if why, ok := declaredBy(guards, spots[0], "departure"); !ok || why != "prod-endpoint" {
+		t.Errorf("the nearest guard says why: %q %v", why, ok)
+	}
+
+	ports := strings.Replace(api("x"), "containerPort: 8080", "containerPort: 9090", 1)
+	if spots := parityDepartures(objects(api("x")), objects(ports), "staging"); len(spots) != 1 || spots[0].path != "spec.template.spec.containers.?name=api.ports" {
+		t.Errorf("ports are keyed by port, not name, so the list departs whole: %+v", spots)
+	}
+
+	secret := func(v string) string {
+		return "apiVersion: v1\nkind: Secret\nmetadata: {name: token, namespace: shop}\ndata: {token: " + v + "}\n"
+	}
+	spots = parityDepartures(objects(secret("c2VjcmV0MQ==")), objects(secret("c2VjcmV0Mg==")), "staging")
+	if len(spots) != 1 || strings.Contains(spots[0].shown, "c2Vj") || !strings.Contains(spots[0].shown, "not shown") {
+		t.Errorf("a Secret's values are never shown: %+v", spots)
+	}
+
+	extra := parityDepartures(nil, objects(secret("eA==")), "stage staging")
+	if len(extra) != 1 || extra[0].path != "" || extra[0].shown != "Secret shop/token is here and not in stage staging" {
+		t.Errorf("an object only prod has departs as a whole: %+v", extra)
+	}
+	if why, ok := declaredBy(map[string]map[string]map[string]string{"v1/Secret:shop/token": {"": {"departure": "prod-only"}}}, extra[0], "departure"); !ok || why != "prod-only" {
+		t.Errorf("a guard on the object declares it")
 	}
 }

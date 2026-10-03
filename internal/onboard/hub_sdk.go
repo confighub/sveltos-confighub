@@ -159,6 +159,34 @@ func hubUnit(e *goclientnew.ExtendedUnit) HubUnit {
 	if u.UpstreamSpaceID != nil && u.UpstreamUnitID != nil {
 		out.UpstreamSpaceID, out.UpstreamUnitID = u.UpstreamSpaceID.String(), u.UpstreamUnitID.String()
 	}
+	if u.PathAnnotations != nil {
+		for _, r := range *u.PathAnnotations {
+			if r.Resource == nil {
+				continue
+			}
+			res := r.Resource.ResourceType + ":" + r.Resource.ResourceName
+			add := func(path string, a goclientnew.PathAnnotations) {
+				for k, v := range a["Guard"] {
+					if out.Guards == nil {
+						out.Guards = map[string]map[string]map[string]string{}
+					}
+					if out.Guards[res] == nil {
+						out.Guards[res] = map[string]map[string]string{}
+					}
+					if out.Guards[res][path] == nil {
+						out.Guards[res][path] = map[string]string{}
+					}
+					out.Guards[res][path][k] = v
+				}
+			}
+			if r.ResourceAnnotations != nil {
+				add("", *r.ResourceAnnotations)
+			}
+			for path, a := range r.PathAnnotationMap {
+				add(path, a)
+			}
+		}
+	}
 	return out
 }
 
