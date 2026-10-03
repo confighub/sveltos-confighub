@@ -40,7 +40,9 @@ What you should see:
   it runs today, on all four clusters, and nothing once the fix is in. So the
   fix must be released before the policy.
 - **After step 8:**
-  - the rotation is picked up by Reloader, and `web` stays 2/2;
+  - Reloader picks up the rotation and restarts `web`. The new pods wait up to
+    about a minute for `api`'s mounted token to refresh, while the old pods
+    keep serving, so the shop stays up;
   - Devil's `web-copy`, which takes the token from its environment without an
     annotation, is refused at admission by the policy;
   - `cub sveltos status` stays Healthy.

@@ -19,8 +19,11 @@ Neither Devil nor Angel can approve. Kind clusters stand in for production.
 | [3. Staging said yes, prod said no](scenarios/03-parity.md) | A prod-only memory limit, then a cache that passes staging, so prod is OOMKilled | Prod's release requires a parity check; differences from staging must be declared |
 
 [PROOF.md](PROOF.md) lists each claim and where to check it, in the CLI and
-the web UI. [recording/](recording/README.md) is our own run: every
-transcript, and ConfigHub's record of it.
+the web UI. [recording/](recording/README.md) has our two runs:
+- the first, with a person approving, and every transcript;
+- [the verification run](recording/verification-2026-10-03.md), made from this
+  README with Milton approving everything. There Milton refused the change
+  behind outage 3.
 
 ## Versions
 
@@ -40,6 +43,10 @@ Tested together on 2026-10-03:
 
 kind before v0.31 does not enforce NetworkPolicy by default, and outage 2
 needs it.
+
+Each agent signs in to ConfigHub as a worker (`setup/identities.sh`).
+ConfigHub plans to replace that with service accounts, so later versions of
+`cub` may need a different setup.
 
 ## What you need
 
@@ -88,7 +95,7 @@ bash $DEMO/approve.sh milton chaos-shop-base/<order> staging <run-name>
 ```
 
 `me` records your approval with your note. `milton` has Milton review the
-order against the last request in that run:
+order against what the requester wrote in that run:
 - the change order;
 - every Space's diff, head against last release;
 - the evidence the request cites.
@@ -97,9 +104,10 @@ It then approves with a note saying what it checked, or says why not. To allow
 only one of you, set `APPROVERS=$YOU_ID` or `APPROVERS=$MILTON_ID` before
 running `setup/gates.sh` and `setup/onboard.sh`.
 
-Milton is meant to catch things, and it may. In outage 3 it may refuse
-Devil's prod-only memory cut, because staging never runs it. To stage the
-outage anyway, approve that step by hand.
+Milton is meant to catch things, and it may. In our verification run it
+refused Devil's prod-only memory cut in outage 3: staging never ran it, and
+nothing showed it was safe. To stage the outage anyway, approve that step by
+hand.
 
 ## Run the outages
 
@@ -159,7 +167,16 @@ record. Deleting the Spaces deletes it.
   uses (`proof/token-subject.sh`), and test the policy by impersonation.
 - **Diff each Space before approving.** A change order can carry an edit made
   before it was opened.
-- **Only the approver changes a gate.** Workflows are edited in place, with no
-  history.
+- **Only the approver changes a gate.** A workflow is edited in place, so
+  create the workflows yourself (`setup/gates.sh`), and don't let the agents
+  change them.
+- **Grant before you ask anyone to approve.** An approver needs ApproveChildren
+  (a Space has no Approve permission) and UseChildren, because approving a
+  change order needs Use on it. Opening a change order needs View and Use on
+  the component. `setup/grant-agents.sh` grants all of these.
+- **Keep the sandbox empty.** Apply only admission policies there; dry-run
+  everything else. `setup/sandbox.sh --reset` empties it.
+- **Never edit a script while a run is using it.** Bash reads a script as it
+  goes. One edit mid-run truncated an agent's transcript.
 - **Design a fault to fail after the rollout.** The health check reports a
   rollout that never finishes as Progressing, not Degraded.

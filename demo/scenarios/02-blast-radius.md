@@ -59,6 +59,19 @@ and testing by impersonation in the sandbox. If a check fails, do not approve.
 Tell Angel what you found, and have it abort the order with the reason and
 propose it again.
 
+**If the fix will not publish on its own.** A release pinned to a change
+order bundles every unit at the order's end tag. A unit created after that tag
+has no revision there, and the publish fails with HTTP 500 ("no Revision found
+for Unit ... with the specified TagID"), although `cub release publish --help`
+says such a unit falls back to its head revision. In our verification run,
+the policy's unit came after the fix's tag. Angel then published the policy's
+order instead, which carries both units, and both were already approved. Have
+Angel abort the fix's order with the reason.
+
+Angel may propose the clean-up as a third order to open once the fix is applied.
+The release prompt allows for that: set `CLEANUP_ORDER` to the words "the
+clean-up order you will open after the fix".
+
 What you should see:
 - **After step 4:**
   - prod-us-1 and prod-us-2 are Healthy again;
