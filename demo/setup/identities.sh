@@ -14,6 +14,7 @@
 # A worker's ID and secret go from cub into one subshell's environment only,
 # never to disk or output. The active cub context is not changed.
 set -euo pipefail
+[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 : "${AI_CHAOS_DIR:?source demo/env.sh first}"
 server=${CONFIGHUB_URL:-https://hub.confighub.com}
 cub space create chaos-agents --label Purpose=ai-chaos --allow-exists --quiet

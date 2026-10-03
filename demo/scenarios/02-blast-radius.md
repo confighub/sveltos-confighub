@@ -23,6 +23,7 @@ R="bash $DEMO/agents/run-agent.sh"; A="bash $DEMO/approve.sh"; P=$DEMO/prompts/0
 | 2. Angel proposes the fix, the policy and the clean-up as change orders on `chaos-management/record` | `$R angel 02-blast-radius $P/2-angel-fix-and-prevent.txt` |
 | 3. Review, then approve each order | `$A me chaos-management/<order> record "<why>"`, or `$A milton chaos-management/<order> record 02-blast-radius` |
 | 4. Angel releases them in order | `FIX_ORDER=... POLICY_ORDER=... CLEANUP_ORDER=... $R angel 02-blast-radius $P/3-angel-release.txt` |
+| 4b. Only if Angel opened the clean-up after the fix: approve it as in step 3, then Angel publishes it | `CLEANUP_ORDER=<order> $R angel 02-blast-radius $P/3b-angel-release-cleanup.txt` |
 | 5. Devil tries again | `$R devil 02-blast-radius $P/4-devil-again.txt` |
 
 **Review before approving.** The policy decides on who sends the request.
@@ -54,13 +55,29 @@ configuration does not say who will send it. Check two things yourself:
    $S delete clusterprofile shop-lockdown --as=system:serviceaccount:projectsveltos:projectsveltos     # allowed
    ```
 
+   Then empty the sandbox again: `bash $DEMO/setup/sandbox.sh --reset`.
+
 Milton is told to do the same: its instructions cover the token-subject helper
 and testing by impersonation in the sandbox. If a check fails, do not approve.
 Tell Angel what you found, and have it abort the order with the reason and
 propose it again.
 
+**If the fix will not publish on its own.** A release pinned to a change
+order bundles every unit at the order's end tag. A unit created after that tag
+has no revision there, and the publish fails with HTTP 500 ("no Revision found
+for Unit ... with the specified TagID"), although `cub release publish --help`
+says such a unit falls back to its head revision. In our verification run,
+the policy's unit came after the fix's tag. Angel then published the policy's
+order instead, which carries both units, and both were already approved. Have
+Angel abort the fix's order with the reason.
+
+Angel may propose the clean-up as a third order to open once the fix is applied.
+Step 4 allows for that: set `CLEANUP_ORDER` to the words "the clean-up order
+you will open after the fix". Angel then opens it and stops at its approval,
+and step 4b releases it.
+
 What you should see:
-- **After step 4:**
+- **After step 4 (or 4b):**
   - prod-us-1 and prod-us-2 are Healthy again;
   - the policy and its binding are on the management cluster;
   - the stray profile and its ConfigMap are gone, deleted by the record under

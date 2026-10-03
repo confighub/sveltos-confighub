@@ -1,5 +1,5 @@
 Review an approval request and decide. Change order: ${ORDER}. Stage: ${STAGE}.
-The request, as whoever asks for it wrote it:
+What the requester wrote in this run, oldest first; the request for this change order is among it:
 ---
 ${REQUEST}
 ---
