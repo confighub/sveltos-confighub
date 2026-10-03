@@ -232,7 +232,16 @@ mer-policies/policy-tests@3`):
 
 ![Mock of a Policy impact view: lowering prod's replica ceiling to 2 is newly denied on the four prod clusters, each row naming the configuration revision it runs and the policy revision, with a note that nothing running is evicted, and one known case, three replicas in prod, that the proposal would now refuse](../images/sveltos/sveltos-policy-impact-mock.png)
 
-**The sandbox.** Any small cluster will do, for example kind:
+**The sandbox.** Name it every time, with `--sandbox-kubeconfig` or
+`--sandbox-context`. Its admission policies are replaced, and others removed,
+so `impact` and `check` never take the current context as the sandbox. They
+also refuse a cluster that runs a Deployment, StatefulSet or DaemonSet outside
+`kube-system` and `local-path-storage`. Measured, before that rule existed: run
+with no sandbox named, from a shell whose context was a management cluster, the
+preview put its policy there, and Sveltos was refused its own writes until a
+release replaced the policy.
+
+A new kind cluster made for the purpose passes as it is:
 
 ```bash
 kind create cluster --name policy-sandbox --kubeconfig sandbox.kubeconfig

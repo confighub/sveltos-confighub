@@ -169,6 +169,9 @@ func Impact(x Exec, hub Hub, o ImpactOptions) (*ImpactReport, error) {
 	}
 	var removed []string
 	s := sandbox{x: x, o: o, removed: &removed}
+	if err := s.ensure(); err != nil {
+		return nil, err
+	}
 	kinds, err := s.discover(append(append([]Doc{}, current...), candidate...), targets)
 	if err != nil {
 		return nil, err
@@ -457,6 +460,35 @@ type sandbox struct {
 	x       Exec
 	o       ImpactOptions
 	removed *[]string
+}
+
+// ensure refuses a cluster that is not a sandbox. Its admission policies are
+// replaced, and others deleted, so a sandbox has to be named, never taken from
+// the current context, and has to run nothing but Kubernetes itself: on a
+// management cluster the policies would refuse Sveltos its own writes.
+func (s sandbox) ensure() error {
+	if s.o.SandboxKubeconfig == "" && s.o.SandboxContext == "" {
+		return fmt.Errorf("name the sandbox with --sandbox-kubeconfig or --sandbox-context: its admission policies are replaced, so the current context, which may be a real cluster, is never used")
+	}
+	out, stderr, err := s.kubectl(nil, "get", "deployments,statefulsets,daemonsets", "-A", "-o", `jsonpath={range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}`)
+	if err != nil {
+		return fmt.Errorf("reading what the sandbox runs: %v %s", err, strings.TrimSpace(string(stderr)))
+	}
+	var running []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		ns, _, _ := strings.Cut(l, "/")
+		if l == "" || ns == "kube-system" || ns == "local-path-storage" {
+			continue
+		}
+		running = append(running, l)
+	}
+	if len(running) > 0 {
+		if len(running) > 3 {
+			running = append(running[:3], fmt.Sprintf("and %d more", len(running)-3))
+		}
+		return fmt.Errorf("the cluster named as the sandbox runs %s, so it is not a sandbox: its admission policies would be replaced. Name a disposable cluster with no Deployment, StatefulSet or DaemonSet outside kube-system and local-path-storage", strings.Join(running, ", "))
+	}
+	return nil
 }
 
 func (s sandbox) kubectl(stdin []byte, args ...string) ([]byte, []byte, error) {

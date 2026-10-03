@@ -31,6 +31,8 @@ type impactBench struct {
 	applies  int
 	leftover []string // policies the sandbox holds from an earlier run
 	deleted  []string
+	runs     string   // the workloads the sandbox runs, as kubectl lists them
+	calls    []string // every kubectl call made to the sandbox
 	// the policies held in ConfigHub, in mer-policies: each unit's head, and
 	// the revision tagged in-force
 	policyHeads map[string]int
@@ -117,7 +119,10 @@ func (b *impactBench) exec(stdin []byte, name string, args ...string) ([]byte, [
 	}
 	args = args[2:] // --kubeconfig <file>
 	all := name + " " + strings.Join(args, " ")
+	b.calls = append(b.calls, all)
 	switch {
+	case strings.HasPrefix(all, "kubectl get deployments,statefulsets,daemonsets -A"):
+		return []byte(b.runs), nil, nil
 	case all == "kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings -o json":
 		items := []map[string]any{}
 		for _, n := range b.leftover {
@@ -190,7 +195,7 @@ func newImpactBench(t *testing.T) *impactBench {
 	if testAtSix == limits {
 		t.Fatal("could not raise test's ceiling in the example")
 	}
-	return &impactBench{t: t, stageOf: map[string]string{}, ceilings: map[string]int{},
+	return &impactBench{t: t, stageOf: map[string]string{}, ceilings: map[string]int{}, runs: "kube-system/coredns\nlocal-path-storage/local-path-provisioner\nkube-system/kindnet\n",
 		policyHeads: map[string]int{"replica-limits": 3, "disallow-latest-tag": 2, "platform-team-only": 1, "policy-tests": 2},
 		inForce:     map[string]int{"replica-limits": 2, "disallow-latest-tag": 2, "policy-tests": 2},
 		upstream:    map[string]string{"mer-kyverno-eu-central-test1": "mer-kyverno-class-test", "mer-kyverno-eu-central-prod1": "mer-kyverno-class-prod"},
@@ -398,5 +403,52 @@ func TestImpactTests(t *testing.T) {
 	}
 	if len(r.FailingNow) != 1 || !strings.Contains(r.FailingNow[0], "tests/uat-five: expects allowed, and the policies in force give denied") {
 		t.Errorf("a case the policies in force get wrong is reported: %v", r.FailingNow)
+	}
+}
+
+// The sandbox's admission policies are replaced, so impact and check never
+// take the current context as one, and refuse a cluster that runs anything
+// outside kube-system and local-path-storage: on a management cluster, the
+// policies would refuse Sveltos its own writes. Either refusal comes before
+// anything is done to the cluster but the one read of what it runs.
+func TestImpactRefusesWhatIsNotASandbox(t *testing.T) {
+	b := newImpactBench(t)
+	opts := ImpactOptions{Component: "mer-kyverno", Settle: 1,
+		Policies:   []string{policy("replica-limits.yaml")},
+		Candidates: []string{policy("candidates/replica-limits-prod-2.yaml")}}
+	if _, err := Impact(b.exec, b.hub(), opts); err == nil || !strings.Contains(err.Error(), "name the sandbox") || len(b.calls) != 0 {
+		t.Errorf("no sandbox named: refused before any call to a cluster: %v, %q", err, b.calls)
+	}
+	b.runs = "kube-system/coredns\nprojectsveltos/addon-controller\nprojectsveltos/sc-manager\n"
+	opts.SandboxKubeconfig = "sandbox"
+	if _, err := Impact(b.exec, b.hub(), opts); err == nil || !strings.Contains(err.Error(), "runs projectsveltos/addon-controller, projectsveltos/sc-manager, so it is not a sandbox") ||
+		len(b.calls) != 1 || !strings.HasPrefix(b.calls[0], "kubectl get deployments,statefulsets,daemonsets -A") {
+		t.Errorf("a management cluster named as the sandbox: refused after reading what it runs, and nothing else: %v, %q", err, b.calls)
+	}
+}
+
+// check with the sandbox refuses the same way, and reports no variant as passed.
+func TestCheckRefusesWhatIsNotASandbox(t *testing.T) {
+	b := newImpactBench(t)
+	b.units["mer-kyverno-eu-central-test1/kyverno@9"] = deployment("kyverno-admission-controller", 6, "k:v1")
+	b.runs = "projectsveltos/addon-controller\n"
+	hub := b.hub()
+	hub.order = func(space, order string) (HubChangeOrder, error) {
+		return HubChangeOrder{ID: "order-id", InScope: []string{"id-test1"}, Stages: []stageGate{{Name: "test", WhereSpace: "Labels.Stage = 'test'"}}}, nil
+	}
+	hub.spaces = func(where string) ([]HubSpace, error) {
+		return []HubSpace{{ID: "id-test1", Slug: "mer-kyverno-eu-central-test1", Labels: map[string]string{"Stage": "test"}}}, nil
+	}
+	hub.attest = func(a HubAttestation, dryRun bool) (HubAttested, error) {
+		if !dryRun {
+			t.Errorf("nothing is recorded: %+v", a)
+		}
+		return HubAttested{Subjects: []subject{{UnitSlug: "kyverno", RevisionNum: 9}}}, nil
+	}
+	run := func(name string, args ...string) ([]byte, error) { return nil, nil }
+	results, err := Check(run, hub, CheckOptions{ChangeOrder: "mer-kyverno-base/six-replicas", Stage: "test",
+		Sandbox: &SandboxCheck{Exec: b.exec, Kubeconfig: "sandbox", Policies: []string{"mer-policies@Tag:in-force"}, Settle: 1}})
+	if err == nil || !strings.Contains(err.Error(), "so it is not a sandbox") || results != nil || len(b.calls) != 1 {
+		t.Errorf("refused after reading what it runs, with no variant reported as passed: %+v %v %q", results, err, b.calls)
 	}
 }

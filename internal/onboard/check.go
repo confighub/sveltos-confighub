@@ -139,7 +139,8 @@ func Check(run Runner, hub Hub, opts CheckOptions) ([]CheckResult, error) {
 	if opts.Sandbox != nil {
 		var err error
 		if judged, policies, err = sandboxJudge(*opts.Sandbox, hub, targets); err != nil {
-			return results, err
+			// Nothing was judged, so no variant is reported as passed.
+			return nil, err
 		}
 		checker = "the policies " + strings.Join(policies.sorted, ", ")
 		claims = map[string]string{"check.confighub.com/policies": strings.Join(policies.sorted, ",")}
@@ -254,6 +255,9 @@ func sandboxJudge(o SandboxCheck, hub Hub, targets []target) (map[string]map[str
 	}
 	var removed []string
 	s := sandbox{x: o.Exec, o: ImpactOptions{SandboxKubeconfig: o.Kubeconfig, SandboxContext: o.Context, Settle: o.Settle}, removed: &removed}
+	if err := s.ensure(); err != nil {
+		return nil, set, err
+	}
 	kinds, err := s.discover(policies, targets)
 	if err != nil {
 		return nil, set, err

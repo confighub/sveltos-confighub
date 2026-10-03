@@ -470,7 +470,7 @@ nothing releases a change this has not passed.
 	checkCmd.Flags().StringVar(&co.Stage, "stage", "", "the stage whose variants to check")
 	checkCmd.Flags().StringVar(&co.Type, "type", "PolicyCheck", "the attestation type to record, as planned with --require")
 	checkCmd.Flags().StringVar(&co.Worker, "worker", "", "the worker that runs the function, as <space>/<worker>")
-	checkCmd.Flags().StringVar(&sandboxCheck.Kubeconfig, "sandbox-kubeconfig", "", "kubeconfig of the sandbox API server, to check with policies instead of a function")
+	checkCmd.Flags().StringVar(&sandboxCheck.Kubeconfig, "sandbox-kubeconfig", "", "kubeconfig of the sandbox API server, to check with policies instead of a function; a disposable cluster that runs nothing but Kubernetes, never a real one")
 	checkCmd.Flags().StringVar(&sandboxCheck.Context, "sandbox-context", "", "context in that kubeconfig")
 	checkCmd.Flags().StringArrayVar(&sandboxCheck.Policies, "policy", nil, "policies to judge by: a file, or <space>[/<unit>][@<revision>] in ConfigHub, such as mer-policies@Tag:in-force; repeat for more")
 	checkCmd.Flags().StringVar(&sandboxCheck.StageLabel, "stage-label", "Stage", "the Space label that gives each variant's stage, which bindings select by")
@@ -581,7 +581,7 @@ the next create or update would be refused.`,
 			return nil
 		},
 	}
-	impactCmd.Flags().StringVar(&io_.SandboxKubeconfig, "sandbox-kubeconfig", "", "kubeconfig of the sandbox API server, which holds policies and nothing else")
+	impactCmd.Flags().StringVar(&io_.SandboxKubeconfig, "sandbox-kubeconfig", "", "kubeconfig of the sandbox API server, which holds policies and nothing else (required, or --sandbox-context): its admission policies are replaced, so it is never a real cluster")
 	impactCmd.Flags().StringVar(&io_.SandboxContext, "sandbox-context", "", "context in that kubeconfig")
 	impactCmd.Flags().StringVar(&io_.Component, "component", "", "the component whose cluster variants are the targets")
 	impactCmd.Flags().StringVar(&io_.StageLabel, "stage-label", "Stage", "the Space label that gives each target's stage, which bindings select by")
