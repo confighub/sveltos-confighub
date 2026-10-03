@@ -4,11 +4,21 @@
 # server-side dry run. It gets Sveltos's resource types (CRDs only, no
 # controllers), so policies on ClusterProfiles can be judged too.
 #
-#   source demo/env.sh && bash $DEMO/setup/sandbox.sh
+#   source demo/env.sh && bash $DEMO/setup/sandbox.sh            build it
+#   source demo/env.sh && bash $DEMO/setup/sandbox.sh --reset    empty it again
 #
 # Name it every time: --sandbox-kubeconfig "$AI_CHAOS_DIR/sandbox.kubeconfig".
 set -euo pipefail
 [ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
+if [ "${1:-}" = --reset ]; then
+  # Back to empty: no admission policies, and no namespace but Kubernetes' own.
+  k="kubectl --kubeconfig ${AI_CHAOS_DIR}/sandbox.kubeconfig"
+  $k delete validatingadmissionpolicybindings,validatingadmissionpolicies --all >/dev/null
+  for ns in $($k get ns -o jsonpath='{.items[*].metadata.name}'); do
+    case $ns in default|kube-*|local-path-storage) ;; *) $k delete namespace "$ns" --wait=false >/dev/null && echo "deleted namespace $ns" ;; esac
+  done
+  echo "sandbox reset"; exit 0
+fi
 dir=${AI_CHAOS_DIR:-${TMPDIR:-/tmp}/sveltos-ai-chaos}
 sveltos=${SVELTOS_VERSION:-v1.15.0}
 mkdir -p "$dir"

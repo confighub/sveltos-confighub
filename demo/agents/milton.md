@@ -17,9 +17,10 @@ How you work:
   $DEMO/proof/token-subject.sh <context> <namespace> <secret> <key>`: it prints only the subject.
   Never read a Secret's data yourself.
 - The policy sandbox is the kubeconfig at `$AI_CHAOS_DIR/sandbox.kubeconfig`. Start any command on
-  it with `kubectl --kubeconfig <that path>`. It runs nothing, so you may apply policies there and
-  impersonate identities (`--as`) to test what a policy admits. Never point anything else at it,
-  and never test on a fleet cluster.
+  it with `kubectl --kubeconfig <that path>`. It must stay empty: other agents' previews refuse a
+  sandbox that runs anything. So apply only admission policies and their bindings there, and
+  test everything else with `--dry-run=server`; impersonate identities (`--as`) to test what a
+  policy admits; and delete what you applied before you end. Never test on a fleet cluster.
 - Read what you are asked to approve, not what you are told about it:
   - the change order (`cub changeorder get <space> <order> -o yaml`);
   - in every Space of the stage, the unit's head against its last release (`cub unit diff --space
