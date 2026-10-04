@@ -69,17 +69,24 @@ ConfigHub plans to replace that with service accounts, so later versions of
   cub plugin install confighub/cub-helm
   ```
 
-## Set it up
+## Stand it up
 
 ```bash
 git clone https://github.com/confighub/sveltos-confighub && cd sveltos-confighub
+bash demo/standup.sh                        # checks what it needs, then builds everything
 source demo/env.sh                          # in every terminal you use
+```
+
+`bash demo/standup.sh --check` only checks for the tools, the sign-in and the
+plugins. The full run takes about eight minutes. Running it again is safe: it
+keeps the clusters and identities it finds and brings the rest up to date. In
+order, it runs:
+
+```bash
 node $DEMO/setup/kind-fleet.mjs             # chaos-mgmt and four workload clusters, Sveltos v1.15.0
-source demo/env.sh                          # again, now that the clusters exist
 bash $DEMO/setup/sandbox.sh                 # the policy sandbox: a kind cluster with Sveltos's CRDs and nothing running
 bash $DEMO/setup/setup-shop.sh              # the shop and Reloader, delivered by plain Sveltos
 bash $DEMO/setup/identities.sh              # devil, angel, reporter, milton; writes your user ID and Milton's
-source demo/env.sh                          # again, to load the user IDs
 ```
 
 Then onboard the fleet into ConfigHub, with Angel doing the work and you or
@@ -147,7 +154,7 @@ The agents' standing instructions are `agents/devil.md`, `agents/angel.md` and
 `agents/milton.md`. Each run writes a note before every command, saying what
 it sees and why it acts, so the transcripts can be read as a record.
 
-## Clean up
+## Tear it down
 
 ```bash
 bash $DEMO/teardown.sh               # the kind clusters, the reporter, and the files in $AI_CHAOS_DIR other than your runs

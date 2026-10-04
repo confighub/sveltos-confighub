@@ -27,7 +27,13 @@ Three agents work in the fleet, each with its own ConfigHub identity:
 | 3. Staging said yes, prod said no | A prod-only memory limit, then a cache that passes staging, so prod is OOMKilled | Prod's release requires a parity check against staging; differences must be declared |
 
 [The demo's README](../README.md) has the full description, the versions it
-was tested with, and every step to run it yourself.
+was tested with, and every step to run it yourself. Standing it up and tearing
+it down are one command each:
+
+```bash
+bash demo/standup.sh                  # checks what it needs, then builds the fleet, the sandbox, the shop and the agents' identities
+bash demo/teardown.sh --confighub     # removes all of it: the kind clusters, then the ConfigHub Spaces, once you confirm
+```
 
 ## The diaries
 
