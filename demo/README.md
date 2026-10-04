@@ -5,19 +5,11 @@ using AI with a sveltos-confighub layer on standard K8s.  The idea is
 that a 'devil' chaos agent causes problems but these are remedied by
 an 'angel' agent, and then a 3rd party (AI or human) does approvals.
 
-Each time the angel creates an approved remedy, this is adopted as a
-policy to prevent re-occurrences.
-
-By using ConfigHub this is a simple set of compliance apps.  The config
-data is combined with a policy engine (you choose which one) for this.
-
-A demonstration of the 'chaos' approach to testing a production fleet
-using AI with a sveltos-confighub layer on standard K8s.  The idea is
-that a 'devil' chaos agent causes problems but these are remedied by
-an 'angel' agent, and then a 3rd party (AI or human) does approvals.
-
-Each time the angel creates an approved remedy, this is adopted as a
-policy to prevent re-occurrences.
+Each time, the angel proposes two changes, and neither takes effect
+until it is approved: a fix for the configuration that caused the
+outage, and a rule that stops the same failure happening again. In
+outages 1 and 2 that rule is an admission policy; in outage 3 it is a
+release gate, which the approver adds.
 
 By using ConfigHub this is a simple set of compliance apps.  The config
 data is combined with a policy engine (you choose which one) for this.
