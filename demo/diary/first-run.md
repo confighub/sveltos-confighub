@@ -470,9 +470,9 @@ What outage 3 showed:
   (Issue #105, PR #106.)
 - **20:04. A findings report goes to the ConfigHub team.** It lists eight
   items, each with a check anyone can rerun. They are in the to-do list below.
-- **20:13. `cub sveltos` v0.13.0 is released**, with `demo/`: the parity
-  check, named approvers, the first-policy preview, and `demo/` with every
-  prompt and script, an agent approver (Milton) and a clean-up. (PR #107.)
+- **20:13. `cub sveltos` v0.13.0 is released**, with the parity check, named
+  approvers and the first-policy preview. It also adds `demo/`: every prompt
+  and script, an agent approver (Milton) and a clean-up. (PR #107.)
 - **Before publishing**, names were taken out of the transcripts and the
   evidence, and the token Devil's `--debug` printed was redacted.
 
@@ -487,7 +487,7 @@ October.
 | Ship the parity check and named approvers | Outage 3's prevention ran on a development build | Done: v0.13.0 |
 | Let a reader run it all again, with an agent approver and a clean-up | So the claims can be checked, not taken on trust | Done: `demo/`, then [the verification run](verification-run.md) |
 | Keep names out of the published record | The repository rule against personal names | Done before publishing |
-| Revoke the token Devil's `--debug` printed | It was valid until 4 October, 11:02 | No command revokes a token or rotates a worker secret. It expires on 4 October at 11:02 UTC. The agents may no longer use `--debug` |
+| Revoke the token Devil's `--debug` printed | A live bearer token was printed into a transcript | No command revokes a token or rotates a worker secret. It expires on 4 October at 11:02 UTC. The agents may no longer use `--debug` |
 | Report what ConfigHub got wrong | The team asked for the findings | Done: 8 items in #product. Answers are in [the verification diary](verification-run.md#to-do-after-the-verification-run) |
 | A change order whose own summary shows no changes | An edit made before the order rode into prod unseen (outage 3) | Reported. ConfigHub's answer: `cub changeorder get` does not show unit diffs, so read `cub unit diff` on each Space. The demo's approver now does |
 | YAML changes a folded string's value | Blank lines were added inside a CEL expression at each hop (outage 1) | Reported. ConfigHub traced it to kustomize's YAML code, upstream |
