@@ -25,8 +25,8 @@ happened, with screenshots and the agents' own commands:
 - [the verification run](diary/verification-run.md), made from this README with
   Milton approving everything. There Milton refused the change behind outage 3.
 
-[recording/](recording/README.md) has the transcripts and ConfigHub's record of
-both.
+[recording/](recording/README.md) has the first run's transcripts, and
+ConfigHub's record of both runs.
 
 ## Versions
 

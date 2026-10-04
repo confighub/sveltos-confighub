@@ -59,16 +59,14 @@ user(s), not by an author of the change".
 
 **11:26 to 11:29. The first approvals.** The approver approved staging, then
 prod, in a chat with the operator. The operator recorded each approval under
-the approver's own identity, with the approver's words as the note. The command
-is the same every time:
+the approver's own identity. Recording an approval has this shape:
 
 ```bash
-cub variant approve --change-order chaos-shop-base/onboard-d244df9f --stage staging \
-  --note 'the approver in chat: "..."'
+cub variant approve --change-order chaos-shop-base/onboard-d244df9f --stage staging --note "<the approver's words>"
 ```
 
-Angel then published each stage, for example
-`cub release publish chaos-shop-staging --revision ChangeOrder:chaos-shop-base/onboard-d244df9f`.
+Angel's onboarding script then published each stage, the way every release in
+this demo is published: `cub release publish <space> --revision ChangeOrder:<order>`.
 
 **11:30. The handover.** The management cluster's delivery profiles now come
 from ConfigHub. The record `chaos-management` holds them, and one root
@@ -205,7 +203,7 @@ What outage 1 showed:
 - Angel had the fix in 11 minutes and the policy in 22. The preview showed
   which had to go first, before anything shipped.
 - Nothing reached a cluster without a named person's approval. Every release is
-  recorded with who published it, and every approval with its note.
+  recorded with who published it, and every approval with who recorded it.
 
 ## Outage 2: half the fleet at once
 
@@ -262,13 +260,11 @@ the policy reads who sends the request, and a configuration does not say that.
 **15:28. The operator's review finds B wrong.** Before the approver saw
 anything, the operator checked the identity B exempted. B exempted
 `register-mgmt-cluster`, the job that registered the cluster. Sveltos writes to
-the management cluster as another identity. The operator decoded only the
-token's subject, never the token:
-
-```bash
-bash $DEMO/proof/token-subject.sh kind-chaos-mgmt mgmt mgmt-sveltos-kubeconfig re-kubeconfig
-system:serviceaccount:projectsveltos:projectsveltos
-```
+the management cluster as another identity. The operator read the kubeconfig
+Sveltos holds for the management cluster (Secret
+`mgmt/mgmt-sveltos-kubeconfig`) and decoded only its token's subject, never the
+token: `system:serviceaccount:projectsveltos:projectsveltos`. Readers can
+repeat the check with `proof/token-subject.sh`, written after this run.
 
 Released, B would have refused the record's own releases. Tested in the
 sandbox by impersonation, the policy's logic held, 10 cases of 10: only the
@@ -313,7 +309,8 @@ its ConfigMap, under the new policy, at 16:20:33.
 ![A, B2 and C2 released; five orders aborted, each with its reason](images/r1-26-outage2-released.jpg)
 
 **16:23. Devil tries again**: the lockdown once more, then a hand edit that
-widens `shop-prod-eu` to `region=us`. Both were refused:
+widens `shop-prod-eu` to `region=us`. Both profile writes were refused. (The
+ConfigMap, which the policy does not cover, was created, and Devil deleted it.)
 
 ```
 Error from server (Forbidden): clusterprofiles.config.projectsveltos.io "shop-prod-eu" is forbidden:
@@ -376,12 +373,12 @@ three prod clusters at 17:10:44. Prod ran at 40Mi, healthy.
 **17:15. Devil, now a developer**, gave `api` a response cache of up to 32 MiB.
 The change went through the same workflow, staging first.
 
+![Before the cache's staging release: prod at 40Mi and one release behind; staging holding the cache, unreleased](images/r1-29-outage3-40mi.jpg)
+
 **17:30 to 17:35. Staging says yes.** The approver approved the cache for
 staging, and Devil released it at 17:30:59. Three minutes later `api` used 44.8
 to 45.9 MiB under its 128Mi limit, Healthy. The prod approval was recorded only
 after staging had run it Healthy.
-
-![Prod at 40Mi and one release behind; staging with the cache waiting to release](images/r1-29-outage3-40mi.jpg)
 
 **17:36:20. Prod says no.** The cache reached the three prod clusters, and
 within two minutes `api` was OOMKilled at 40Mi:
@@ -473,7 +470,7 @@ What outage 3 showed:
   (Issue #105, PR #106.)
 - **20:04. A findings report goes to the ConfigHub team.** It lists eight
   items, each with a check anyone can rerun. They are in the to-do list below.
-- **20:13. `cub sveltos` v0.13.0 is released**, with this folder: the parity
+- **20:13. `cub sveltos` v0.13.0 is released**, with `demo/`: the parity
   check, named approvers, the first-policy preview, and `demo/` with every
   prompt and script, an agent approver (Milton) and a clean-up. (PR #107.)
 - **Before publishing**, names were taken out of the transcripts and the
@@ -490,7 +487,7 @@ October.
 | Ship the parity check and named approvers | Outage 3's prevention ran on a development build | Done: v0.13.0 |
 | Let a reader run it all again, with an agent approver and a clean-up | So the claims can be checked, not taken on trust | Done: `demo/`, then [the verification run](verification-run.md) |
 | Keep names out of the published record | The repository rule against personal names | Done before publishing |
-| Revoke the token Devil's `--debug` printed | It was valid until 4 October, 11:02 | No command revokes a token or rotates a worker secret. It expired on its own. The agents may no longer use `--debug` |
+| Revoke the token Devil's `--debug` printed | It was valid until 4 October, 11:02 | No command revokes a token or rotates a worker secret. It expires on 4 October at 11:02 UTC. The agents may no longer use `--debug` |
 | Report what ConfigHub got wrong | The team asked for the findings | Done: 8 items in #product. Answers are in [the verification diary](verification-run.md#to-do-after-the-verification-run) |
 | A change order whose own summary shows no changes | An edit made before the order rode into prod unseen (outage 3) | Reported. ConfigHub's answer: `cub changeorder get` does not show unit diffs, so read `cub unit diff` on each Space. The demo's approver now does |
 | YAML changes a folded string's value | Blank lines were added inside a CEL expression at each hop (outage 1) | Reported. ConfigHub traced it to kustomize's YAML code, upstream |

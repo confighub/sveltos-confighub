@@ -2,7 +2,8 @@
 
 A second run, made from [the demo's README](../README.md) alone, with **Milton approving
 every release** and no person approving anything. Versions as in the README:
-`cub sveltos` v0.13.0 (installed from the release), `cub` v0.8.1, ConfigHub
+`cub sveltos` v0.13.0 (a release candidate through onboarding, then the release,
+installed at 20:14), `cub` v0.8.1, ConfigHub
 server v0.8.1, Sveltos v1.15.0, kind v0.31.0, Claude Code 2.1.285.
 
 | Part | Outcome |

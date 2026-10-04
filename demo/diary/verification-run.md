@@ -8,7 +8,8 @@ before. **The operator**, a Claude Code session acting for the person who ran
 the demo, started each step from the scenarios.
 
 Kind clusters stand in for production. All times are UTC. Versions:
-`cub sveltos` v0.13.0 (installed from the release), `cub` v0.8.1, ConfigHub
+`cub sveltos` v0.13.0 (a release candidate through onboarding, then the release,
+installed at 20:14), `cub` v0.8.1, ConfigHub
 server v0.8.1, Sveltos v1.15.0, kind v0.31.0, Claude Code 2.1.285 with
 `claude-opus-5-5`.
 
@@ -36,7 +37,7 @@ has the screenshots.
 
 ## Setup: seven minutes
 
-**19:15 to 19:22.** The README's setup commands ran as written:
+**19:16 to 19:22.** The README's setup commands ran as written:
 
 ```bash
 source demo/env.sh
@@ -73,6 +74,9 @@ $ cub variant approve --change-order chaos-shop-base/onboard-d244df9f --stage st
 Failed: HTTP 403 ... cannot use ChangeOrder; Use permission required: permission denied
 ```
 
+On the platform's order two minutes later, the same refusal, and Milton held
+its line:
+
 > I did not try approving the Space directly instead: that would step around a
 > permission set on this change order, and I was told to approve nothing else.
 > (Milton)
@@ -105,7 +109,8 @@ their permissions again, set the gates and started the reporter. The gates:
   never from an author;
 - the management record has a workflow of its own.
 
-All nine Spaces were Synced and Healthy at 20:17:51.
+Live status flowed into ConfigHub from 20:17:51, and onboarding ended with all
+nine Spaces Synced and Healthy.
 
 ## Outage 1: a rotation nobody picked up
 
@@ -189,9 +194,9 @@ Its note named the risk: "rolling back the web fix is refused until this is
 demoted first."
 
 **20:46. Devil tries again, on staging.** Reloader restarted `web` on the
-second rotation. The new pod failed its readiness check until `api`'s mounted
-copy of the token refreshed, while the old pods kept serving: "the rollout is
-stalled rather than the service being down." Then `web-copy` was refused:
+second rotation. The new pod failed its readiness check at first, while the
+old pods kept serving: "the rollout is stalled rather than the service being
+down." Milton later saw the new pods go Ready. Then `web-copy` was refused:
 
 ```
 ValidatingAdmissionPolicy 'secret-env-needs-reloader' with binding 'secret-env-needs-reloader' denied request:
@@ -253,8 +258,10 @@ The server disagreed, as 21:20 shows.
 nine live record profiles and the emptied `shop-lockdown` against the policy in
 the sandbox: all admitted, and the rogue profile denied. For the policy, it
 applied only the policy to the sandbox, which its instructions now allow. It
-then tried 13 off-shape profiles of its own, all denied, and emptied the
-sandbox again. It also named a gap for later: `deploymentType`, `path` and
+then tried the known cases and off-shape profiles of its own, such as a label
+selector, two `clusterRefs` or a Cluster API reference. In its note: "the rogue
+shop-lockdown, namespaced Profiles and 13 other off-shape cases are denied;
+sandbox left empty". It also named a gap for later: `deploymentType`, `path` and
 `templateResourceRefs` on a record-shaped profile are not pinned.
 
 ![Milton tests the policy in the sandbox](images/r2-o2-milton.png)
