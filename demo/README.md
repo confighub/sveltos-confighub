@@ -8,11 +8,14 @@ an 'angel' agent, and then a 3rd party (AI or human) does approvals.
 Each time, the angel proposes two changes, and neither takes effect
 until it is approved: a fix for the configuration that caused the
 outage, and a rule that stops the same failure happening again. In
-outages 1 and 2 that rule is an admission policy; in outage 3 it is a
-release gate, which the approver adds.
+this demo we have three outages: in both 1 and 2 that new rule is an 
+admission policy; in outage 3 it is a release gate, which the approver 
+adds.
 
-By using ConfigHub this is a simple set of compliance apps.  The config
-data is combined with a policy engine (you choose which one) for this.
+By using ConfigHub we get the advantage of a single operational database
+for configuration and facts.   So the demo is a simple set of compliance 
+apps.  The config data is combined with a policy engine (you choose which 
+one) for this.
 
 **The policy engine in this demo** is Kubernetes' own admission control:
 ValidatingAdmissionPolicy, with its rules written in CEL. No extra software
