@@ -28,7 +28,9 @@ engine matters differently to each:
 
 So the demo does not bring an engine of its own: it uses the one built into
 Kubernetes. You can enforce with Kyverno or Gatekeeper instead. What you give
-up today is the preview, and with OPA, the check in ConfigHub.
+up today is the preview, and with OPA, the check in ConfigHub. The guide's
+[Which policy engine does what](../docs/user/policy-checks.md#which-policy-engine-does-what)
+has the full picture, with ConfigHub's own checks.
 
 Summary: there are three outages on a Sveltos fleet, each caused on purpose, 
 and fixed through ConfigHub, and then prevented through ConfigHub.  This is 

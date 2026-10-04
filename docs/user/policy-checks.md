@@ -1,9 +1,46 @@
 # Check every change against your policies
 
-Your clusters already enforce policies with Kyverno when something is
-applied. ConfigHub can run the same policies on a change before it ships, so
-a change that breaks one never reaches a cluster, and every stage of a rollout
-records that the check passed.
+Your clusters already enforce policies when something is applied, with
+Kubernetes' own ValidatingAdmissionPolicy, with Kyverno, or with OPA
+Gatekeeper. ConfigHub can run checks on a change before it ships, so a change
+that breaks one never reaches a cluster, and every stage of a rollout records
+that the check passed.
+
+## Which policy engine does what
+
+A policy does three jobs here, and each engine covers some of them:
+
+| Engine | Enforce on the clusters | Check a change in ConfigHub, before release | Preview a new policy, before it ships |
+| --- | --- | --- | --- |
+| **ValidatingAdmissionPolicy** (built into Kubernetes, rules in CEL) | Yes, with nothing extra installed | Yes: `cub sveltos check --sandbox-kubeconfig ... --policy ...` judges the change in a sandbox cluster | Yes: `cub sveltos impact` |
+| **Kyverno** | Yes, once Kyverno runs on the clusters | Yes: the `vet-kyverno-server` function, as a trigger on every change or with `cub sveltos check --worker` | No |
+| **OPA Gatekeeper** | Yes, once Gatekeeper runs on the clusters | No ready-made function today. ConfigHub runs external functions through a worker, so one could be written | No |
+| **ConfigHub's own checks** (`vet-cel`, `vet-starlark`, `vet-jsonschema` and others) | No: they run in ConfigHub only | Yes, as a trigger on every change | No |
+
+- **Enforce.** A policy is a unit in ConfigHub like any other configuration:
+  approved and released through the workflow, and delivered by Sveltos. The
+  engine itself, Kyverno or Gatekeeper, must run on the clusters, delivered the
+  same way. ValidatingAdmissionPolicy needs nothing extra.
+- **Check.** ConfigHub will not promote or release a change that fails a
+  trigger, as long as the trigger runs (see "When the checker is away"). A
+  required check holds each release until a Pass is recorded. Both are below,
+  with Kyverno as the example.
+- **Preview.** `cub sveltos impact` shows which running configuration a new
+  policy would refuse, before it ships, by server-side dry runs in a sandbox
+  cluster that runs nothing else. It reads ValidatingAdmissionPolicy verdicts
+  only, and a sandbox cannot run an engine's own workloads.
+
+**Moving from one engine to another.** You can start with
+ValidatingAdmissionPolicy, as [the AI chaos demo](../../demo/README.md) does,
+then move to Kyverno or Gatekeeper, or run them side by side:
+1. deliver the engine to the clusters;
+2. add its policies as units;
+3. point the check at it.
+
+What you give up today is the preview, and with Gatekeeper, a ready-made check
+in ConfigHub.
+
+## Gate a rollout on a check
 
 There are two ways to gate a rollout on a check, and they fail differently:
 
@@ -15,8 +52,10 @@ There are two ways to gate a rollout on a check, and they fail differently:
 | Best for | Fast feedback on every edit, in ConfigHub and to AI assistants | The gate you rely on for production |
 
 Use both: the trigger tells authors at once, and the requirement is the gate.
+The rest of this guide sets this up with Kyverno. Then come the parity check,
+which needs no engine at all, and the preview, which needs only Kubernetes.
 
-## What you need
+## What you need, with Kyverno
 
 - **A Kyverno that holds your policies and checks for ConfigHub.** Run it
   apart from the clusters' own Kyverno, for example on the management cluster
