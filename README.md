@@ -45,7 +45,7 @@ revision each cluster runs, and a rollout order that ConfigHub enforces.
 | Put one platform stack on every production cluster, without repeating its config | Change its base once; every cluster's variant takes the change, staging first | [3](#3-roll-a-change-out-to-every-cluster-staging-first) |
 | Keep choosing clusters by label, as you do with Sveltos | `cub sveltos plan` reads your profiles' label selectors as they are | [1](#1-bring-the-fleet-you-already-run-into-confighub) |
 | Have a new cluster with the right labels pick up its stack | `cub sveltos watch` proposes it, a person approves, Sveltos delivers | [8](#8-add-a-new-cluster) |
-| Stop a change that breaks your policies before it reaches a cluster | Your Kyverno policies check every change, and each stage's release waits for a pass | [4](#4-check-every-change-against-your-policies) |
+| Stop a change that breaks your policies before it reaches a cluster | Your policies check every change, and each stage's release waits for a pass. Kyverno, Kubernetes' own ValidatingAdmissionPolicy, or ConfigHub's checks: [which engine does what](docs/user/policy-checks.md#which-policy-engine-does-what) | [4](#4-check-every-change-against-your-policies) |
 | Put the GPU operator only on clusters approved for it, and upgrade drivers safely | Labels propose, people approve, and the driver version is a field you review | [7](#7-run-a-gpu-fleet-the-operator-only-where-it-is-approved) |
 | Upgrade a chart and see exactly what changes | Render the new version, and review it object by object | [5](#5-upgrade-a-chart-and-review-exactly-what-changes) |
 | Know what each cluster runs, whether it is healthy, and who changed it | ConfigHub holds each cluster's objects, its live status from Sveltos, and every change's author and reason | [9](#9-see-what-every-cluster-runs-whether-it-is-healthy-and-who-changed-it) |
@@ -200,8 +200,10 @@ approval:
 
 ### 4. Check every change against your policies
 
-Run your Kyverno policies on a change before it ships. Plan with a policy
-trigger and a required check:
+Run your policies on a change before it ships. This example uses Kyverno;
+[which policy engine does what](docs/user/policy-checks.md#which-policy-engine-does-what)
+says what works with ValidatingAdmissionPolicy, OPA Gatekeeper and ConfigHub's
+own checks. Plan with a policy trigger and a required check:
 
 ```bash
 cub sveltos apply onboard/profiles.yaml clusters.yaml --stage-label env --stages staging,prod \
