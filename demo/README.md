@@ -1,4 +1,15 @@
-# AI chaos in production: run it yourself
+# AI chaos in production: run it yourself on K8s
+
+A demonstration of the 'chaos' approach to testing a production fleet
+using AI with a sveltos-confighub layer on standard K8s.  The idea is
+that a 'devil' chaos agent causes problems but these are remedied by
+an 'angel' agent, and then a 3rd party (AI or human) does approvals.
+
+Each time the angel creates an approved remedy, this is adopted as a
+policy to prevent re-occurrences.
+
+By using ConfigHub this is a simple set of compliance apps.  The config
+data is combined with a policy engine (you choose which one) for this.
 
 Three outages on a Sveltos fleet, each caused on purpose, fixed through
 ConfigHub, and then prevented, by AI agents with their own ConfigHub
