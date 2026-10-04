@@ -36,7 +36,8 @@ identities:
 - **Milton** reviews and approves, if you let it.
 - **You** approve by hand at any step, or leave it to Milton.
 
-Neither Devil nor Angel can approve. Kind clusters stand in for production.
+NOTE: Neither Devil nor Angel can approve. Milton can approve.  Or a human.
+NOTE: In this demo version, kind clusters are 'standing in' for production.
 
 | Outage | What breaks | What prevents it |
 | --- | --- | --- |
