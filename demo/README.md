@@ -26,9 +26,9 @@ server-side dry runs in a sandbox cluster. `cub sveltos` can also check every
 change against Kyverno policies: see
 [Check every change against your policies](../docs/user/policy-checks.md).
 
-Here, three outages on a Sveltos fleet, each caused on purpose, fixed through
-ConfigHub, and then prevented, by AI agents with their own ConfigHub
-identities:
+Summary: there are three outages on a Sveltos fleet, each caused on purpose, 
+and fixed through ConfigHub, and then prevented through ConfigHub.  This is 
+orchestrated by some AI agents each with their own ConfigHub identities:
 
 - **Devil** causes each outage the way it happens in real life.
 - **Angel** finds the cause, fixes it through ConfigHub, and proposes what
