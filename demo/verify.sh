@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks the demo kit itself, offline, without touching a cluster or ConfigHub:
 #   - every shell, Node and Python script parses;
-#   - every prompt file is used by a step (a scenario, the README or approve.sh);
+#   - every prompt file is used by a step (its scenario, or approve.sh for Milton's);
 #   - every ${VARIABLE} a prompt names is explained where the prompt is used;
 #   - every relative link and image in the demo's Markdown resolves.
 #

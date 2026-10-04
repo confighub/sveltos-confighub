@@ -13,7 +13,7 @@ page is that contract.
 | What | Where it comes from |
 | --- | --- |
 | **The task** | The prompt file, with each `${VARIABLE}` filled from the environment. A missing one stops the run before it starts. The scenarios say what to set |
-| **Standing instructions** | `devil.md`, `angel.md` or `milton.md`, with `$AI_CHAOS_DIR` and `$DEMO` filled in, given as the system prompt |
+| **Standing instructions** | `devil.md`, `angel.md` or `milton.md`, with `$AI_CHAOS_DIR` and `$DEMO` filled in, added to the runtime's own system prompt |
 | **Its ConfigHub identity** | `CUB_CONTEXT=chaos-<agent>`, the `cub` context `setup/identities.sh` signed in as that agent's worker. Never switch the current context: set it per process |
 | **The clusters** | `KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`, with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2` |
 | **The policy sandbox** | `$AI_CHAOS_DIR/sandbox.kubeconfig`, named in the prompts that need it |
@@ -40,7 +40,7 @@ permission. `run-agent.sh` holds the exact lists.
 
 Claude Code matches these lists by command prefix. So the instructions ask each
 agent for one plain command at a time, verb first and `--context` last, with no
-loops or chained commands. Another runtime may not need that, but the
+loops or chained commands. Milton may pipe one command into another. Another runtime may not need that, but the
 instructions still ask for it.
 
 These limits are a second line, not the only one. ConfigHub refuses an
@@ -70,7 +70,8 @@ Three scripts read the event stream:
 - `panel.py` draws the figures.
 
 The three read Claude Code's `stream-json` format, one JSON object per line.
-Only these shapes matter:
+Only these shapes matter. `render.py` also prints `num_turns`, `duration_ms`
+and `total_cost_usd` from the `result` event, when they are there:
 
 ```json
 {"type": "assistant", "message": {"content": [{"type": "text", "text": "what the agent says"}]}}

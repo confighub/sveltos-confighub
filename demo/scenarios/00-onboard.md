@@ -1,7 +1,8 @@
 # Onboarding: the fleet into ConfigHub
 
 `setup/onboard.sh` onboards the running fleet with `cub sveltos`, signed in as
-Angel. It is a script, not the AI agent: no agent runs until the outages.
+Angel. It is a script, not the AI agent. The only agent here is Milton, if it
+approves for you.
 It creates:
 - **The shop and the platform:** one variant per cluster each, cloned from a
   class base (staging or prod), cloned from a base.
@@ -16,7 +17,8 @@ source demo/env.sh
 bash $DEMO/setup/onboard.sh
 ```
 
-It runs `cub sveltos plan` and then `apply.sh`, and stops at the first approval.
+It runs `cub sveltos apply`, which writes `apply.sh`, then runs `apply.sh`, and
+stops at the first approval.
 Step 1 reports that facts could not be collected from the management cluster
 (`mgmt/mgmt: not collected`). That is expected on kind, where the cluster's
 in-cluster address isn't reachable from your machine, and nothing depends on

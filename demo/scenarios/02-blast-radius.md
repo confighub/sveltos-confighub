@@ -31,7 +31,7 @@ chaos-management`. In our verification run they were `withdraw-shop-lockdown`,
 | 3. Review, then approve each order | `$A me chaos-management/<order> record "<why>"`, or `$A milton chaos-management/<order> record 02-blast-radius` |
 | 3b. Only if the review finds a problem: Angel aborts the orders sent back and proposes them again; then step 3 for the new ones | `SENT_BACK="<the orders>" FINDING="<what you found>" $R angel 02-blast-radius $P/2b-angel-revise.txt` |
 | 4. Angel releases them in order | `FIX_ORDER=... POLICY_ORDER=... CLEANUP_ORDER=... $R angel 02-blast-radius $P/3-angel-release.txt` |
-| 4a. Only if step 4 stops with HTTP 500 "no Revision found ... TagID": Angel publishes the policy's order, which carries both (below) | `FIX_ORDER=... POLICY_ORDER=... $R angel 02-blast-radius $P/3c-angel-publish-together.txt` |
+| 4a. Only if step 4 stops with HTTP 500 "no Revision found ... TagID": Angel publishes the policy's order, which carries both (below), and stops at the clean-up's approval; then step 4b | `FIX_ORDER=... POLICY_ORDER=... $R angel 02-blast-radius $P/3c-angel-publish-together.txt` |
 | 4b. Only if Angel opened the clean-up after the fix: approve it as in step 3, then Angel publishes it | `CLEANUP_ORDER=<order> $R angel 02-blast-radius $P/3b-angel-release-cleanup.txt` |
 | 5. Devil tries again | `$R devil 02-blast-radius $P/4-devil-again.txt` |
 
