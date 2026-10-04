@@ -457,7 +457,7 @@ ConfigHub organization. Each has a recorded log of a real run.
 | [Onboarding](examples/onboard/README.md) | Three live Sveltos profiles (Kyverno, its policies, ingress-nginx) handed over with nothing reinstalled. A Kyverno upgrade, staging before prod. A new cluster joining. |
 | [The GPU operator](examples/gpu-operator/README.md) | NVIDIA's GPU operator on exactly the clusters approved for it; a mislabelled cluster gets nothing. The operator and driver upgrade reaches staging before prod. |
 | [A slice of Meridian](examples/meridian-slice/README.md) | Three levels, from one Sveltos profile per class. One change at the root reaches every class, and each keeps its own replicas. |
-| [AI chaos in production](demo/README.md) | Run it yourself: AI agents, each its own ConfigHub identity. Devil causes three outages (a missed rotation, half the fleet down, prod unlike staging); Angel fixes each through ConfigHub and adds the rule that stops it recurring; you, or the agent Milton, approve every release. Prompts, scripts, proof points and teardown in `demo/`. |
+| [AI chaos in production](demo/README.md) | Run it yourself: AI agents, each its own ConfigHub identity. Devil causes three outages (a missed rotation, half the fleet down, prod unlike staging); Angel fixes each through ConfigHub and adds the rule that stops it recurring; you, or the agent Milton, approve every release. Prompts, scripts, proof points and teardown in `demo/`, and [diaries of our two runs](demo/diary/README.md). |
 
 ```bash
 node examples/onboard/kind-fleet.mjs      # build the kind fleet
