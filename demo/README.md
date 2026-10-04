@@ -33,6 +33,7 @@ ConfigHub's record of both runs.
 | Word | What it means here |
 | --- | --- |
 | **Space** | A ConfigHub folder of configuration, one per base, class base or cluster. The demo's are named `chaos-*` |
+| **Unit** | One piece of configuration in a Space, with every revision kept: here the shop's manifests (`shop`), Reloader's (`reloader`), or a policy (`guardrails`) |
 | **Base, class base, variant** | The shop's configuration in `chaos-shop-base`, cloned into a class base for staging and one for prod, then into one variant per cluster (`chaos-shop-staging`, `chaos-shop-prod-eu`, ...). The web UI shows each variant as a deployment |
 | **Change order** | One named change, followed through a workflow. Written `<base Space>/<name>`, for example `chaos-shop-base/web-reload-on-token-rotation` |
 | **Workflow, stage** | The path a change order takes: `bases`, then `staging`, then `prod`. Each stage may need approvals before its release |
