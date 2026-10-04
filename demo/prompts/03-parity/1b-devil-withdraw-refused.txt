@@ -1,0 +1,5 @@
+Your change was not approved, so withdraw it and leave nothing of yours waiting in prod.
+1. Abort your change order chaos-shop-base/${CUT_ORDER} with the reason: Not approved (${REASON}); withdrawn by devil. ConfigHub refuses an apostrophe in an abort reason, so leave any out.
+2. Put the unit shop back with cub unit update --restore: in chaos-shop-class-prod to the revision before your edit, and in chaos-shop-prod-eu, chaos-shop-prod-us-1 and chaos-shop-prod-us-2 to their last released revision. Give each a change description that says why.
+3. Confirm with cub unit diff that the three prod units show no change against their last release, and that the api limit reads 128Mi in all four units.
+Publish nothing, approve nothing, change no gate or guard, and stop with a short report. Never use --debug.

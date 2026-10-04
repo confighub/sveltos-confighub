@@ -20,6 +20,13 @@ own record in one go:
 Approvals and checks (attestations) are not shown in the web UI yet; read them
 with `cub attestation list --space <space>`, or `evidence.sh`.
 
+**What to compare against.** [recording/verification-2026-10-03.md](recording/verification-2026-10-03.md)
+is `evidence.sh`'s output from our verification run, made from this README
+with Milton approving. Yours will differ in names, IDs, times and how many
+change orders the agents open. Expect the same shape: every approval by you or
+Milton and none by Devil or Angel, every release by an agent with its approval
+recorded, and each outage's fix and prevention released.
+
 ## Setup
 
 | Claim | How to check |

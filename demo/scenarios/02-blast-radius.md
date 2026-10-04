@@ -14,7 +14,14 @@ NetworkPolicy.
 ```bash
 source demo/env.sh
 R="bash $DEMO/agents/run-agent.sh"; A="bash $DEMO/approve.sh"; P=$DEMO/prompts/02-blast-radius
+bash $DEMO/setup/reporter.sh log     # live status still flowing: recent lines, every 15 s
+bash $DEMO/setup/sandbox.sh --reset  # an empty sandbox
 ```
+
+`<order>` and the `..._ORDER` values are change order names without their
+Space, as Angel's report gives them, or `cub changeorder list --space
+chaos-management`. In our verification run they were `withdraw-shop-lockdown`,
+`guardrails-profiles-deliver-confighub-releases` and `remove-shop-lockdown`.
 
 | Step | Command |
 | --- | --- |
@@ -22,7 +29,9 @@ R="bash $DEMO/agents/run-agent.sh"; A="bash $DEMO/approve.sh"; P=$DEMO/prompts/0
 | Wait about a minute: prod-us-1 and prod-us-2 Degraded, staging and prod-eu Healthy | `cub sveltos status --context kind-chaos-mgmt` |
 | 2. Angel proposes the fix, the policy and the clean-up as change orders on `chaos-management/record` | `$R angel 02-blast-radius $P/2-angel-fix-and-prevent.txt` |
 | 3. Review, then approve each order | `$A me chaos-management/<order> record "<why>"`, or `$A milton chaos-management/<order> record 02-blast-radius` |
+| 3b. Only if the review finds a problem: Angel aborts the orders sent back and proposes them again; then step 3 for the new ones | `SENT_BACK="<the orders>" FINDING="<what you found>" $R angel 02-blast-radius $P/2b-angel-revise.txt` |
 | 4. Angel releases them in order | `FIX_ORDER=... POLICY_ORDER=... CLEANUP_ORDER=... $R angel 02-blast-radius $P/3-angel-release.txt` |
+| 4a. Only if step 4 stops with HTTP 500 "no Revision found ... TagID": Angel publishes the policy's order, which carries both (below) | `FIX_ORDER=... POLICY_ORDER=... $R angel 02-blast-radius $P/3c-angel-publish-together.txt` |
 | 4b. Only if Angel opened the clean-up after the fix: approve it as in step 3, then Angel publishes it | `CLEANUP_ORDER=<order> $R angel 02-blast-radius $P/3b-angel-release-cleanup.txt` |
 | 5. Devil tries again | `$R devil 02-blast-radius $P/4-devil-again.txt` |
 
@@ -58,9 +67,8 @@ configuration does not say who will send it. Check two things yourself:
    Then empty the sandbox again: `bash $DEMO/setup/sandbox.sh --reset`.
 
 Milton is told to do the same: its instructions cover the token-subject helper
-and testing by impersonation in the sandbox. If a check fails, do not approve.
-Tell Angel what you found, and have it abort the order with the reason and
-propose it again.
+and testing by impersonation in the sandbox. If a check fails, do not approve:
+send the order back with step 3b.
 
 **If the fix will not publish on its own.** A release pinned to a change
 order bundles every unit at the order's end tag. A unit created after that tag
@@ -68,8 +76,8 @@ has no revision there, and the publish fails with HTTP 500 ("no Revision found
 for Unit ... with the specified TagID"), although `cub release publish --help`
 says such a unit falls back to its head revision. In our verification run,
 the policy's unit came after the fix's tag. Angel then published the policy's
-order instead, which carries both units, and both were already approved. Have
-Angel abort the fix's order with the reason.
+order instead, which carries both units, and both were already approved: that
+is step 4a. Angel aborts the fix's order with the reason.
 
 Angel may propose the clean-up as a third order to open once the fix is applied.
 Step 4 allows for that: set `CLEANUP_ORDER` to the words "the clean-up order
@@ -77,6 +85,9 @@ you will open after the fix". Angel then opens it and stops at its approval,
 and step 4b releases it.
 
 What you should see:
+- **After step 2:** two or three change orders wait at `record`: the fix, the
+  policy, and maybe the clean-up. Angel may propose the clean-up for after the
+  fix instead.
 - **After step 4 (or 4b):**
   - prod-us-1 and prod-us-2 are Healthy again;
   - the policy and its binding are on the management cluster;

@@ -34,7 +34,7 @@ Tested together on 2026-10-03:
 
 | Product | Version |
 | --- | --- |
-| ConfigHub (hub.confighub.com) | server v0.8.1 |
+| ConfigHub (hub.confighub.com) | server v0.8.1. The hosted server moves on: you get the version it runs |
 | `cub` | v0.8.1 |
 | `cub sveltos` (this repository) | v0.13.0 |
 | `cub helm` | v0.1.1 |
@@ -54,19 +54,25 @@ ConfigHub plans to replace that with service accounts, so later versions of
 ## What you need
 
 - **A machine** with Docker and room for six kind clusters. We used 18 cores
-  and 48 GB.
-- **A ConfigHub organization** with 20 free Spaces, and a user who may create
-  Spaces, workers and components there. The scripts act through your current
+  and 48 GB. On Linux, raise the inotify limits first, as kind's docs say for
+  many clusters.
+- **A ConfigHub organization** with 20 free Spaces, and a user with the admin
+  role there. Setup creates Spaces, workers with org roles and components; it
+  sets permissions on Spaces and edits workflows. The scripts act through your current
   `cub` context. If it points at another organization, run
   `export CUB_CONTEXT=<your context>` in each terminal, setup and teardown
   included.
 - **Claude Code**, signed in. The agents' runs cost about $20 to $30 in all,
   and the whole demo takes two to three hours.
-- **The plugins:**
+- **`cub` and the plugins**, at the versions above. ConfigHub's installer
+  takes a version, and puts `cub` in `~/.confighub/bin`:
 
   ```bash
+  curl -fsSL https://hub.confighub.com/cub/install.sh | VERSION=v0.8.1 bash
+  export PATH=$HOME/.confighub/bin:$PATH
+  cub auth login
   cub plugin install confighub/sveltos-confighub@v0.13.0
-  cub plugin install confighub/cub-helm
+  cub plugin install confighub/cub-helm@v0.1.1
   ```
 
 ## Stand it up
@@ -104,11 +110,12 @@ change's author. Each approval step offers both:
 
 ```bash
 bash $DEMO/approve.sh me     chaos-shop-base/<order> staging "<why, in your words>"
-bash $DEMO/approve.sh milton chaos-shop-base/<order> staging <run-name>
+bash $DEMO/approve.sh milton chaos-shop-base/<order> staging <run-name> [requester]
 ```
 
 `me` records your approval with your note. `milton` has Milton review the
-order against what the requester wrote in that run:
+order against what the requester wrote in that run. The requester is `angel`
+unless you name another; outage 3 names `devil`. Milton reads:
 - the change order;
 - every Space's diff, head against last release;
 - the evidence the request cites.
@@ -132,9 +139,9 @@ bash $DEMO/agents/run-agent.sh <devil|angel|milton> <run-name> <prompt-file>
 ```
 
 The prompts name the change orders an earlier step created as `${VARIABLES}`.
-Set them on the command line, for example `FIX_ORDER=<order> bash ...`. Each
-agent's report names its change orders, and so does `cub changeorder list
---space <base space>`.
+Set them on the command line, without the order's Space, for example
+`FIX_ORDER=web-reload-on-token-rotation bash ...`. Each agent's report names
+its change orders, and so does `cub changeorder list --space <base space>`.
 
 Each run:
 - **Identity:** acts as that agent's ConfigHub identity.
@@ -153,6 +160,22 @@ Each run:
 The agents' standing instructions are `agents/devil.md`, `agents/angel.md` and
 `agents/milton.md`. Each run writes a note before every command, saying what
 it sees and why it acts, so the transcripts can be read as a record.
+
+**With your own AI.** The agents run on Claude Code. [agents/README.md](agents/README.md)
+is the contract any runtime has to meet, and the changes to swap Claude Code
+out.
+
+**If a step goes wrong.** Read the run's transcript (`.md`), fix the cause, and
+run the step again. Milton reviews every request in the run, the failed ones
+too. To give it only the latest, set it yourself:
+`REQUEST="$(bash $DEMO/agents/last-request.sh <run-name> angel)" bash $DEMO/approve.sh milton ...`.
+Sveltos's tokens to the workload clusters last 30 days. For a fleet older than
+that, `node $DEMO/setup/kind-fleet.mjs --refresh` renews them.
+
+**Check the kit itself.** `bash demo/verify.sh` checks offline that every
+script parses, every prompt is used by a step, and every `${VARIABLE}` is
+explained where it is used. The plugin's own tests are `go test ./...` at the
+repository root.
 
 ## Tear it down
 

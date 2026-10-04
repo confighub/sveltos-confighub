@@ -23,7 +23,7 @@ if [ "${1:-}" = --reset ]; then
   done
   echo "sandbox reset"; exit 0
 fi
-dir=${AI_CHAOS_DIR:-${TMPDIR:-/tmp}/sveltos-ai-chaos}
+dir=${AI_CHAOS_DIR:-$HOME/ai-chaos}
 sveltos=${SVELTOS_VERSION:-v1.15.0}
 mkdir -p "$dir"
 kind get clusters 2>/dev/null | grep -q '^chaos-policy-sandbox$' ||

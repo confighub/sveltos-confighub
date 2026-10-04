@@ -1,6 +1,8 @@
 # Onboarding: the fleet into ConfigHub
 
-Angel onboards the running fleet with `cub sveltos`:
+`setup/onboard.sh` onboards the running fleet with `cub sveltos`, signed in as
+Angel. It is a script, not the AI agent: no agent runs until the outages.
+It creates:
 - **The shop and the platform:** one variant per cluster each, cloned from a
   class base (staging or prod), cloned from a base.
 - **The management cluster's record:** its delivery profiles, delivered from
@@ -14,6 +16,7 @@ source demo/env.sh
 bash $DEMO/setup/onboard.sh
 ```
 
+It runs `cub sveltos plan` and then `apply.sh`, and stops at the first approval.
 Step 1 reports that facts could not be collected from the management cluster
 (`mgmt/mgmt: not collected`). That is expected on kind, where the cluster's
 in-cluster address isn't reachable from your machine, and nothing depends on
@@ -34,22 +37,45 @@ cub changeorder list --space chaos-shop-base
 cub changeorder list --space chaos-platform-base
 ```
 
-Approve staging for both, by hand or by Milton:
+Approve staging for both, by hand or by Milton. There is no agent request in
+onboarding, so Milton is given one in `REQUEST`:
 
 ```bash
 bash $DEMO/approve.sh me chaos-shop-base/onboard-<id> staging "first release of the shop to staging"
 bash $DEMO/approve.sh me chaos-platform-base/onboard-<id> staging "first release of the platform to staging"
 # or
-export REQUEST="Onboarding: the first release of this component, from the profiles Sveltos runs today. Nothing should change on the clusters."
+export REQUEST="Onboarding: the first release of this component to staging, made from the Sveltos profiles the fleet runs today. Nothing should change on the clusters."
 bash $DEMO/approve.sh milton chaos-shop-base/onboard-<id> staging 00-onboard
 bash $DEMO/approve.sh milton chaos-platform-base/onboard-<id> staging 00-onboard
+```
+
+Each Milton review takes two to four minutes and ends with "Approved", or
+"Not approved" and why. Then run `onboard.sh` again: it releases staging and
+stops at prod.
+
+```bash
+bash $DEMO/setup/onboard.sh
+```
+
+Approve prod for both:
+
+```bash
+bash $DEMO/approve.sh me chaos-shop-base/onboard-<id> prod "first release of the shop to prod; staging ran it"
+bash $DEMO/approve.sh me chaos-platform-base/onboard-<id> prod "first release of the platform to prod; staging ran it"
+# or
+export REQUEST="Onboarding: the first release of this component to prod, made from the Sveltos profiles the fleet runs today; staging has run it. Nothing should change on the clusters."
+bash $DEMO/approve.sh milton chaos-shop-base/onboard-<id> prod 00-onboard
+bash $DEMO/approve.sh milton chaos-platform-base/onboard-<id> prod 00-onboard
 unset REQUEST
 ```
 
-Then run `onboard.sh` again: it releases staging and stops at prod. Approve
-prod the same way, with `prod` in place of `staging`, and run `onboard.sh` once
-more. Then hand delivery over from the profiles you applied to ConfigHub's
-releases. Nothing is reinstalled; the pods keep running.
+Run `onboard.sh` once more: it releases prod. Then hand delivery over from the
+profiles you applied to ConfigHub's releases. Nothing is reinstalled; the pods
+keep running.
+
+```bash
+bash $DEMO/setup/onboard.sh
+```
 
 ```bash
 bash $DEMO/setup/onboard.sh --handover

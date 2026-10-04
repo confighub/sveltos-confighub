@@ -10,16 +10,16 @@
 // Sveltos reaches each cluster with a token that lasts 30 days; --refresh
 // gives every cluster a new one without rebuilding anything.
 //
-// Kubeconfigs go to $AI_CHAOS_DIR (default: $TMPDIR/sveltos-ai-chaos).
+// Kubeconfigs go to $AI_CHAOS_DIR (default: ~/ai-chaos, as demo/env.sh sets it).
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { parseDocs } from "../../scripts/lib/proof-common.mjs";
 import { manifestImages, preloadSveltosImages, writeDocuments } from "../../scripts/lib/per-cluster-fleet.mjs";
 
-const W = process.env.AI_CHAOS_DIR ?? join(tmpdir(), "sveltos-ai-chaos");
+const W = process.env.AI_CHAOS_DIR ?? join(homedir(), "ai-chaos");
 const VERSION = "v1.15.0";
 const MANIFEST_URL = `https://raw.githubusercontent.com/projectsveltos/sveltos/${VERSION}/manifest/manifest.yaml`;
 const MANIFEST_SHA = "ad80fa92a73b167e30df7a98cc0295acd3716b476dd0cc25859df3f45b69b4ce";
