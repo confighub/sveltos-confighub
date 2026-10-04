@@ -410,7 +410,7 @@ remove-shop-lockdown                              Released
 
 (Columns trimmed.) The same record in the web UI:
 
-![The Rollouts page: every order of the run, the two aborted ones with their reasons](images/r2-gui-rollouts.jpg)
+![The Rollouts page: every order of the run, each aborted one with its reason. Devil's first, misplaced order is among them](images/r2-gui-rollouts.jpg)
 
 The full record is
 [verification-2026-10-03.md](../recording/verification-2026-10-03.md):
