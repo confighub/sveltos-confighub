@@ -14,10 +14,11 @@ server v0.8.1, Sveltos v1.15.0, kind v0.31.0, Claude Code 2.1.285 with
 `claude-opus-5-5`.
 
 ConfigHub's record of the run is in
-[verification-2026-10-03.md](../recording/verification-2026-10-03.md). There
-are no web UI screenshots of this run: the figures are drawn from the agents'
-transcripts and ConfigHub's record. [The first run's diary](first-run.md)
-has the screenshots.
+[verification-2026-10-03.md](../recording/verification-2026-10-03.md). The
+web UI screenshots were taken the next morning, from ConfigHub's record of the
+run, before its Spaces were deleted. The UI does not show approvals yet, so
+those are read with `cub`. The other figures are drawn from the agents'
+transcripts.
 
 **The outcome:**
 - Milton made all 19 approvals, and nobody else made any.
@@ -50,6 +51,8 @@ bash $DEMO/setup/identities.sh         # devil, angel, reporter, milton
 The shop's Secret and Deployments were created at 19:21:54, and Reloader was
 up at 19:22:39. Milton is a ConfigHub worker with the viewer role. It can
 approve only where it is granted to.
+
+![The Workers page: milton, angel, devil and reporter in the Space chaos-agents](images/r2-gui-workers.jpg)
 
 ## Onboarding: Milton refuses until it can see
 
@@ -220,6 +223,10 @@ and said so:
 `web` was ready about 28 seconds after its release, and then the policy
 followed. All four clusters were Synced and Healthy at 20:58:32.
 
+![prod-eu's release 2: the fix's diff, the Reloader annotation and the one-time roll](images/r2-gui-prod-eu-release.jpg)
+
+![The fix's rollout: promoted and released through staging and prod](images/r2-gui-fix-rollout.jpg)
+
 ## Outage 2: half the fleet at once
 
 ![Timeline of outage 2](images/r2-o2-timeline.png)
@@ -244,6 +251,10 @@ That removes the question that tripped the first run: which identity to
 exempt. A profile that delivers nothing is allowed, so the record can take the
 stray one over and empty it. Angel previewed 14 known cases: 10 denied and 4
 allowed, all as expected.
+
+![The policy's unit in the record, with Angel's change description](images/r2-gui-policy-unit.jpg)
+
+![The policy itself, revision 2 of the unit guardrails](images/r2-gui-policy-revision.jpg)
 
 Angel warned that the two orders could not be released apart, expecting the
 fix's release to carry the policy too:
@@ -280,6 +291,8 @@ instead. Angel stopped, and offered a choice:
 - **Option 1, which Angel recommended:** publish the policy's order. It carries
   both units, and both were already approved.
 - **Option 2:** move a tag on an order that was already approved.
+
+![The fix's order, aborted with the reason Angel gave: its content shipped in the policy's order](images/r2-gui-unpublished-fix.jpg)
 
 **21:21:35. The operator chooses option 1**, inside the approvals Milton had
 given, and logged it. One correction to the record: the operator's prompt to
@@ -367,6 +380,8 @@ a memory figure under load.
 
 ![Milton refuses the cut](images/r2-o3-milton.png)
 
+![The refused order in ConfigHub: aborted, with Milton's reasons as its abort reason](images/r2-gui-refused-order.jpg)
+
 **21:38 to 21:55. The run ends here.** The operator reported the refusal. The
 person running the demo chose to end the run there, rather than approve the
 cut by hand to stage the outage. So the cache, the OOMKill, the parity gate and
@@ -393,7 +408,11 @@ guardrails-profiles-deliver-confighub-releases    Released
 remove-shop-lockdown                              Released
 ```
 
-(Columns trimmed.) The full record is
+(Columns trimmed.) The same record in the web UI:
+
+![The Rollouts page: every order of the run, the two aborted ones with their reasons](images/r2-gui-rollouts.jpg)
+
+The full record is
 [verification-2026-10-03.md](../recording/verification-2026-10-03.md):
 - **Approvals:** 19, each "Approval Pass by milton (Worker)" with its note.
   None was by a person.
@@ -406,8 +425,13 @@ to the withdrawal. There were 34 agent runs, and their transcripts add up to
 about $22.
 
 **The clean-up.** `teardown.sh` deleted the kind clusters. It missed the
-reporter, which was stopped by hand; `setup/reporter.sh` now finds it. The run's ConfigHub Spaces are deleted separately, with
-`teardown.sh --confighub`.
+reporter, which was stopped by hand; `setup/reporter.sh` now finds it. The
+run's ConfigHub Spaces are deleted separately, with `teardown.sh --confighub`.
+With the clusters gone, live status is no longer reported. The prod units are
+still flagged by Devil's withdrawn cut: its restores made new revisions with the
+same content.
+
+![The shop the next morning: rel-2 everywhere, live status no longer reported](images/r2-gui-shop-graph.jpg)
 
 ## To do after the verification run
 
