@@ -21,7 +21,8 @@ generated.
 In each:
 - **`<agent>-<UTC time>.jsonl`** is the agent's full event stream, and the
   `.md` beside it is a readable transcript. The transcript keeps the first 40
-  lines of each command's output; the `.jsonl` keeps all of it. Lines such as
+  lines of each command's output, and names each file the agent wrote, edited
+  or read, with up to 20 lines of what it wrote; the `.jsonl` keeps all of it. Lines such as
   "Contains simple_expansion" or "This command requires approval" are Claude
   Code's command filter refusing a command, not ConfigHub.
 - **`runs.log`** holds the prompt each run was given.
