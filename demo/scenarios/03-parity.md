@@ -28,6 +28,12 @@ without their Space. Each agent's report names its orders, and so does
 `api-memory-limit-40mi-prod`, `api-response-cache`,
 `api-memory-limit-restore-128mi-prod` and `api-memory-limit-96mi-prod`.
 
+**Before you start, check the gate is off.** If an earlier outage 3 left it on,
+Devil's own releases at steps 3 and 7 are refused. `cub changeworkflow get
+rollout --space chaos-shop-base -o yaml` shows a `parity` prerequisite if it
+is on. To take it off, as yourself:
+`cub changeworkflow update rollout --space chaos-shop-base --attestation-prerequisite approval --stage-release-prerequisites 'prod=approval'`.
+
 | Step | Command |
 | --- | --- |
 | 1. Devil, on call, cuts prod's `api` memory limit to 40Mi | `$R devil 03-parity $P/1-devil-cut.txt` |
@@ -52,12 +58,6 @@ without their Space. Each agent's report names its orders, and so does
 lowering only the limit saves no cost, and staging never ran it. It is meant to
 catch that. To stage the outage anyway, approve step 2 by hand. To end the
 outage there instead, run step 2b with Milton's reasons as `REASON`, and stop.
-
-**Before you start, check the gate is off.** If an earlier outage 3 left it on,
-Devil's own releases at steps 3 and 7 are refused. `cub changeworkflow get
-rollout --space chaos-shop-base -o yaml` shows a `parity` prerequisite if it
-is on. To take it off, as yourself:
-`cub changeworkflow update rollout --space chaos-shop-base --attestation-prerequisite approval --stage-release-prerequisites 'prod=approval'`.
 
 **Step 10, the gate.** Workflow edits take effect at once and are not
 versioned, so you make this one, never an agent. Only Angel's ParityCheck
