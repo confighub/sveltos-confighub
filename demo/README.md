@@ -1,6 +1,26 @@
 # AI chaos in production: run it yourself
 
-Three outages on a Sveltos fleet, each caused on purpose, fixed through
+A demonstration of the 'chaos' approach to testing a production fleet
+using AI with a sveltos-confighub layer on standard K8s.  The idea is
+that a 'devil' chaos agent causes problems but these are remedied by
+an 'angel' agent, and then a 3rd party (AI or human) does approvals.
+
+Each time the angel creates an approved remedy, this is adopted as a
+policy to prevent re-occurrences.
+
+By using ConfigHub this is a simple set of compliance apps.  The config
+data is combined with a policy engine (you choose which one) for this.
+
+**The policy engine in this demo** is Kubernetes' own admission control:
+ValidatingAdmissionPolicy, with its rules written in CEL. No extra software
+runs on the clusters. Each policy is a unit in ConfigHub, approved and released
+like any other change, and Sveltos delivers it to the clusters. Before a policy
+ships, `cub sveltos impact` previews it against what each cluster runs, by
+server-side dry runs in a sandbox cluster. `cub sveltos` can also check every
+change against Kyverno policies: see
+[Check every change against your policies](../docs/user/policy-checks.md).
+
+Here, three outages on a Sveltos fleet, each caused on purpose, fixed through
 ConfigHub, and then prevented, by AI agents with their own ConfigHub
 identities:
 
