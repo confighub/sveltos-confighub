@@ -8,8 +8,8 @@ before. **The operator**, a Claude Code session acting for the person who ran
 the demo, started each step from the scenarios.
 
 Kind clusters stand in for production. All times are UTC. Versions:
-`cub sveltos` v0.13.0 (a release candidate through onboarding, then the release,
-installed at 20:14), `cub` v0.8.1, ConfigHub
+`cub sveltos` v0.13.0 (a release candidate through onboarding, then the release
+itself from outage 1 on), `cub` v0.8.1, ConfigHub
 server v0.8.1, Sveltos v1.15.0, kind v0.31.0, Claude Code 2.1.285 with
 `claude-opus-5-5`.
 
