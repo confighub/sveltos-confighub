@@ -46,5 +46,6 @@ words, and what the run left to do.
 - [The verification run](verification-run.md), the same evening: made from the
   README, with Milton approving or refusing everything.
 
-The first run's transcripts, and ConfigHub's record of both runs, are in
-[recording/](../recording/README.md).
+The first run's transcripts, ConfigHub's record of both runs, and a
+[check of the setup and the parity gate on ConfigHub's newer server](../recording/check-2026-10-04.md)
+are in [recording/](../recording/README.md).

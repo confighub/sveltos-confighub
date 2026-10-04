@@ -12,7 +12,9 @@ Kind clusters stand in for production. All times are UTC. The agents' words
 and commands are quoted from their transcripts, which are in
 [recording/runs/](../recording/runs/) with ConfigHub's own record of each
 outage (`evidence*.txt`). The agents ran a development build of
-`cub sveltos`, invoked as `cub-sveltos-chaos`. Its features shipped in v0.13.0.
+`cub sveltos`, invoked as `cub-sveltos-chaos`. Its features shipped in v0.12.1
+and v0.13.0: today the same commands are `cub sveltos impact` and
+`cub sveltos check`.
 
 The second run, made later the same day from the README with an agent
 approver, has [its own diary](verification-run.md).
@@ -411,7 +413,9 @@ chaos-shop-prod-eu: passed shop/6; recorded a Pass (8050a153-...)
 
 As the prevention, Angel proposed that prod's release also require a parity
 check. That changes a gate, so Angel only wrote the command and asked the
-approver to run it under their own login:
+approver to run it under their own login. As run, it also named Angel as the
+only checker, with `--attestation-prerequisite-from-user-ids parity=<Angel's
+user ID>`. Angel's proposal:
 
 ```bash
 cub changeworkflow update rollout --space chaos-shop-base \
@@ -488,8 +492,8 @@ October.
 | Ship the parity check and named approvers | Outage 3's prevention ran on a development build | Done: v0.13.0 |
 | Let a reader run it all again, with an agent approver and a clean-up | So the claims can be checked, not taken on trust | Done: `demo/`, then [the verification run](verification-run.md) |
 | Keep names out of the published record | The repository rule against personal names | Done before publishing |
-| Revoke the token Devil's `--debug` printed | A live bearer token was printed into a transcript | No command revokes a token or rotates a worker secret. It expires on 4 October at 11:02 UTC. The agents may no longer use `--debug` |
-| Report what ConfigHub got wrong | The team asked for the findings | Done: 8 items in #product. Answers are in [the verification diary](verification-run.md#to-do-after-the-verification-run) |
+| Revoke the token Devil's `--debug` printed | A live bearer token was printed into a transcript | No command revokes a token or rotates a worker secret. It was valid until 4 October, 11:02 UTC. The agents may no longer use `--debug` |
+| Report what ConfigHub got wrong | The team asked for the findings | Done: 8 items, sent to the ConfigHub team. Answers are in [the verification diary](verification-run.md#to-do-after-the-verification-run) |
 | A change order whose own summary shows no changes | An edit made before the order rode into prod unseen (outage 3) | Reported. ConfigHub's answer: `cub changeorder get` does not show unit diffs, so read `cub unit diff` on each Space. The demo's approver now does |
 | YAML changes a folded string's value | Blank lines were added inside a CEL expression at each hop (outage 1) | Reported. ConfigHub traced it to kustomize's YAML code, upstream |
 | Workflow gates are edited in place, by whoever created them | An agent that creates a workflow can loosen its own gate | Reported. ConfigHub's answers: each change order keeps a copy of the workflow it ran under, and a newer `cub` can back a workflow with a unit that has revisions. Agents should not create the workflows that gate them |

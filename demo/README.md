@@ -11,7 +11,27 @@ policy to prevent re-occurrences.
 By using ConfigHub this is a simple set of compliance apps.  The config
 data is combined with a policy engine (you choose which one) for this.
 
-Three outages on a Sveltos fleet, each caused on purpose, fixed through
+A demonstration of the 'chaos' approach to testing a production fleet
+using AI with a sveltos-confighub layer on standard K8s.  The idea is
+that a 'devil' chaos agent causes problems but these are remedied by
+an 'angel' agent, and then a 3rd party (AI or human) does approvals.
+
+Each time the angel creates an approved remedy, this is adopted as a
+policy to prevent re-occurrences.
+
+By using ConfigHub this is a simple set of compliance apps.  The config
+data is combined with a policy engine (you choose which one) for this.
+
+**The policy engine in this demo** is Kubernetes' own admission control:
+ValidatingAdmissionPolicy, with its rules written in CEL. No extra software
+runs on the clusters. Each policy is a unit in ConfigHub, approved and released
+like any other change, and Sveltos delivers it to the clusters. Before a policy
+ships, `cub sveltos impact` previews it against what each cluster runs, by
+server-side dry runs in a sandbox cluster. `cub sveltos` can also check every
+change against Kyverno policies: see
+[Check every change against your policies](../docs/user/policy-checks.md).
+
+Here, three outages on a Sveltos fleet, each caused on purpose, fixed through
 ConfigHub, and then prevented, by AI agents with their own ConfigHub
 identities:
 
@@ -39,13 +59,31 @@ happened, with screenshots and the agents' own commands:
 [recording/](recording/README.md) has the first run's transcripts, and
 ConfigHub's record of both runs.
 
+## The words used here
+
+| Word | What it means here |
+| --- | --- |
+| **Space** | A ConfigHub folder of configuration, one per base, class base or cluster. The demo's are named `chaos-*` |
+| **Unit** | One piece of configuration in a Space, with every revision kept: here the shop's manifests (`shop`), Reloader's (`reloader`), or a policy (`guardrails`) |
+| **Base, class base, variant** | The shop's configuration in `chaos-shop-base`, cloned into a class base for staging and one for prod, then into one variant per cluster (`chaos-shop-staging`, `chaos-shop-prod-eu`, ...). The web UI shows each variant as a deployment |
+| **Change order** | One named change, followed through a workflow. Written `<base Space>/<name>`, for example `chaos-shop-base/web-reload-on-token-rotation` |
+| **Workflow, stage** | The path a change order takes: `bases`, then `staging`, then `prod`. Each stage may need approvals before its release |
+| **Release** | What ConfigHub publishes for a variant, and what Sveltos fetches and applies to that cluster |
+| **Attestation** | A recorded verdict on a change: an Approval by you or Milton, or a ParityCheck by Angel |
+| **The record** | The management cluster's Space, `chaos-management`. Its releases deliver every Sveltos delivery profile, so profiles come from ConfigHub, not by hand |
+| **Guard** | A note on a field of a unit. A guard `departure=<why>` declares that prod may differ from staging there |
+| **Live status** | What each cluster reports, written into ConfigHub every 15 seconds: Synced or not, Healthy or Degraded. The web UI shows Healthy as Live |
+
 ## Versions
 
-Tested together on 2026-10-03:
+Tested together on 2026-10-03. On 2026-10-04 the server moved to v0.8.3; stand-up,
+onboarding, the gates and the parity gate were rechecked on it
+([the check](recording/check-2026-10-04.md)).
+
 
 | Product | Version |
 | --- | --- |
-| ConfigHub (hub.confighub.com) | server v0.8.1 |
+| ConfigHub (hub.confighub.com) | server v0.8.1, and rechecked on v0.8.3. The hosted server moves on: you get the version it runs |
 | `cub` | v0.8.1 |
 | `cub sveltos` (this repository) | v0.13.0 |
 | `cub helm` | v0.1.1 |
@@ -65,22 +103,34 @@ ConfigHub plans to replace that with service accounts, so later versions of
 ## What you need
 
 - **A machine** with Docker and room for six kind clusters. We used 18 cores
-  and 48 GB.
-- **A ConfigHub organization** with 20 free Spaces, and a user who may create
-  Spaces, workers and components there. The scripts act through your current
+  and 48 GB. On Linux, raise the inotify limits first, as kind's docs say for
+  many clusters.
+- **A ConfigHub organization** with 20 free Spaces, and a user with the admin
+  role there. Setup creates Spaces, workers with org roles and components; it
+  sets permissions on Spaces and edits workflows. The scripts act through your current
   `cub` context. If it points at another organization, run
   `export CUB_CONTEXT=<your context>` in each terminal, setup and teardown
   included.
 - **Claude Code**, signed in. The agents' runs cost about $20 to $30 in all,
   and the whole demo takes two to three hours.
-- **The plugins:**
+- **`cub` and the plugins**, at the versions above. ConfigHub's installer
+  takes a version, and puts `cub` in `~/.confighub/bin`:
 
   ```bash
+  curl -fsSL https://hub.confighub.com/cub/install.sh | VERSION=v0.8.1 bash
+  export PATH=$HOME/.confighub/bin:$PATH
+  cub auth login
   cub plugin install confighub/sveltos-confighub@v0.13.0
-  cub plugin install confighub/cub-helm
+  cub plugin install confighub/cub-helm@v0.1.1
   ```
 
 ## Stand it up
+
+`demo/env.sh` sets three paths, which every step uses:
+- `$DEMO`, the demo directory;
+- `$AI_CHAOS_DIR` (default `~/ai-chaos`), for the kubeconfigs, the onboarding
+  output and the agents' runs;
+- `$CHAOS_RUNS` (default `$AI_CHAOS_DIR/runs`), where each agent run is kept.
 
 ```bash
 git clone https://github.com/confighub/sveltos-confighub && cd sveltos-confighub
@@ -90,8 +140,8 @@ source demo/env.sh                          # in every terminal you use
 
 `bash demo/standup.sh --check` only checks for the tools, the sign-in and the
 plugins. The full run takes about eight minutes. Running it again is safe: it
-keeps the clusters and identities it finds and brings the rest up to date. In
-order, it runs:
+keeps the clusters and identities it finds, brings the rest up to date, and
+skips the shop once the fleet is onboarded. In order, it runs:
 
 ```bash
 node $DEMO/setup/kind-fleet.mjs             # chaos-mgmt and four workload clusters, Sveltos v1.15.0
@@ -100,33 +150,32 @@ bash $DEMO/setup/setup-shop.sh              # the shop and Reloader, delivered b
 bash $DEMO/setup/identities.sh              # devil, angel, reporter, milton; writes your user ID and Milton's
 ```
 
-Then onboard the fleet into ConfigHub, with Angel doing the work and you or
-Milton approving: [scenarios/00-onboard.md](scenarios/00-onboard.md). Onboarding ends by
-granting the agents their permissions, gating the workflows, and starting live
-status.
-
-`$DEMO` is the demo directory. `$AI_CHAOS_DIR` (default `~/ai-chaos`) holds
-the kubeconfigs, the onboarding output and the agents' runs.
+Then onboard the fleet into ConfigHub, with a script signed in as Angel doing
+the work and you or Milton approving: [scenarios/00-onboard.md](scenarios/00-onboard.md).
+Onboarding ends by granting the agents their permissions, gating the
+workflows, and starting live status.
 
 ## Approvals: by hand or by Milton
 
 Every release waits for one approval, from you or Milton, and never from the
-change's author. Each approval step offers both:
+change's author. The one exception is onboarding's handover: it publishes the
+record's first release before the gates go on. Each approval step offers both:
 
 ```bash
 bash $DEMO/approve.sh me     chaos-shop-base/<order> staging "<why, in your words>"
-bash $DEMO/approve.sh milton chaos-shop-base/<order> staging <run-name>
+bash $DEMO/approve.sh milton chaos-shop-base/<order> staging <run-name> [requester]
 ```
 
 `me` records your approval with your note. `milton` has Milton review the
-order against what the requester wrote in that run:
+order against what the requester wrote in that run. The requester is `angel`
+unless you name another; outage 3 names `devil`. Milton reads:
 - the change order;
 - every Space's diff, head against last release;
 - the evidence the request cites.
 
 It then approves with a note saying what it checked, or says why not. To allow
 only one of you, set `APPROVERS=$YOU_ID` or `APPROVERS=$MILTON_ID` before
-running `setup/gates.sh` and `setup/onboard.sh`.
+running `setup/onboard.sh` and `setup/gates.sh`.
 
 Milton is meant to catch things, and it may. In our verification run it
 refused Devil's prod-only memory cut in outage 3: staging never ran it, and
@@ -143,9 +192,9 @@ bash $DEMO/agents/run-agent.sh <devil|angel|milton> <run-name> <prompt-file>
 ```
 
 The prompts name the change orders an earlier step created as `${VARIABLES}`.
-Set them on the command line, for example `FIX_ORDER=<order> bash ...`. Each
-agent's report names its change orders, and so does `cub changeorder list
---space <base space>`.
+Set them on the command line, without the order's Space, for example
+`FIX_ORDER=web-reload-on-token-rotation bash ...`. Each agent's report names
+its change orders, and so does `cub changeorder list --space <base space>`.
 
 Each run:
 - **Identity:** acts as that agent's ConfigHub identity.
@@ -164,6 +213,25 @@ Each run:
 The agents' standing instructions are `agents/devil.md`, `agents/angel.md` and
 `agents/milton.md`. Each run writes a note before every command, saying what
 it sees and why it acts, so the transcripts can be read as a record.
+
+**With your own AI.** The agents run on Claude Code. [agents/README.md](agents/README.md)
+is the contract any runtime has to meet, and the changes to swap Claude Code
+out.
+
+**If a step goes wrong.** Read the run's transcript (`.md`), fix the cause, and
+run the step again. Milton reviews every request in the run, the failed ones
+too. To give it only the latest, set it yourself:
+`REQUEST="$(bash $DEMO/agents/last-request.sh <run-name> angel)" bash $DEMO/approve.sh milton ...`.
+Sveltos's tokens to the workload clusters last 30 days. For a fleet older than
+that, `node $DEMO/setup/kind-fleet.mjs --refresh` renews them.
+
+**Check the kit itself.** `bash demo/verify.sh` checks offline that every
+script parses, every prompt is used by a step, and every `${VARIABLE}` is
+explained where it is used. After onboarding, `bash $DEMO/proof/parity-gate-check.sh`
+checks outage 3's prevention against your ConfigHub without any agent. It takes
+off again any gate it puts on, so outage 3 can still be staged: see
+[PROOF.md](PROOF.md). The plugin's own tests are `go test ./...` at the
+repository root.
 
 ## Tear it down
 

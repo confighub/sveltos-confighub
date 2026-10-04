@@ -3,13 +3,14 @@
 TSV of time, who, what, source. Gaps of more than ten minutes are marked, so a
 wait for a person shows as a wait.
 
-  timeline.py <timeline.tsv> --title "..." [--out file.html]
+  timeline.py <timeline.tsv> --title "..." [--date YYYY-MM-DD] [--out file.html]
 """
 import argparse, html
 
 p = argparse.ArgumentParser()
 p.add_argument("tsv")
 p.add_argument("--title", default="")
+p.add_argument("--date", default="2026-10-03", help="the day the times are on (UTC)")
 p.add_argument("--out")
 a = p.parse_args()
 
@@ -47,7 +48,7 @@ h1{{font-size:19px;margin:0 0 4px}}
 .row .w{{grid-column:2}} .row .x{{grid-column:3}}
 .gap{{margin-left:96px;border-left:2px dashed #d1d5db;padding:6px 0 6px 16px;color:#9ca3af;font-size:13px;font-style:italic}}
 </style></head><body><div class="panel"><h1>{html.escape(a.title)}</h1>
-<div class="sub">Times UTC, 2026-10-03. Recorded on kind clusters standing in for production. Every row has a source in the run's evidence.</div>
+<div class="sub">Times UTC, {html.escape(a.date)}. Recorded on kind clusters standing in for production. Every row has a source in the run's evidence.</div>
 {''.join(rows)}</div></body></html>"""
 if a.out:
     open(a.out, "w").write(doc)

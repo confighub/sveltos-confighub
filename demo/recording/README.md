@@ -1,9 +1,16 @@
-# The recording, 2026-10-03
+# The recordings
 
-Our own run of the three outages, kept as it happened, with a person approving
-every release. The agents' text is AI generated. The second run, made from the
-README with Milton approving, is
-[verification-2026-10-03.md](verification-2026-10-03.md).
+What our runs left behind, as evidence. The [diaries](../diary/README.md) tell
+the same runs as a story.
+
+| What | When | What it holds |
+| --- | --- | --- |
+| `runs/` | 3 October | The first run, with a person approving every release: each agent's transcript and ConfigHub's record of each outage |
+| [verification-2026-10-03.md](verification-2026-10-03.md) | 3 October, evening | The verification run, made from the README with Milton approving: what it found, and ConfigHub's record of it |
+| [check-2026-10-04.md](check-2026-10-04.md) | 4 October | The setup and the parity gate rechecked on the server ConfigHub moved to that day |
+
+The rest of this page is about `runs/`, the first run. The agents' text is AI
+generated.
 
 | Folder | Outage |
 | --- | --- |
@@ -13,9 +20,13 @@ README with Milton approving, is
 
 In each:
 - **`<agent>-<UTC time>.jsonl`** is the agent's full event stream, and the
-  `.md` beside it is a readable transcript.
+  `.md` beside it is a readable transcript. The transcript keeps the first 40
+  lines of each command's output; the `.jsonl` keeps all of it. Lines such as
+  "Contains simple_expansion" or "This command requires approval" are Claude
+  Code's command filter refusing a command, not ConfigHub.
 - **`runs.log`** holds the prompt each run was given.
-- **`evidence*.txt`** is ConfigHub's own record of the outage: approvals with
+- **`evidence*.txt`** is ConfigHub's own record of the outage, printed by an
+  earlier form of `proof/evidence.sh` and headed by hand: approvals with
   who recorded them and their notes, releases with who published them, and
   change orders with how each ended.
 - **`timeline.tsv`** is the outage's timeline, which `agents/timeline.py`
@@ -34,6 +45,7 @@ How this run differed from the demo as it now stands:
   on the management cluster (see `runs/02-blast-radius/review.md`). Since
   v0.12.1 they refuse.
 - **Isolation:** the first runs started inside the repository. Paths have been
-  replaced with `$AI_CHAOS_DIR`, `$DEMO` and `$AGENT_HOME`. Each run's opening
+  replaced with `$AI_CHAOS_DIR`, `$DEMO` and `$AGENT_HOME`, the agent's own
+  empty working directory. Each run's opening
   event is cut to the model and the Claude Code version. One run's read of a
   private file is removed.

@@ -5,7 +5,7 @@
 #
 #   bash $DEMO/agents/last-request.sh <run-name> [agent] [--all]       (agent defaults to angel)
 set -euo pipefail
-[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
+[ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 run=${1:?usage: last-request.sh <run-name> [agent] [--all]}; shift
 agent=angel all=
 for a in "$@"; do case $a in --all) all=--all ;; *) agent=$a ;; esac; done

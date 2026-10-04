@@ -1,6 +1,14 @@
 # Outage 2: the review before approval (2026-10-03)
 
-Done by the session that relays approval requests, not by Angel. Read-only on the fleet.
+From the first run. The operator, the Claude Code session that relayed approval
+requests, reviewed Angel's proposal before the approver saw it. Read-only on the
+fleet. [The first run's diary](../../../diary/first-run.md#outage-2-half-the-fleet-at-once)
+tells the same story.
+
+The orders: **A** is the fix (the record takes the stray profile over), **B**
+the policy (profiles only from the record), **C** the clean-up. B2 and C2 are
+B and C proposed again after this review. `guardrails@4` means revision 4 of
+the unit `guardrails`.
 
 1. Angel's first proposal exempted `system:serviceaccount:projectsveltos:register-mgmt-cluster` as
    the identity Sveltos writes the record as. Angel marked it "not tested anywhere"; the preview
@@ -40,6 +48,6 @@ Done by the session that relays approval requests, not by Angel. Read-only on th
      (16:16:13 and 16:16:16; Healthy 16:16:32 and 16:16:51).
 9. Angel stopped before B2, as its stop condition said, and reported the binding it did not know
    it had applied.
-10. The defect is in the plugin: `impact`, and `check` with the sandbox, accept the current
+10. Fixed in `cub sveltos` v0.12.1. The defect was in the plugin: `impact`, and `check` with the sandbox, accept the current
     context as a sandbox. They should refuse to run without one named, and refuse a cluster
     that runs Sveltos or anything else.

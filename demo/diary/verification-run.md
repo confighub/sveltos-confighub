@@ -38,7 +38,8 @@ transcripts.
 
 ## Setup: seven minutes
 
-**19:16 to 19:22.** The README's setup commands ran as written:
+**19:16 to 19:23.** The README's setup commands ran as written. Today
+`bash demo/standup.sh` runs the same four:
 
 ```bash
 source demo/env.sh
@@ -436,7 +437,7 @@ same content.
 
 ## To do after the verification run
 
-As of 4 October. This adds the ConfigHub team's answers in #product, and
+As of 4 October. This adds the ConfigHub team's answers, and
 ConfigHub v0.8.2 and v0.8.3, both released on 4 October.
 
 | To do | Why | Where it stands |
@@ -447,8 +448,8 @@ ConfigHub v0.8.2 and v0.8.3, both released on 4 October.
 | Report that an abort reason may not hold an apostrophe | HTTP 400 twice in one run, on ordinary English | Open, not yet reported |
 | Answer the ConfigHub team's questions | They asked what was diffed in the "no changes" finding, and more detail was promised | Open. What was diffed: `cub unit diff` on each prod unit showed the edit, while `cub changeorder get` showed none |
 | Have Milton's refusals leave a record in ConfigHub | A refusal now lives only in a transcript, and in the abort reason Devil wrote | Open: record a rejection, the way `cub sveltos check` does |
-| Run outage 3 through to the parity gate on v0.13.0 | Milton's refusal meant the released parity check never ran in this run | Open: approve step 2 by hand to stage it |
-| Recheck the demo on ConfigHub v0.8.3 and the next `cub` | Workers now default to no org role. The `cub worker` commands are going away in favour of service accounts, and `setup/identities.sh` depends on them | Open. The demo is pinned to v0.8.1 until then |
+| Run outage 3 through to the parity gate on v0.13.0 | Milton's refusal meant the released parity check never ran in this run | Done on 4 October without agents ([the check](../recording/check-2026-10-04.md)): the released check passed an aligned order and failed a prod-only cut, naming the field, and the gate refused its release. Outage 3's agents past step 2 last ran in the first run |
+| Recheck the demo on ConfigHub v0.8.3 and the next `cub` | Workers now default to no org role. The `cub worker` commands are going away in favour of service accounts, and `setup/identities.sh` depends on them | Server v0.8.3 rechecked on 4 October with `cub` v0.8.1: stand-up, onboarding with Milton, the gates and the parity gate all worked, and so did the `cub worker` commands ([the check](../recording/check-2026-10-04.md)). Still open for the next `cub` |
 | Try the new ConfigHub features in the demo | Promote can pass a clearance, so a guard could protect a prod-only field. An approval rule can count a group's members. Live status can be written on the release | Open |
 | Back the workflows with a unit that has revisions | So a gate edit has history, not only the copy each change order keeps | Open: `--with-backing-unit` in a newer `cub` |
 | Publish a gated management record through a change order | Carried over from the first run | Open |

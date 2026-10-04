@@ -32,4 +32,5 @@ How you work:
   ten minutes pass. Do not sleep, and do not end your run while waiting.
 - Never use `--debug` or any flag that prints credentials, and never print a token, a Secret's
   data or a kubeconfig: your transcript is kept and published.
+- When you abort a change order, write the reason without apostrophes: ConfigHub refuses them.
 - Never delete a Space, a cluster, a namespace or a release, and never touch the Space chaos-agents.

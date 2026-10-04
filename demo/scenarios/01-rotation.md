@@ -1,5 +1,7 @@
 # Outage 1: a rotation nobody picked up
 
+[The demo](../README.md) · [Onboarding](00-onboard.md) · Outage 1 · next: [Outage 2](02-blast-radius.md)
+
 The shop's token Secret is rotated outside ConfigHub, the way a secret store or
 a security team would do it. `api` reads the token from a mounted file and
 picks up the new value. `web` read it once, from its environment, at start, so
@@ -12,11 +14,14 @@ it keeps the old one and its readiness check fails on every cluster.
 
 Each step is one command. `R` runs an agent; `A` approves, by you or Milton.
 Change order names are the ones the agents choose: each agent's report names
-them, and so does `cub changeorder list --space <base space>`.
+them, and so does `cub changeorder list --space <base space>`. Give them without
+their Space: in our runs, `FIX_ORDER=web-reload-on-token-rotation`.
 
 ```bash
 source demo/env.sh
 R="bash $DEMO/agents/run-agent.sh"; A="bash $DEMO/approve.sh"; P=$DEMO/prompts/01-rotation
+bash $DEMO/setup/reporter.sh log     # live status flowing: recent lines, every 15 s
+bash $DEMO/setup/sandbox.sh --reset  # an empty sandbox
 ```
 
 | Step | Command |
@@ -28,17 +33,24 @@ R="bash $DEMO/agents/run-agent.sh"; A="bash $DEMO/approve.sh"; P=$DEMO/prompts/0
 | Let Milton see the new Space chaos-policies | `bash $DEMO/setup/grant-agents.sh` |
 | 4. Approve the fix for staging | `$A me chaos-shop-base/<the fix> staging "<why>"` or `$A milton chaos-shop-base/<the fix> staging 01-rotation` |
 | 5. Angel releases it to staging | `FIX_ORDER=<the fix> $R angel 01-rotation $P/4-angel-release-staging.txt` |
-| 6. Approve the policy for staging | `$A me chaos-platform-base/<the policy> staging "<why>"` or `$A milton ...` |
-| 7. Angel releases the policy to staging, and promotes both to prod | `GUARD_ORDER=<the policy> $R angel 01-rotation $P/5-angel-release-guardrails-staging.txt` |
+| 6. Approve the policy for staging | `$A me chaos-platform-base/<the policy> staging "<why>"` or `$A milton chaos-platform-base/<the policy> staging 01-rotation` |
+| 7. Angel releases the policy to staging, and promotes both to prod | `POLICY_ORDER=<the policy> $R angel 01-rotation $P/5-angel-release-guardrails-staging.txt` |
 | 8. Devil tries again, on staging | `$R devil 01-rotation $P/6-devil-again.txt` |
-| 9. Approve both for prod | `$A me chaos-shop-base/<the fix> prod "<why>"` and `$A me chaos-platform-base/<the policy> prod "<why>"`, or Milton |
-| 10. Angel releases both to prod, fix first | `FIX_ORDER=<the fix> GUARD_ORDER=<the policy> $R angel 01-rotation $P/7-angel-release-prod.txt` |
+| 9. Approve both for prod | `$A me chaos-shop-base/<the fix> prod "<why>"` and `$A me chaos-platform-base/<the policy> prod "<why>"`, or `$A milton chaos-shop-base/<the fix> prod 01-rotation` and `$A milton chaos-platform-base/<the policy> prod 01-rotation` |
+| 10. Angel releases both to prod, fix first | `FIX_ORDER=<the fix> POLICY_ORDER=<the policy> $R angel 01-rotation $P/7-angel-release-prod.txt` |
 
 What you should see:
 - **After step 1:** each cluster's live status is Degraded, naming `shop/web`.
+- **After step 2:** the fix waits for approval at staging, promoted through
+  the class bases. Nothing is released yet.
 - **After step 3:** Angel's preview shows that the policy would refuse `web` as
   it runs today, on all four clusters, and nothing once the fix is in. So the
   fix must be released before the policy.
+- **After step 5:** staging's `web` is ready within about half a minute of the
+  release. ConfigHub may show Degraded for a minute or two longer, until
+  Sveltos rechecks after the rollout.
+- **After step 7:** the policy and its binding are on the staging cluster, and
+  both orders wait for approval at prod.
 - **After step 8:**
   - Reloader picks up the rotation and restarts `web`. The new pods wait up to
     about a minute for `api`'s mounted token to refresh, while the old pods
@@ -49,3 +61,5 @@ What you should see:
 - **After step 10:** all four clusters are Healthy.
 - **Proof:** `bash $DEMO/proof/evidence.sh` lists each approval, with who
   recorded it and the note, and each release with who published it.
+
+Next: [Outage 2, half the fleet at once](02-blast-radius.md). To check what ConfigHub recorded, see [PROOF.md](../PROOF.md).

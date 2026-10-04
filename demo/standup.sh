@@ -2,7 +2,8 @@
 # Stands the demo up, ready to onboard: checks what it needs, then builds the
 # kind fleet, the policy sandbox, the shop and Reloader (delivered by plain
 # Sveltos), and the agents' ConfigHub identities. Running it again is safe: it
-# keeps the clusters and identities it finds and brings the rest up to date.
+# keeps the clusters and identities it finds, brings the rest up to date, and
+# leaves the shop alone once the fleet is onboarded into ConfigHub.
 #
 #   bash demo/standup.sh            stand it up
 #   bash demo/standup.sh --check    only check what it needs
@@ -23,16 +24,18 @@ need() { # need <what> <command...>: run the check quietly, report a failure
 }
 echo "== what the demo needs"
 need "Docker, running"                       docker info
-need "kind"                                  kind version
+need "kind v0.31 or later (outage 2 needs NetworkPolicy)" \
+     sh -c 'v=$(kind version | awk "{print \$2}" | tr -d v); [ "$(printf "%s\n0.31.0\n" "$v" | sort -V | head -1)" = 0.31.0 ]'
 need "kubectl"                               kubectl version --client
 need "Node.js"                               node --version
 need "curl and openssl"                      sh -c 'command -v curl && command -v openssl'
 need "Python 3 with PyYAML"                  python3 -c "import yaml"
 need "cub"                                   cub version
 need "cub signed in"                         cub auth status
-need "the cub sveltos plugin"                cub sveltos --help
+need "the cub sveltos plugin, v0.13.0 or later" \
+     sh -c 'v=$(cub sveltos version | awk "{print \$3}" | tr -d v); [ "$(printf "%s\n0.13.0\n" "$v" | sort -V | head -1)" = 0.13.0 ]'
 need "the cub helm plugin"                   cub helm --help
-need "Claude Code (for the agents)"          claude --version
+need "Claude Code, signed in (for the agents)" sh -c 'claude auth status | grep -Eq "\"loggedIn\": *true"'
 if [ "$missing" = 1 ]; then
   echo "Install or sign in to what is missing; demo/README.md lists the versions we used." >&2
   exit 1
@@ -51,7 +54,11 @@ echo "== the policy sandbox"
 bash "$here/setup/sandbox.sh"
 
 echo "== the shop and Reloader, by plain Sveltos"
-bash "$here/setup/setup-shop.sh"
+if kubectl --kubeconfig "$AI_CHAOS_DIR/chaos-mgmt.kubeconfig" get clusterprofile chaos-management >/dev/null 2>&1; then
+  echo "  the fleet is onboarded: ConfigHub delivers the shop now, so it is left alone"
+else
+  bash "$here/setup/setup-shop.sh"
+fi
 
 echo "== the agents' ConfigHub identities"
 bash "$here/setup/identities.sh"
