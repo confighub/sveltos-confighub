@@ -17,14 +17,18 @@ for configuration and facts.   So the demo is a simple set of compliance
 apps.  The config data is combined with a policy engine (you choose which 
 one) for this.
 
-**The policy engine in this demo** is Kubernetes' own admission control:
-ValidatingAdmissionPolicy, with its rules written in CEL. No extra software
-runs on the clusters. Each policy is a unit in ConfigHub, approved and released
-like any other change, and Sveltos delivers it to the clusters. Before a policy
-ships, `cub sveltos impact` previews it against what each cluster runs, by
-server-side dry runs in a sandbox cluster. `cub sveltos` can also check every
-change against Kyverno policies: see
-[Check every change against your policies](../docs/user/policy-checks.md).
+**Which policy engine.** A policy does three jobs here, and the choice of
+engine matters differently to each:
+
+| Job | In this demo | With Kyverno or OPA Gatekeeper instead |
+| --- | --- | --- |
+| **Enforce** the rule on the clusters | Kubernetes' own admission control: ValidatingAdmissionPolicy, with rules written in CEL. Nothing extra runs on the clusters | Works the same way. A Kyverno policy or a Gatekeeper constraint is a unit like any other: ConfigHub holds it and releases it on approval, and Sveltos delivers it. Install the engine on the clusters first, as the demo installs Reloader |
+| **Check** a change in ConfigHub before it is released | Not used: the demo's gates are approvals, and outage 3's parity check | Kyverno: yes, through a worker running `vet-kyverno-server` (see [Check every change against your policies](../docs/user/policy-checks.md)). OPA: no ready-made check today. ConfigHub's own checks run CEL (`vet-cel`) or Starlark (`vet-starlark`) |
+| **Preview** a new policy's effect before it ships | `cub sveltos impact`: server-side dry runs in a sandbox cluster that runs nothing else | Not yet. The preview reads ValidatingAdmissionPolicy verdicts only, and Kyverno and Gatekeeper run as workloads, which the sandbox must not |
+
+So the demo does not bring an engine of its own: it uses the one built into
+Kubernetes. You can enforce with Kyverno or Gatekeeper instead. What you give
+up today is the preview, and with OPA, the check in ConfigHub.
 
 Summary: there are three outages on a Sveltos fleet, each caused on purpose, 
 and fixed through ConfigHub, and then prevented through ConfigHub.  This is 
