@@ -14,6 +14,11 @@ source demo/env.sh
 bash $DEMO/setup/onboard.sh
 ```
 
+Step 1 reports that facts could not be collected from the management cluster
+(`mgmt/mgmt: not collected`). That is expected on kind, where the cluster's
+in-cluster address isn't reachable from your machine, and nothing depends on
+it.
+
 It stops at staging. Give Devil, the reporter and Milton their permissions on
 the Spaces Angel just created; Milton cannot review what it cannot read:
 

@@ -1,7 +1,9 @@
 # The recording, 2026-10-03
 
-Our own run of the three outages, kept as it happened. The agents' text is AI
-generated.
+Our own run of the three outages, kept as it happened, with a person approving
+every release. The agents' text is AI generated. The second run, made from the
+README with Milton approving, is
+[verification-2026-10-03.md](verification-2026-10-03.md).
 
 | Folder | Outage |
 | --- | --- |

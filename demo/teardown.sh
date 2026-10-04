@@ -11,6 +11,7 @@
 #   source demo/env.sh && bash $DEMO/teardown.sh
 #   source demo/env.sh && bash $DEMO/teardown.sh --confighub
 set -euo pipefail
+[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")" && pwd)/env.sh"
 here=$(cd "$(dirname "$0")" && pwd)
 : "${AI_CHAOS_DIR:?source demo/env.sh first}"
 
