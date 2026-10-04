@@ -78,8 +78,9 @@ source demo/env.sh                          # in every terminal you use
 ```
 
 `bash demo/standup.sh --check` only checks for the tools, the sign-in and the
-plugins. The full run takes about eight minutes. Each step skips what already
-exists, so running it again is safe. In order, it runs:
+plugins. The full run takes about eight minutes. Running it again is safe: it
+keeps the clusters and identities it finds and brings the rest up to date. In
+order, it runs:
 
 ```bash
 node $DEMO/setup/kind-fleet.mjs             # chaos-mgmt and four workload clusters, Sveltos v1.15.0

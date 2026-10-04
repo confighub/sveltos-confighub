@@ -32,7 +32,7 @@ it down are one command each:
 
 ```bash
 bash demo/standup.sh                  # checks what it needs, then builds the fleet, the sandbox, the shop and the agents' identities
-bash demo/teardown.sh --confighub     # removes all of it, the kind clusters and the ConfigHub Spaces, after asking
+bash demo/teardown.sh --confighub     # removes all of it: the kind clusters, then the ConfigHub Spaces, once you confirm
 ```
 
 ## The diaries
