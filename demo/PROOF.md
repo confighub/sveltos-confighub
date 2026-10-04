@@ -67,6 +67,16 @@ recorded, and each outage's fix and prevention released.
 | Prod's release now needs the check | `evidence.sh`, Gates: `stage prod releases need approval, parity`; `parity = 1 ParityCheck from angel` |
 | The repeat is refused before release | Devil's transcript: "requires approval ... requires parity". `evidence.sh`: a ParityCheck Fail in each prod Space, naming `limits.memory "96Mi" here and "128Mi" in chaos-shop-staging` |
 
+**Without the agents.** `bash $DEMO/proof/parity-gate-check.sh`, after
+onboarding, checks this prevention in about two minutes and costs nothing:
+- the check passes where prod matches staging;
+- a prod-only cut is refused at release, for approval and parity;
+- the check fails it, naming the field.
+
+It adds the gate (step 10) if it isn't there yet, and leaves it on. It
+withdraws its own cut, and ends by saying whether each expectation held. Run it
+when no outage is in progress.
+
 ## Every outage
 
 | Claim | How to check |

@@ -30,7 +30,10 @@ ConfigHub's record of both runs.
 
 ## Versions
 
-Tested together on 2026-10-03:
+Tested together on 2026-10-03. On 2026-10-04 the server moved to v0.8.3; stand-up,
+onboarding, the gates and the parity gate were rechecked on it
+([the check](recording/check-2026-10-04.md)).
+
 
 | Product | Version |
 | --- | --- |
@@ -174,7 +177,9 @@ that, `node $DEMO/setup/kind-fleet.mjs --refresh` renews them.
 
 **Check the kit itself.** `bash demo/verify.sh` checks offline that every
 script parses, every prompt is used by a step, and every `${VARIABLE}` is
-explained where it is used. The plugin's own tests are `go test ./...` at the
+explained where it is used. After onboarding, `bash $DEMO/proof/parity-gate-check.sh`
+checks outage 3's prevention against your ConfigHub without any agent: see
+[PROOF.md](PROOF.md). The plugin's own tests are `go test ./...` at the
 repository root.
 
 ## Tear it down

@@ -9,7 +9,7 @@
 #
 # Name it every time: --sandbox-kubeconfig "$AI_CHAOS_DIR/sandbox.kubeconfig".
 set -euo pipefail
-[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
+[ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 if [ "${1:-}" = --reset ]; then
   # Back to empty: no admission policies, no test-* grants made for
   # impersonation, and no namespace but Kubernetes' own.

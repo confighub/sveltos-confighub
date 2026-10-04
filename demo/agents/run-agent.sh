@@ -11,7 +11,7 @@
 # The full event stream goes to $CHAOS_RUNS/<run-name>/<agent>-<UTC>.jsonl,
 # with a readable transcript beside it (.md).
 set -euo pipefail
-[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
+[ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 agent=$1 run=$2 prompt_file=$3
 here=$(cd "$(dirname "$0")" && pwd)
 : "${AI_CHAOS_DIR:?source demo/env.sh first}" "${CHAOS_RUNS:?source demo/env.sh first}" "${DEMO:?source demo/env.sh first}"

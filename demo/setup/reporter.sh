@@ -4,7 +4,7 @@
 #
 #   source demo/env.sh && bash $DEMO/setup/reporter.sh start|stop|log
 set -euo pipefail
-[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
+[ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 : "${AI_CHAOS_DIR:?source demo/env.sh first}"
 pid=$AI_CHAOS_DIR/reporter.pid log=$AI_CHAOS_DIR/status-watch.log
 # cub hands the command to the plugin binary, so the process reads

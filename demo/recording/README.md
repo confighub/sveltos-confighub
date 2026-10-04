@@ -4,6 +4,8 @@ Our own run of the three outages, kept as it happened, with a person approving
 every release. The agents' text is AI generated. The second run, made from the
 README with Milton approving, is
 [verification-2026-10-03.md](verification-2026-10-03.md).
+[check-2026-10-04.md](check-2026-10-04.md) rechecks the setup and the parity
+gate on the server ConfigHub moved to the next day.
 
 | Folder | Outage |
 | --- | --- |

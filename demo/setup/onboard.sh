@@ -10,7 +10,7 @@
 # Run it, approve what it says waits (scenarios/00-onboard.md), run it again,
 # until both stages are released; then --handover.
 set -euo pipefail
-[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
+[ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 : "${AI_CHAOS_DIR:?source demo/env.sh first}" "${YOU_ID:?run setup/identities.sh, then source demo/env.sh again}" "${MILTON_ID:?}"
 out=$AI_CHAOS_DIR/onboard
 mkdir -p "$out" "$AI_CHAOS_DIR/by-name"

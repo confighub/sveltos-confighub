@@ -8,7 +8,7 @@
 #
 #   source demo/env.sh && bash $DEMO/setup/setup-shop.sh
 set -euo pipefail
-[ -n "${AI_CHAOS_DIR:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
+[ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 here=$(cd "$(dirname "$0")" && pwd)
 dir=${AI_CHAOS_DIR:-$HOME/ai-chaos}
 mgmt="$dir/chaos-mgmt.kubeconfig"
