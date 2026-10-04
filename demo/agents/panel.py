@@ -20,7 +20,7 @@ p.add_argument("--out")
 a = p.parse_args()
 
 agent = a.run.rsplit("/", 1)[-1].split("-", 1)[0]
-colour = {"devil": "#ff6b6b", "angel": "#7cc4ff"}.get(agent, "#cccccc")
+colour = {"devil": "#ff6b6b", "angel": "#7cc4ff", "milton": "#e8c15a"}.get(agent, "#cccccc")
 steps, last_note = [], None
 for raw in open(a.run):
     try:

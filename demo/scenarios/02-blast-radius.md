@@ -82,5 +82,9 @@ What you should see:
   - the policy and its binding are on the management cluster;
   - the stray profile and its ConfigMap are gone, deleted by the record under
     the policy.
-- **After step 5:** both of Devil's writes are refused at admission, with
-  "profiles on the management cluster come only from the record".
+- **After step 5:** both of Devil's profile writes are refused at admission,
+  with the message of the policy Angel wrote. In our first run it read
+  "profiles on the management cluster come only from the record". In the
+  verification run it read "ClusterProfile shop-prod-eu must name its one
+  cluster". The policy covers profiles, not ConfigMaps, so Devil deletes the
+  ConfigMap it created.

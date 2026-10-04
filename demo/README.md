@@ -19,11 +19,14 @@ Neither Devil nor Angel can approve. Kind clusters stand in for production.
 | [3. Staging said yes, prod said no](scenarios/03-parity.md) | A prod-only memory limit, then a cache that passes staging, so prod is OOMKilled | Prod's release requires a parity check; differences from staging must be declared |
 
 [PROOF.md](PROOF.md) lists each claim and where to check it, in the CLI and
-the web UI. [recording/](recording/README.md) has our two runs:
-- the first, with a person approving, and every transcript;
-- [the verification run](recording/verification-2026-10-03.md), made from this
-  README with Milton approving everything. There Milton refused the change
-  behind outage 3.
+the web UI. We ran it twice, and [diary/](diary/README.md) tells each run as it
+happened, with screenshots and the agents' own commands:
+- [the first run](diary/first-run.md), with a person approving;
+- [the verification run](diary/verification-run.md), made from this README with
+  Milton approving everything. There Milton refused the change behind outage 3.
+
+[recording/](recording/README.md) has the first run's transcripts, and
+ConfigHub's record of both runs.
 
 ## Versions
 
@@ -57,7 +60,7 @@ ConfigHub plans to replace that with service accounts, so later versions of
   `cub` context. If it points at another organization, run
   `export CUB_CONTEXT=<your context>` in each terminal, setup and teardown
   included.
-- **Claude Code**, signed in. The agents' runs cost about $30 to $50 in all,
+- **Claude Code**, signed in. The agents' runs cost about $20 to $30 in all,
   and the whole demo takes two to three hours.
 - **The plugins:**
 
@@ -180,6 +183,6 @@ record. Deleting the Spaces deletes it.
 - **Keep the sandbox empty.** Apply only admission policies there; dry-run
   everything else. `setup/sandbox.sh --reset` empties it.
 - **Never edit a script while a run is using it.** Bash reads a script as it
-  goes. One edit mid-run truncated an agent's transcript.
+  goes. One edit mid-run lost an agent's transcript.
 - **Design a fault to fail after the rollout.** The health check reports a
   rollout that never finishes as Progressing, not Degraded.
