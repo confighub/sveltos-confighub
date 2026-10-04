@@ -48,7 +48,7 @@ with `cub attestation list --space <space>`, or `evidence.sh`.
 | The fix, the policy and the clean-up each went through the record's workflow | Rollouts: `chaos-management` orders, each Complete. Any order sent back shows Aborted with its reason |
 | The review checked who Sveltos writes as | `bash $DEMO/proof/token-subject.sh kind-chaos-mgmt mgmt mgmt-sveltos-kubeconfig re-kubeconfig` |
 | The policy is on the management cluster, delivered by the record | `kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings --context kind-chaos-mgmt -o wide`. The binding's field managers include `application/apply-patch` (Sveltos) |
-| The repeat is refused | Devil's transcript: both writes Forbidden, "profiles on the management cluster come only from the record" |
+| The repeat is refused | Devil's transcript: both profile writes Forbidden by the policy Angel wrote, with its message |
 
 ## Outage 3: staging said yes, prod said no
 

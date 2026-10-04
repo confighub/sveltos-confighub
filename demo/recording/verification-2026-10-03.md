@@ -35,7 +35,8 @@ to its head revision. Angel published the other order, which carried both
 units.
 
 One operator error: a script was edited while a run was using it, which
-truncated one transcript. A read-only recovery run rewrote that request.
+lost one transcript: its record is empty. A read-only recovery run rewrote that
+request.
 
 ## ConfigHub's record
 

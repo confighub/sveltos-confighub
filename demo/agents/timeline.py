@@ -13,8 +13,8 @@ p.add_argument("--title", default="")
 p.add_argument("--out")
 a = p.parse_args()
 
-colour = {"devil": "#e5484d", "angel": "#3e8ed0", "approver": "#c99a06", "sveltos": "#2f9e44", "fleet": "#6b7280", "confighub": "#7c5cc4", "review": "#0f766e"}
-label = {"devil": "Devil", "angel": "Angel", "approver": "Approver", "sveltos": "Sveltos", "fleet": "Fleet", "confighub": "ConfigHub", "review": "Review"}
+colour = {"devil": "#e5484d", "angel": "#3e8ed0", "approver": "#c99a06", "sveltos": "#2f9e44", "fleet": "#6b7280", "confighub": "#7c5cc4", "review": "#0f766e", "milton": "#b7791f", "operator": "#94a3b8"}
+label = {"devil": "Devil", "angel": "Angel", "approver": "Approver", "sveltos": "Sveltos", "fleet": "Fleet", "confighub": "ConfigHub", "review": "Review", "milton": "Milton", "operator": "Operator"}
 
 def minutes(t):
     h, m, *s = (int(x) for x in t.split(":"))
