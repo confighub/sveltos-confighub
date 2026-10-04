@@ -5,7 +5,8 @@ Sveltos fleet. **Devil** caused each outage. **Angel** found the cause, fixed it
 through ConfigHub and proposed what stops it happening again. **A person, the
 approver**, approved every release. **The operator**, a Claude Code session,
 started each agent run, relayed approvals and reviewed before the approver saw
-anything.
+anything. [The demo's README](../README.md) describes the demo, and
+[the diaries' index](README.md) sums it up.
 
 Kind clusters stand in for production. All times are UTC. The agents' words
 and commands are quoted from their transcripts, which are in
