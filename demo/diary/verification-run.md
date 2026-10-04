@@ -426,7 +426,8 @@ about $22.
 
 **The clean-up.** `teardown.sh` deleted the kind clusters. It missed the
 reporter, which was stopped by hand; `setup/reporter.sh` now finds it. The
-run's ConfigHub Spaces are deleted separately, with `teardown.sh --confighub`.
+run's ConfigHub Spaces were deleted the next morning, after the screenshots,
+with `teardown.sh --confighub`.
 With the clusters gone, live status is no longer reported. The prod units are
 still flagged by Devil's withdrawn cut: its restores made new revisions with the
 same content.
@@ -441,7 +442,7 @@ ConfigHub v0.8.2 and v0.8.3, both released on 4 October.
 | To do | Why | Where it stands |
 | --- | --- | --- |
 | Fold the run's lessons into `demo/` | Grants before approvals, an empty sandbox, every request in Milton's review, scripts that load `env.sh` | Done: PR #108 |
-| Delete this run's 18 ConfigHub Spaces | The record is kept in [verification-2026-10-03.md](../recording/verification-2026-10-03.md) | Open, for the person who ran it: `bash demo/teardown.sh --confighub` |
+| Delete this run's 18 ConfigHub Spaces | The record is kept in [verification-2026-10-03.md](../recording/verification-2026-10-03.md) | Done on 4 October, after the screenshots, with `bash demo/teardown.sh --confighub` |
 | Report the HTTP 500 on publish | A unit created after an order's end tag breaks the publish, although the help promises a fallback to the head revision | Open, not yet reported |
 | Report that an abort reason may not hold an apostrophe | HTTP 400 twice in one run, on ordinary English | Open, not yet reported |
 | Answer the ConfigHub team's questions | They asked what was diffed in the "no changes" finding, and more detail was promised | Open. What was diffed: `cub unit diff` on each prod unit showed the edit, while `cub changeorder get` showed none |
