@@ -21,18 +21,20 @@ Approvals and checks (attestations) are not shown in the web UI yet; read them
 with `cub attestation list --space <space>`, or `evidence.sh`.
 
 **What to compare against.** [recording/verification-2026-10-03.md](recording/verification-2026-10-03.md)
-is `evidence.sh`'s output from our verification run, made from this README
-with Milton approving. Yours will differ in names, IDs, times and how many
+is `evidence.sh`'s output from our verification run, made from the demo's
+README with Milton approving. Yours will differ in names, IDs, times and how many
 change orders the agents open. Expect the same shape: every approval by you or
 Milton and none by Devil or Angel, every release by an agent with its approval
-recorded, and each outage's fix and prevention released.
+recorded, and each outage's fix and prevention released. The one release
+without an approval is the record's first, which onboarding's handover
+publishes before the gates go on.
 
 ## Setup
 
 | Claim | How to check |
 | --- | --- |
 | Each agent has its own identity, and none can approve | Workers page. `cub space get chaos-shop-prod-eu -o yaml`: under Permissions, ApproveChildren names only `milton`. Approving also needs Use on the change order (UseChildren on its base Space) |
-| Only you or Milton may approve, never a change's author | `evidence.sh`, Gates: `approval = 1 Approval from <you>, milton; authors counted: False` |
+| Only you or Milton may approve, never a change's author | `evidence.sh`, Gates: `approval = 1 Approval from you, milton (Worker); authors counted: False` |
 | A component takes changes only through its workflow | `cub component get chaos-shop -o yaml`: `ChangeWorkflowRequired: true` |
 | The management record can't be published directly | `cub release publish chaos-management` is refused: "requires a ChangeWorkflow" |
 | Live status reaches ConfigHub | Components: each deployment Live and Synced. `cub sveltos status --context kind-chaos-mgmt` |
@@ -52,8 +54,8 @@ recorded, and each outage's fix and prevention released.
 | Claim | How to check |
 | --- | --- |
 | Two clusters of four went down together | Components: prod-us-1 and prod-us-2 Degraded, staging and prod-eu Live |
-| The fix, the policy and the clean-up each went through the record's workflow | Rollouts: `chaos-management` orders, each Complete. Any order sent back shows Aborted with its reason |
-| The review checked who Sveltos writes as | `bash $DEMO/proof/token-subject.sh kind-chaos-mgmt mgmt mgmt-sveltos-kubeconfig re-kubeconfig` |
+| The fix, the policy and the clean-up each went through the record's workflow | Rollouts: `chaos-management` orders, each Complete, or Aborted with its reason: an order sent back, or one whose content shipped in another |
+| The review checked who Sveltos writes as, if the policy exempts an identity | `bash $DEMO/proof/token-subject.sh kind-chaos-mgmt mgmt mgmt-sveltos-kubeconfig re-kubeconfig`. A policy that judges a profile by its shape exempts nobody, as in our verification run |
 | The policy is on the management cluster, delivered by the record | `kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings --context kind-chaos-mgmt -o wide`. The binding's field managers include `application/apply-patch` (Sveltos) |
 | The repeat is refused | Devil's transcript: both profile writes Forbidden by the policy Angel wrote, with its message |
 
@@ -61,10 +63,10 @@ recorded, and each outage's fix and prevention released.
 
 | Claim | How to check |
 | --- | --- |
-| A change order can carry an edit its own summary doesn't show | `cub changeorder get chaos-shop-base <the cut>` against `cub unit diff --space chaos-shop-prod-eu shop` before its release |
+| A change order can carry an edit its own summary doesn't show | `cub changeorder get --space chaos-shop-base <the cut>` against `cub unit diff --space chaos-shop-prod-eu shop` before its release |
 | Staging ran the cache; prod was OOMKilled | Devil's staging transcript (about 46 MiB under 128Mi). `kubectl get pods -n shop --context kind-chaos-prod-eu`: restarts, last state OOMKilled |
 | The fix makes prod match staging | `evidence.sh`: a ParityCheck Pass by `angel` in each prod Space, "parity with chaos-shop-staging/shop@N passed" |
-| Prod's release now needs the check | `evidence.sh`, Gates: `stage prod releases need approval, parity`; `parity = 1 ParityCheck from angel` |
+| Prod's release now needs the check | `evidence.sh`, Gates: `stage prod releases need approval, parity` and `parity = 1 ParityCheck from angel (Worker); authors counted: True` |
 | The repeat is refused before release | Devil's transcript: "requires approval ... requires parity". `evidence.sh`: a ParityCheck Fail in each prod Space, naming `limits.memory "96Mi" here and "128Mi" in chaos-shop-staging` |
 
 **Without the agents.** `bash $DEMO/proof/parity-gate-check.sh`, after
@@ -73,9 +75,10 @@ onboarding, checks this prevention in about two minutes and costs nothing:
 - a prod-only cut is refused at release, for approval and parity;
 - the check fails it, naming the field.
 
-It adds the gate (step 10) if it isn't there yet, and leaves it on. It
-withdraws its own cut, and ends by saying whether each expectation held. Run it
-when no outage is in progress.
+It adds the gate (outage 3's step 10) if it isn't there yet, and takes it off
+again at the end, so outage 3 can still be staged. It withdraws its own cut,
+and ends by saying whether each expectation held. Run it when no outage is in
+progress.
 
 ## Every outage
 

@@ -5,19 +5,21 @@
 # as Devil and Angel through their cub contexts:
 #   1. as Angel: the check passes the onboarding order, where prod matches staging;
 #   2. as you:   the parity gate on chaos-shop-base/rollout (outage 3's step 10),
-#                skipped when it is already there, and left on afterwards;
+#                skipped when it is already there;
 #   3. as Devil: a prod-only cut (api memory 128Mi to 96Mi, undeclared) in a
 #                change order promoted to prod;
 #   4. as Devil: its release to prod-eu, which must be refused for approval and parity;
 #   5. as Angel: the check, which must fail and name the field;
-#   6. as Devil: the cut withdrawn, the units back where they were.
+#   6. as Devil: the cut withdrawn, the units back where they were; and, as you,
+#                the gate taken off again if this check put it on, so outage 3
+#                can still be staged.
 # It ends by saying whether each expectation held, and exits non-zero if one did not.
 #
 #   source demo/env.sh && bash $DEMO/proof/parity-gate-check.sh
 set -uo pipefail
 [ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 order=parity-gate-check-$(date -u +%H%M%S)
-failed=0
+failed=0 added=0
 expect() { # expect <what> <text> <pattern>: report whether the text shows it
   if printf '%s' "$2" | grep -Eq "$3"; then echo "  ok      $1"; else echo "  NOT MET $1"; failed=1; fi
 }
@@ -38,7 +40,7 @@ else
     --attestation-prerequisite approval --attestation-prerequisite parity \
     --attestation-prerequisite-type parity=ParityCheck --attestation-prerequisite-count parity=1 \
     --attestation-prerequisite-allow-authors parity=true --attestation-prerequisite-from-user-ids "parity=$angel_id" \
-    --stage-release-prerequisites 'prod=approval;parity' >/dev/null && echo "  added: prod needs an approval and Angel's ParityCheck"
+    --stage-release-prerequisites 'prod=approval;parity' >/dev/null && added=1 && echo "  added: prod needs an approval and Angel's ParityCheck"
 fi
 
 echo "== 3. a prod-only cut, as Devil"
@@ -70,6 +72,11 @@ done
 for s in chaos-shop-class-prod chaos-shop-prod-eu chaos-shop-prod-us-1 chaos-shop-prod-us-2; do
   expect "$s is back at 128Mi" "$(cub unit data --space "$s" shop)" "limits: \{memory: 128Mi\}"
 done
+
+if [ "$added" = 1 ]; then
+  cub changeworkflow update rollout --space chaos-shop-base --attestation-prerequisite approval \
+    --stage-release-prerequisites 'prod=approval' >/dev/null && echo "  the gate is off again: prod needs an approval only"
+fi
 
 echo
 if [ "$failed" = 0 ]; then echo "The parity gate works."; else echo "An expectation was not met: read the output above."; exit 1; fi

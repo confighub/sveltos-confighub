@@ -38,7 +38,8 @@ transcripts.
 
 ## Setup: seven minutes
 
-**19:16 to 19:22.** The README's setup commands ran as written:
+**19:16 to 19:23.** The README's setup commands ran as written. Today
+`bash demo/standup.sh` runs the same four:
 
 ```bash
 source demo/env.sh
@@ -436,7 +437,7 @@ same content.
 
 ## To do after the verification run
 
-As of 4 October. This adds the ConfigHub team's answers in #product, and
+As of 4 October. This adds the ConfigHub team's answers, and
 ConfigHub v0.8.2 and v0.8.3, both released on 4 October.
 
 | To do | Why | Where it stands |

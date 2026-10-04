@@ -12,7 +12,7 @@ server v0.8.1, Sveltos v1.15.0, kind v0.31.0, Claude Code 2.1.285.
 | Onboarding | Milton reviewed and approved staging and prod for both components; handover with nothing reinstalled; all nine Spaces Synced and Healthy |
 | Outage 1 | Rotation at 20:18:57Z, Degraded on 4 of 4 by 20:21:15Z. Angel's fix (reload annotation and a one-time restart) and policy, each approved by Milton; staging serving again 21 s after its release, prod 28 s after. Devil's repeat: the rotation handled by Reloader, `web-copy` refused at admission |
 | Outage 2 | Lockdown at 20:59:55Z, prod-us-1 and prod-us-2 Degraded by 21:00:55Z. Angel's policy judges a profile by its shape, not by who sends it, so no identity needed exempting. Milton approved after testing every live record profile and its own extra cases. Healthy 1.5 minutes after the release; clean-up deleted the stray profile under the policy; Devil's repeat refused twice |
-| Outage 3 | **Milton refused Devil's prod-only memory cut**: lowering only the limit saves no cost, it had never run in staging, and there was no evidence of a safe margin. So the outage did not happen. In the recording, a person approved the same change, and prod was OOMKilled |
+| Outage 3 | **Milton refused Devil's prod-only memory cut**: lowering only the limit saves no cost, it had never run in staging, and there was no evidence of a safe margin. So the outage did not happen. In the first run, a person approved the same change, and prod was OOMKilled |
 
 What the run found, and what the demo now does about it:
 - `run-agent.sh` failed under macOS's bash 3.2 when no model was set.
@@ -29,11 +29,11 @@ What the run found, and what the demo now does about it:
 - The setup, agent, approval and teardown scripts load `env.sh` themselves, so
   each works without sourcing it first.
 
-Found in ConfigHub: publishing a change order whose end tag a unit created
-later does not carry failed with HTTP 500 ("no Revision found for Unit ... with
-the specified TagID"). `cub release publish --help` says such a unit falls back
-to its head revision. Angel published the other order, which carried both
-units.
+Found in ConfigHub: a unit created after a change order's end tag has no
+revision at that tag, and publishing the order then failed with HTTP 500 ("no
+Revision found for Unit ... with the specified TagID"). `cub release publish
+--help` says such a unit falls back to its head revision. Angel published the
+other order instead, which carried both units.
 
 One operator error: a script was edited while a run was using it, which
 lost one transcript: its record is empty. A read-only recovery run rewrote that
@@ -119,6 +119,7 @@ shortened.
   2026-10-03T20:14:48  chaos-shop-prod-us-1  release 1 by angel (Worker) for chaos-shop-base/onboard-d244df9f
   2026-10-03T20:14:49  chaos-shop-prod-us-2  release 1 by angel (Worker) for chaos-shop-base/onboard-d244df9f
   2026-10-03T20:16:48  chaos-management  release 1 by angel (Worker) for no change order
+      (onboarding's handover: the record's first release, published before the gates go on)
   2026-10-03T20:38:06  chaos-shop-staging  release 2 by angel (Worker) for chaos-shop-base/web-reload-on-token-rotation
   2026-10-03T20:43:34  chaos-platform-staging  release 2 by angel (Worker) for chaos-platform-base/guardrails-secret-env-needs-reloader
   2026-10-03T20:56:38  chaos-shop-prod-eu  release 2 by angel (Worker) for chaos-shop-base/web-reload-on-token-rotation

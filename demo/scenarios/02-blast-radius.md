@@ -1,5 +1,7 @@
 # Outage 2: half the fleet at once
 
+[The demo](../README.md) · [Outage 1](01-rotation.md) · Outage 2 · next: [Outage 3](03-parity.md)
+
 Someone applies a ClusterProfile by hand on the management cluster, outside
 ConfigHub. It selects `region=us`, which is two of the four clusters, and
 blocks all traffic into the shop there. kind's default network enforces
@@ -35,9 +37,27 @@ chaos-management`. In our verification run they were `withdraw-shop-lockdown`,
 | 4b. Only if Angel opened the clean-up after the fix: approve it as in step 3, then Angel publishes it | `CLEANUP_ORDER=<order> $R angel 02-blast-radius $P/3b-angel-release-cleanup.txt` |
 | 5. Devil tries again | `$R devil 02-blast-radius $P/4-devil-again.txt` |
 
-**Review before approving.** The policy decides on who sends the request.
-Angel's preview can only answer "unknown" for each known case, because a
-configuration does not say who will send it. Check two things yourself:
+**Review before approving.** Angel writes the policy, and it takes one of two
+forms. Check it the way its form needs.
+
+**If it judges a profile by its shape**, as in our verification run (one
+`clusterRef`, a name of the form `<component>-<cluster>`, only the release
+delivered), it exempts nobody. The preview gives a verdict for every known case.
+Check in the sandbox that it admits every profile the record delivers today,
+and refuses the hand-applied one:
+
+```bash
+S="kubectl --kubeconfig $AI_CHAOS_DIR/sandbox.kubeconfig"
+cub unit data --space chaos-management <the policy's unit> | $S apply -f -
+cub unit data --space chaos-management delivery-shop | $S apply --dry-run=server -f -       # admitted
+cub unit data --space chaos-management delivery-platform | $S apply --dry-run=server -f -   # admitted
+$S apply --dry-run=server -f $DEMO/proof/shop-lockdown.yaml                                 # refused
+```
+
+**If it judges by who sends the request**, as in our first run (only Sveltos,
+writing for the record, may write profiles), the preview can only answer
+"unknown", because a configuration does not say who will send it. Check two
+things:
 
 1. **Who Sveltos writes to the management cluster as.** This prints only the
    subject of the token Sveltos holds, never the token:
@@ -48,12 +68,13 @@ configuration does not say who will send it. Check two things yourself:
 
    With Sveltos v1.15.0 it prints `system:serviceaccount:projectsveltos:projectsveltos`.
    The policy must exempt that identity, not `register-mgmt-cluster`, which is the
-   job that registered the cluster. Our recording's Angel exempted the wrong
+   job that registered the cluster. The first run's Angel exempted the wrong
    one, and the review caught it.
 2. **The policy's logic, in the sandbox, by impersonation.**
    - Apply the policy and bind it.
-   - Give the identities cluster-admin in the sandbox only.
-   - Try the hand-applied profile as yourself (refused), and as Sveltos's identity (allowed).
+   - Give Sveltos's identity cluster-admin, in the sandbox only.
+   - Try the hand-applied profile as yourself (refused), and as Sveltos's
+     identity (allowed). Then delete it as Sveltos (allowed).
 
    ```bash
    S="kubectl --kubeconfig $AI_CHAOS_DIR/sandbox.kubeconfig"
@@ -64,10 +85,8 @@ configuration does not say who will send it. Check two things yourself:
    $S delete clusterprofile shop-lockdown --as=system:serviceaccount:projectsveltos:projectsveltos     # allowed
    ```
 
-   Then empty the sandbox again: `bash $DEMO/setup/sandbox.sh --reset`.
-
-Milton is told to do the same: its instructions cover the token-subject helper
-and testing by impersonation in the sandbox. If a check fails, do not approve:
+Either way, empty the sandbox afterwards: `bash $DEMO/setup/sandbox.sh --reset`.
+Milton is told to check the same things. If a check fails, do not approve:
 send the order back with step 3b.
 
 **If the fix will not publish on its own.** A release pinned to a change
@@ -99,3 +118,5 @@ What you should see:
   verification run it read "ClusterProfile shop-prod-eu must name its one
   cluster". The policy covers profiles, not ConfigMaps, so Devil deletes the
   ConfigMap it created.
+
+Next: [Outage 3, staging said yes, prod said no](03-parity.md). To check what ConfigHub recorded, see [PROOF.md](../PROOF.md).

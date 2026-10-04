@@ -1,11 +1,15 @@
 # Outage 3: staging said yes, prod said no
 
+[The demo](../README.md) · [Outage 2](02-blast-radius.md) · Outage 3
+
 Prod departs from staging in a way nobody declared: `api`'s memory limit is
 cut in prod only. Later a change that passes staging is OOMKilled in prod.
 
 - **The fix:** prod realigned with staging.
 - **The prevention:** prod's release requires a parity check. Prod may differ
-  from staging only where a guard `departure=<why>` declares the difference,
+  from staging only where a guard `departure=<why>` declares the difference.
+  (A guard is set on the fields a change writes, with `--guard
+  departure=<why>` on that `cub function set` or `cub unit update`.)
   and the check names any other difference before release.
 
 Devil plays the people whose ordinary changes add up to the outage. Each change
@@ -44,6 +48,17 @@ without their Space. Each agent's report names its orders, and so does
 | 13. Angel runs the parity check on Devil's order | `DEVIL_ORDER=<Devil's order> $R angel 03-parity $P/8-angel-check.txt` |
 | 14. Devil withdraws | `DEVIL_ORDER=<Devil's order> $R devil 03-parity $P/9-devil-withdraw.txt` |
 
+**If Milton refuses the cut at step 2.** Our verification run's Milton did:
+lowering only the limit saves no cost, and staging never ran it. It is meant to
+catch that. To stage the outage anyway, approve step 2 by hand. To end the
+outage there instead, run step 2b with Milton's reasons as `REASON`, and stop.
+
+**Before you start, check the gate is off.** If an earlier outage 3 left it on,
+Devil's own releases at steps 3 and 7 are refused. `cub changeworkflow get
+rollout --space chaos-shop-base -o yaml` shows a `parity` prerequisite if it
+is on. To take it off, as yourself:
+`cub changeworkflow update rollout --space chaos-shop-base --attestation-prerequisite approval --stage-release-prerequisites 'prod=approval'`.
+
 **Step 10, the gate.** Workflow edits take effect at once and are not
 versioned, so you make this one, never an agent. Only Angel's ParityCheck
 counts, so nobody can record a pass by hand:
@@ -60,31 +75,28 @@ cub changeworkflow update rollout --space chaos-shop-base \
 Drop `--dry-run` once the output keeps the approval rule as it was and puts
 `parity` on prod alone.
 
-**If Milton refuses the cut at step 2.** Our verification run's Milton did:
-lowering only the limit saves no cost, and staging never ran it. It is meant to
-catch that. To stage the outage anyway, approve step 2 by hand. To end the
-outage there instead, run step 2b with Milton's reasons as `REASON`, and stop.
-
 What you should see:
-- **Step 1:** the change order's own summary may show "no changes". Devil
+- **After step 1:** the change order's own summary may show "no changes". Devil
   edited the class base before opening the order, so the edit rides into prod
   as a prior revision. The prod units' diff shows it.
-- **Step 3:** prod's `api` runs at 40Mi, healthy. The cache's order waits for
+- **After step 3:** prod's `api` runs at 40Mi, healthy. The cache's order waits for
   approval at staging.
-- **Step 5:** staging holds at about 46 MiB under 128Mi: staging said yes.
+- **After step 5:** staging holds at about 46 MiB under 128Mi: staging said yes.
   The cache's order waits for approval at prod.
-- **Step 7:** about a minute later prod's `api` passes 40Mi and is OOMKilled,
+- **After step 7:** about a minute later prod's `api` passes 40Mi and is OOMKilled,
   again every minute or so: prod said no.
-- **Step 8:** Angel's fix passes `cub sveltos check --parity-with staging`,
+- **After step 8:** Angel's fix passes `cub sveltos check --parity-with staging`,
   recorded as a ParityCheck in each prod Space.
-- **Step 11:** each prod cluster gets new `api` pods at 128Mi, 2 of 2, with no
+- **After step 11:** each prod cluster gets new `api` pods at 128Mi, 2 of 2, with no
   restarts for three minutes, and its live status turns Healthy before Angel
-  moves to the next. If the gate is already on (step 10), these releases pass
+  moves to the next. The gate from step 10 is on by now, and these releases pass
   it with Angel's ParityChecks from step 8.
-- **Step 12:** the publish is refused with "requires approval ... requires
+- **After step 12:** the publish is refused with "requires approval ... requires
   parity".
-- **Step 13:** the check fails on each prod Space, naming the field:
+- **After step 13:** the check fails on each prod Space, naming the field:
   `limits.memory is "96Mi" here and "128Mi" in chaos-shop-staging`.
-- **Step 14:** Devil's order is aborted with its reason, and the four units are
+- **After step 14:** Devil's order is aborted with its reason, and the four units are
   back at 128Mi. The prod units may still be flagged "Unreleased changes" and
   "Stale": ConfigHub counts revisions, not content.
+
+That was the last outage. To check what ConfigHub recorded, see [PROOF.md](../PROOF.md); to take everything down, [Tear it down](../README.md#tear-it-down).

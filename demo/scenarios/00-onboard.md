@@ -1,5 +1,7 @@
 # Onboarding: the fleet into ConfigHub
 
+[The demo](../README.md) · Onboarding · next: [Outage 1](01-rotation.md)
+
 `setup/onboard.sh` onboards the running fleet with `cub sveltos`, signed in as
 Angel. It is a script, not the AI agent. The only agent here is Milton, if it
 approves for you.
@@ -10,7 +12,8 @@ It creates:
   ConfigHub.
 - **Health:** continuous health checks on every cluster.
 
-Every release waits for an approval from you or Milton.
+Every release waits for an approval from you or Milton, except the record's
+first: the handover publishes it, before the gates go on.
 
 ```bash
 source demo/env.sh
@@ -19,7 +22,7 @@ bash $DEMO/setup/onboard.sh
 
 It runs `cub sveltos apply`, which writes `apply.sh`, then runs `apply.sh`, and
 stops at the first approval.
-Step 1 reports that facts could not be collected from the management cluster
+`apply.sh`'s first step reports that facts could not be collected from the management cluster
 (`mgmt/mgmt: not collected`). That is expected on kind, where the cluster's
 in-cluster address isn't reachable from your machine, and nothing depends on
 it.
@@ -94,5 +97,7 @@ bash $DEMO/setup/reporter.sh start   # live status into ConfigHub every 15 s
 
 Check: `cub sveltos status --context kind-chaos-mgmt` shows every Space
 Synced and Healthy. In the web UI, Components shows the base, two class
-bases and four deployments for `chaos-shop`, each Live and Synced (see
+bases and four deployments for `chaos-shop` (the UI's name for a variant), each Live and Synced (see
 [PROOF.md](../PROOF.md)).
+
+Next: [Outage 1, a rotation nobody picked up](01-rotation.md). Back to [the demo](../README.md).

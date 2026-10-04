@@ -28,6 +28,20 @@ happened, with screenshots and the agents' own commands:
 [recording/](recording/README.md) has the first run's transcripts, and
 ConfigHub's record of both runs.
 
+## The words used here
+
+| Word | What it means here |
+| --- | --- |
+| **Space** | A ConfigHub folder of configuration, one per base, class base or cluster. The demo's are named `chaos-*` |
+| **Base, class base, variant** | The shop's configuration in `chaos-shop-base`, cloned into a class base for staging and one for prod, then into one variant per cluster (`chaos-shop-staging`, `chaos-shop-prod-eu`, ...). The web UI shows each variant as a deployment |
+| **Change order** | One named change, followed through a workflow. Written `<base Space>/<name>`, for example `chaos-shop-base/web-reload-on-token-rotation` |
+| **Workflow, stage** | The path a change order takes: `bases`, then `staging`, then `prod`. Each stage may need approvals before its release |
+| **Release** | What ConfigHub publishes for a variant, and what Sveltos fetches and applies to that cluster |
+| **Attestation** | A recorded verdict on a change: an Approval by you or Milton, or a ParityCheck by Angel |
+| **The record** | The management cluster's Space, `chaos-management`. Its releases deliver every Sveltos delivery profile, so profiles come from ConfigHub, not by hand |
+| **Guard** | A note on a field of a unit. A guard `departure=<why>` declares that prod may differ from staging there |
+| **Live status** | What each cluster reports, written into ConfigHub every 15 seconds: Synced or not, Healthy or Degraded. The web UI shows Healthy as Live |
+
 ## Versions
 
 Tested together on 2026-10-03. On 2026-10-04 the server moved to v0.8.3; stand-up,
@@ -37,7 +51,7 @@ onboarding, the gates and the parity gate were rechecked on it
 
 | Product | Version |
 | --- | --- |
-| ConfigHub (hub.confighub.com) | server v0.8.1. The hosted server moves on: you get the version it runs |
+| ConfigHub (hub.confighub.com) | server v0.8.1, and rechecked on v0.8.3. The hosted server moves on: you get the version it runs |
 | `cub` | v0.8.1 |
 | `cub sveltos` (this repository) | v0.13.0 |
 | `cub helm` | v0.1.1 |
@@ -80,6 +94,12 @@ ConfigHub plans to replace that with service accounts, so later versions of
 
 ## Stand it up
 
+`demo/env.sh` sets three paths, which every step uses:
+- `$DEMO`, the demo directory;
+- `$AI_CHAOS_DIR` (default `~/ai-chaos`), for the kubeconfigs, the onboarding
+  output and the agents' runs;
+- `$CHAOS_RUNS` (default `$AI_CHAOS_DIR/runs`), where each agent run is kept.
+
 ```bash
 git clone https://github.com/confighub/sveltos-confighub && cd sveltos-confighub
 bash demo/standup.sh                        # checks what it needs, then builds everything
@@ -98,18 +118,16 @@ bash $DEMO/setup/setup-shop.sh              # the shop and Reloader, delivered b
 bash $DEMO/setup/identities.sh              # devil, angel, reporter, milton; writes your user ID and Milton's
 ```
 
-Then onboard the fleet into ConfigHub, with Angel doing the work and you or
-Milton approving: [scenarios/00-onboard.md](scenarios/00-onboard.md). Onboarding ends by
-granting the agents their permissions, gating the workflows, and starting live
-status.
-
-`$DEMO` is the demo directory. `$AI_CHAOS_DIR` (default `~/ai-chaos`) holds
-the kubeconfigs, the onboarding output and the agents' runs.
+Then onboard the fleet into ConfigHub, with a script signed in as Angel doing
+the work and you or Milton approving: [scenarios/00-onboard.md](scenarios/00-onboard.md).
+Onboarding ends by granting the agents their permissions, gating the
+workflows, and starting live status.
 
 ## Approvals: by hand or by Milton
 
 Every release waits for one approval, from you or Milton, and never from the
-change's author. Each approval step offers both:
+change's author. The one exception is onboarding's handover: it publishes the
+record's first release before the gates go on. Each approval step offers both:
 
 ```bash
 bash $DEMO/approve.sh me     chaos-shop-base/<order> staging "<why, in your words>"
@@ -125,7 +143,7 @@ unless you name another; outage 3 names `devil`. Milton reads:
 
 It then approves with a note saying what it checked, or says why not. To allow
 only one of you, set `APPROVERS=$YOU_ID` or `APPROVERS=$MILTON_ID` before
-running `setup/gates.sh` and `setup/onboard.sh`.
+running `setup/onboard.sh` and `setup/gates.sh`.
 
 Milton is meant to catch things, and it may. In our verification run it
 refused Devil's prod-only memory cut in outage 3: staging never ran it, and
@@ -178,7 +196,8 @@ that, `node $DEMO/setup/kind-fleet.mjs --refresh` renews them.
 **Check the kit itself.** `bash demo/verify.sh` checks offline that every
 script parses, every prompt is used by a step, and every `${VARIABLE}` is
 explained where it is used. After onboarding, `bash $DEMO/proof/parity-gate-check.sh`
-checks outage 3's prevention against your ConfigHub without any agent: see
+checks outage 3's prevention against your ConfigHub without any agent. It takes
+off again any gate it puts on, so outage 3 can still be staged: see
 [PROOF.md](PROOF.md). The plugin's own tests are `go test ./...` at the
 repository root.
 

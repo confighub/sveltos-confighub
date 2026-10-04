@@ -41,7 +41,8 @@ permission. `run-agent.sh` holds the exact lists.
 Claude Code matches these lists by command prefix. So the instructions ask each
 agent for one plain command at a time, verb first and `--context` last, with no
 loops or chained commands. Milton may pipe one command into another. Another runtime may not need that, but the
-instructions still ask for it.
+instructions still ask for it. The rule came after our first run, whose
+transcripts still show loops and chained commands.
 
 These limits are a second line, not the only one. ConfigHub refuses an
 approval from anyone the workflow does not name. `setup/gates.sh` and
@@ -58,7 +59,8 @@ turn limit well above that, or it will stop mid-release.
 
 ## What each run leaves
 
-- `$CHAOS_RUNS/<run-name>/<agent>-<UTC>.jsonl`: the full event stream;
+- `$CHAOS_RUNS/<run-name>/<agent>-<UTC>.jsonl`: the full event stream.
+  `$CHAOS_RUNS` is `$AI_CHAOS_DIR/runs` unless you set it;
 - a readable transcript beside it (`.md`), made by `render.py`;
 - a line in `$CHAOS_RUNS/<run-name>/runs.log` with the time, the agent and the
   prompt as sent.
