@@ -292,8 +292,6 @@ instead. Angel stopped, and offered a choice:
   both units, and both were already approved.
 - **Option 2:** move a tag on an order that was already approved.
 
-![The fix's order, aborted with the reason Angel gave: its content shipped in the policy's order](images/r2-gui-unpublished-fix.jpg)
-
 **21:21:35. The operator chooses option 1**, inside the approvals Milton had
 given, and logged it. One correction to the record: the operator's prompt to
 Angel called this "the approver's decision". It wasn't. Milton approved both
@@ -307,6 +305,8 @@ emptied the stray profile, and the lockdown was withdrawn:
 
 Angel aborted the fix's order with its reason. ConfigHub refused the first
 wording because it held an apostrophe (HTTP 400).
+
+![The fix's order, aborted with the reason Angel gave: its content shipped in the policy's order](images/r2-gui-unpublished-fix.jpg)
 
 **21:24 to 21:27. The clean-up.** Angel opened the clean-up as a third order
 once the fix was in, as the scenario allows. Milton approved it after checking
