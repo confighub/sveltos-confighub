@@ -23,6 +23,11 @@ rm -rf "$AI_CHAOS_DIR"/chaos-*.kubeconfig "$AI_CHAOS_DIR/sandbox.kubeconfig" "$A
 echo "kind: $(kind get clusters 2>/dev/null | grep -c '^chaos-' || true) chaos-* clusters left; your agent runs are still in $CHAOS_RUNS"
 
 [ "${1:-}" = "--confighub" ] || exit 0
+if ! cub auth status >/dev/null 2>&1; then
+  echo "cub is not signed in (or its sign-in expired), so nothing was deleted in ConfigHub." >&2
+  echo "Sign in with 'cub auth login', then run: bash demo/teardown.sh --confighub" >&2
+  exit 1
+fi
 list() { cub space list --where "Slug LIKE 'chaos-%'" -o 'jq=.[].Space.Slug' | tr -d '"'; }
 spaces=$(list)
 if [ -n "$spaces" ]; then
