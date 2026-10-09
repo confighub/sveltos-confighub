@@ -87,7 +87,7 @@ onboarding, the gates and the parity gate were rechecked on it
 | --- | --- |
 | ConfigHub (hub.confighub.com) | server v0.8.1, and rechecked on v0.8.3. The hosted server moves on: you get the version it runs |
 | `cub` | v0.8.1 |
-| `cub sveltos` (this repository) | v0.13.0 |
+| `cub sveltos` (this repository) | v0.14.0 or newer, which the live-status reporter needs since ConfigHub v0.8.2. The recorded runs used v0.13.0 |
 | `cub helm` | v0.1.1 |
 | Sveltos | v1.15.0 (installed by the fleet script) |
 | kind | v0.31.0, Kubernetes v1.35.0 nodes |
@@ -122,7 +122,7 @@ ConfigHub plans to replace that with service accounts, so later versions of
   curl -fsSL https://hub.confighub.com/cub/install.sh | VERSION=v0.8.1 bash
   export PATH=$HOME/.confighub/bin:$PATH
   cub auth login
-  cub plugin install confighub/sveltos-confighub@v0.13.0
+  cub plugin install confighub/sveltos-confighub@v0.14.0
   cub plugin install confighub/cub-helm@v0.1.1
   ```
 

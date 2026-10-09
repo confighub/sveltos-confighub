@@ -24,7 +24,7 @@ where ConfigHub v0.8.2 and newer read it.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## 0.14.0, not released yet
+## 0.14.0, 2026-10-09
 
 **Live status goes on the Release, where ConfigHub now reads it.** ConfigHub
 v0.8.2 moved live status from the Space annotation `confighub.com/live-status`
