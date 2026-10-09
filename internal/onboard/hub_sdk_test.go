@@ -19,13 +19,15 @@ const (
 	unitID          = "44444444-4444-4444-4444-444444444444"
 	revisionID      = "55555555-5555-5555-5555-555555555555"
 	emptyRevisionID = "66666666-6666-6666-6666-666666666666"
+	releaseID       = "77777777-7777-7777-7777-777777777777"
 	revisions       = "/api/space/" + spaceID + "/unit/" + unitID + "/revision"
+	spaceReleases   = "/api/space/" + spaceID + "/release"
 )
 
 // asked is one request ConfigHub received.
 type asked struct {
-	method, path, where, contentType, token, body string
-	dryRun                                        bool
+	method, path, where, selected, contentType, token, body string
+	dryRun                                                  bool
 }
 
 // hubServer stands in for ConfigHub's API, and records what it was asked.
@@ -34,7 +36,7 @@ func hubServer(t *testing.T) (*httptest.Server, *[]asked) {
 	var got []asked
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		got = append(got, asked{method: r.Method, path: r.URL.Path, where: r.URL.Query().Get("where"), contentType: r.Header.Get("Content-Type"),
+		got = append(got, asked{method: r.Method, path: r.URL.Path, where: r.URL.Query().Get("where"), selected: r.URL.Query().Get("select"), contentType: r.Header.Get("Content-Type"),
 			token: strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), body: string(body), dryRun: r.URL.Query().Get("dry_run") == "true"})
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -48,6 +50,12 @@ func hubServer(t *testing.T) (*httptest.Server, *[]asked) {
 			fmt.Fprintf(w, `{"Attestation":{"AttestationID":%q},"Subjects":[{"UnitSlug":"u","RevisionNum":3}]}`, id)
 		case r.Method == "PATCH" && r.URL.Path == "/api/space/"+spaceID:
 			fmt.Fprintf(w, `{"SpaceID":%q,"Slug":"s"}`, spaceID)
+		case r.Method == "GET" && r.URL.Path == spaceReleases:
+			fmt.Fprintf(w, `[{"Release":{"ReleaseID":"88888888-8888-8888-8888-888888888888","ReleaseNum":1,"Published":true,"ManifestDigest":"sha256:one","CreatedAt":"2026-09-28T09:00:00Z",`+
+				`"LiveStatus":{"Reporter":"cub-sveltos","DataSource":"kyverno-prod-eu","Sync":"Synced","Health":"Healthy","Operation":"Succeeded","ReporterSync":"Provisioned","Message":"release 1 applied","ObservedAt":"2026-09-28T09:05:00+02:00"}}},`+
+				`{"Release":{"ReleaseID":%q,"ReleaseNum":2,"Published":true,"ManifestDigest":"sha256:two","CreatedAt":"2026-09-28T10:00:00Z"}}]`, releaseID)
+		case r.Method == "PATCH" && r.URL.Path == spaceReleases+"/"+releaseID:
+			fmt.Fprintf(w, `{"ReleaseID":%q,"ReleaseNum":2}`, releaseID)
 		case r.Method == "GET" && r.URL.Path == "/api/release":
 			fmt.Fprint(w, `[{"Release":{"SpaceSlug":"sveltos-b","Published":true}},{"Release":{"SpaceSlug":"sveltos-a","Published":true}},{"Release":{"SpaceSlug":"sveltos-a","Published":true}}]`)
 		case r.Method == "GET" && r.URL.Path == "/api/attestation":
@@ -150,8 +158,8 @@ func TestSDKHubAttest(t *testing.T) {
 	}
 }
 
-// Live status is written as a merge patch, and the lists are asked for with
-// the same expressions cub was given.
+// A Space is patched with a merge patch, and the lists are asked for with the
+// same expressions cub was given.
 func TestSDKHubQueries(t *testing.T) {
 	srv, got := hubServer(t)
 	asPlugin(t, srv.URL, "passed", "")
@@ -188,6 +196,56 @@ func TestSDKHubQueries(t *testing.T) {
 	}
 	if q := last(got); q.token != "passed" {
 		t.Errorf("the plugin asks as the login cub passed it: %+v", q)
+	}
+}
+
+// Live status is read from each release and recorded on one, as a merge patch
+// that names every field.
+func TestSDKHubLiveStatus(t *testing.T) {
+	srv, got := hubServer(t)
+	asPlugin(t, srv.URL, "passed", "")
+	h := NewHub("test")
+
+	releases, err := h.Releases("s")
+	if err != nil || len(releases) != 2 {
+		t.Fatalf("the Space's releases: %+v %v", releases, err)
+	}
+	if q := last(got); q.path != spaceReleases || q.selected != "ReleaseID,ReleaseNum,SpaceID,OrganizationID,Published,ManifestDigest,CreatedAt,LiveStatus" {
+		t.Errorf("only the fields read are asked for, not each release's bundle: %+v", q)
+	}
+	want := LiveStatus{Reporter: "cub-sveltos", DataSource: "kyverno-prod-eu", Sync: "Synced", Health: "Healthy", Operation: "Succeeded",
+		ReporterSync: "Provisioned", Message: "release 1 applied", ObservedAt: "2026-09-28T07:05:00Z"}
+	if r := releases[0]; r.Num != 1 || !r.Published || r.Digest != "sha256:one" || r.CreatedAt.IsZero() || r.Live == nil || *r.Live != want {
+		t.Errorf("a release with the reading it holds, its time in UTC: %+v %+v", r, r.Live)
+	}
+	if releases[1].Live != nil {
+		t.Errorf("a release nothing has reported on holds no reading: %+v", releases[1].Live)
+	}
+
+	st := LiveStatus{Reporter: "cub-sveltos", DataSource: "kyverno-prod-eu", Sync: "OutOfSync", Health: "Progressing", Operation: "Running",
+		ReporterSync: "Provisioning", Message: "Sveltos: Provisioning", ObservedAt: "2026-09-28T10:01:00Z"}
+	if err := h.SetLiveStatus("s", 2, st); err != nil {
+		t.Fatal(err)
+	}
+	q := last(got)
+	if q.method != "PATCH" || q.path != spaceReleases+"/"+releaseID || q.contentType != "application/merge-patch+json" {
+		t.Errorf("the reading is a merge patch of that release: %+v", q)
+	}
+	var sent struct{ LiveStatus map[string]any }
+	if err := json.Unmarshal([]byte(q.body), &sent); err != nil {
+		t.Fatal(err)
+	}
+	wantSent := map[string]any{"Reporter": "cub-sveltos", "DataSource": "kyverno-prod-eu", "Sync": "OutOfSync", "Health": "Progressing", "Operation": "Running",
+		"ReporterSync": "Provisioning", "ReporterHealth": nil, "ReporterOperation": nil, "Message": "Sveltos: Provisioning", "ObservedAt": "2026-09-28T10:01:00Z"}
+	if !reflect.DeepEqual(sent.LiveStatus, wantSent) {
+		t.Errorf("every field is sent, an empty one as null, so nothing is left from the reading before: %s", q.body)
+	}
+	if err := h.SetLiveStatus("s", 3, st); err == nil || !strings.Contains(err.Error(), "release 3 not found") {
+		t.Errorf("a release the Space does not have is an error: %v", err)
+	}
+	st.ObservedAt = ""
+	if err := h.SetLiveStatus("s", 2, st); err == nil {
+		t.Errorf("a reading with no time is not sent")
 	}
 }
 

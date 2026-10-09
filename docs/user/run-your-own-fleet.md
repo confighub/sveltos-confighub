@@ -207,10 +207,13 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    whether whoever promoted the change may approve it: keep it `false` in
    production, with a second approver; chapter three sets it `true` because
    its runs are single-operator, and says so. Chapter three declares
-   `Released` and not `Healthy`: the `Healthy` gate reads a live-status
-   annotation nothing writes for a Sveltos-delivered Space yet
+   `Released` and not `Healthy`: when it was written, nothing reported live
+   status for a Sveltos-delivered Space
    ([#33](https://github.com/confighub/sveltos-confighub/issues/33),
-   confighubai/confighub#5049). You can then declare the workflow required
+   confighubai/confighub#5049). `cub sveltos status` reports it now, on each
+   variant's newest release; see
+   [live status](onboard-your-sveltos-fleet.md#live-status-in-confighub).
+   You can then declare the workflow required
    on the component,
    `cub component update --patch <component> --change-workflow-required --allowed-change-workflow <base-space>/<workflow>`;
    measured on 2026-09-26, ConfigHub records that but does not yet refuse a

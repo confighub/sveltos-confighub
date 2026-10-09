@@ -12,7 +12,8 @@ previewed against. Version 0.10 watches each cluster's health after every
 release too, can deliver the management cluster's record from ConfigHub, and
 stores each cluster's facts on its Target. Version 0.12 works with `cub`
 v0.7.0's Targets, and asks ConfigHub through its SDK. Version 0.13 checks that
-prod runs what staging ran.
+prod runs what staging ran. Version 0.14 records live status on the Release,
+where ConfigHub v0.8.2 and newer read it.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -22,6 +23,40 @@ prod runs what staging ran.
 
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
+
+## 0.14.0, not released yet
+
+**Live status goes on the Release, where ConfigHub now reads it.** ConfigHub
+v0.8.2 moved live status from the Space annotation `confighub.com/live-status`
+onto each Release. Its `Healthy` gate, its change orders and its UI read only
+the Release since then, so what `cub sveltos status` 0.13 writes reaches
+nothing: a stage that requires `Healthy` never opens, and says "has no live
+status for release N yet".
+
+`status` now records each reading on the variant's newest published release,
+the one Sveltos fetches and the gate reads. Measured on 2026-10-09 on two
+kind clusters against ConfigHub v0.8.10: with 0.13 reporting Synced and
+Healthy, promotion into prod was refused; once 0.14 had recorded the same
+reading on the release, it passed
+([the run](../examples/onboard/live-status-2026-10-09.log)).
+
+- A release just published holds no reading until Sveltos is seen to have
+  applied it, so the gate cannot pass on what was true of the release before.
+- The table shows the release each reading is recorded on, in place of a
+  digest, and `cub release list --space <variant>` shows it in ConfigHub.
+- The annotation an earlier version left on a Space is removed when the first
+  new reading is recorded.
+- A reading another reporter wrote on the release is left alone while it is
+  fresh or says the same.
+- A Space that cannot be read or written no longer stops the others being
+  reported. It is named in the error, with the others' readings shown.
+- Recording takes `EditChildren` on the variant Space or on its Target; `Edit`
+  on the Space is not enough. Your own user has it. The demo's
+  `grant-agents.sh` now gives it to the reporter.
+
+Needs ConfigHub v0.8.2 or newer for live status. Built on the ConfigHub SDK
+v0.8.10. See
+[live status](user/onboard-your-sveltos-fleet.md#live-status-in-confighub).
 
 ## 0.13.0, 2026-10-03
 

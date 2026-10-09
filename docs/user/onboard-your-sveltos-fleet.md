@@ -531,41 +531,80 @@ cub sveltos status --context <management cluster context>
 cub sveltos status --context <management cluster context> --watch   # every 30 seconds
 ```
 
-It prints one line per cluster, and writes the same reading to that
-cluster's variant, where ConfigHub shows it:
+It prints one line per cluster, and records the same reading on the newest
+published release of that cluster's variant, where ConfigHub reads it:
 
 ```text
-CLUSTER           SPACE                          SYNC       HEALTH       REVISION             WRITTEN  MESSAGE
-eu-central-test1  mer-kyverno-eu-central-test1   OutOfSync  Progressing  sha256:3e39eaa74376  yes      release 3, created 2026-09-28T11:03:43Z, not applied yet
-eu-central-uat1   mer-kyverno-eu-central-uat1    Synced     Healthy      sha256:e2b3ed3756b1  yes
+CLUSTER  SPACE             RELEASE  SYNC       HEALTH       WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    2        OutOfSync  Progressing  yes      release 2, created 2026-10-09T16:03:18Z, not applied yet; the cluster runs release 1
+prod-1   rh-sv-web-prod-1  1        Synced     Healthy      yes      release 1 applied
 ```
+
+`cub release list` shows what each release holds:
+
+```text
+$ cub release list --space rh-sv-web-mgmt
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE                     CREATED
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966    OutOfSync/Progressing    2026-10-09 16:03:18
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641    Synced/Healthy           2026-10-09 16:00:47
+```
+
+**Live status is on the Release, from ConfigHub v0.8.2.** Before that,
+ConfigHub read it from the Space annotation `confighub.com/live-status`, and
+`cub sveltos` up to 0.13 wrote it there. ConfigHub v0.8.2 and newer read only
+the Release, so 0.13's readings reach nothing: the `Healthy` gate answers
+"has no live status for release 3 yet" however healthy the cluster is. From
+0.14, `status` records on the Release, and removes the annotation an earlier
+version left on a Space.
+
+The reading is always of the newest published release, because that is the
+one Sveltos fetches and the one the `Healthy` gate reads. A release just
+published holds nothing until `status` next runs; an older release keeps the
+last reading made of it.
 
 ConfigHub's component map shows the same readings on each cluster's variant.
 Each is marked Live and Synced, and is marked behind while a rollout still
-has a release to bring it:
+has a release to bring it (the picture is from before v0.8.2):
 
 ![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](../images/sveltos/sveltos-meridian-tree.png)
 
-- **Synced and Healthy:** Sveltos applied the latest release, and the
+- **Synced and Healthy:** Sveltos applied the newest release, and the
   Deployments, StatefulSets and DaemonSets it delivers were available when it
-  did. The revision is the digest of that release.
-- **OutOfSync and Progressing:** a newer release was created after Sveltos
-  last applied, or Sveltos is still deploying.
+  did.
+- **OutOfSync and Progressing:** the newest release was created after Sveltos
+  last applied, or Sveltos is still deploying. The message names the release
+  the cluster still runs.
 - **Degraded:** Sveltos reports a failure, and the message says what failed.
+  Sveltos can report one while a rollout's pods are still starting, and then
+  tries again.
 
 **Which release a cluster runs is worked out from times.** Sveltos does not
 report which release it fetched. So `status` takes the latest release created
-before Sveltos last applied the delivery profile, and reports its digest. Two
-releases created close together, or clocks that disagree, can make it name the
-wrong one. That matters, because when the revision equals a release's digest,
-ConfigHub moves that release's change order on by itself. The reading says
-what Sveltos applied and when; it is not proof that the cluster runs that exact
-release. Checking the running objects against the release is
+before Sveltos last applied the delivery profile. Two releases created close
+together, or clocks that disagree, can make it name the wrong one. That
+matters, because the newest release is called Synced on that working-out. The
+reading says what Sveltos applied and when; it is not proof that the cluster
+runs that exact release. Checking the running objects against the release is
 [#39](https://github.com/confighub/sveltos-confighub/issues/39)'s drift report.
 
-It writes a reading only when it changes, or when the one ConfigHub holds is
+It writes a reading only when it changes, or when the one the release holds is
 older than `--refresh` (ten minutes by default). A refreshed reading has a new
-time, but the health checks did not run again.
+time, but the health checks did not run again. A reading another reporter
+wrote on the release is left alone while it is fresh or says the same. A Space
+that cannot be read or written is named in an error, and the others are still
+reported.
+
+**Who may write it.** `status` writes as the `cub` user it runs as. Your own
+user, as a member of the organization, can. A worker with no role in the
+organization needs `View` and `ViewChildren` on each variant Space to read
+its releases, and `EditChildren` on the Space, or on its Target, to record a
+reading; `Edit` on the Space is not enough. Measured on 2026-10-09 against
+ConfigHub v0.8.10:
+
+```bash
+cub space update <variant Space> --permission "View:<bot user>" \
+  --permission "ViewChildren:<bot user>" --permission "EditChildren:<bot user>"
+```
 
 **Health comes from Sveltos, when it deploys and after.** Each delivery
 profile carries `validateHealths` for the workloads its charts deliver, named
@@ -621,10 +660,20 @@ Failed: Variant 'eu-central-test1' is not synced
 
 To use it, add `Healthy` to the `Prerequisites` of each stage after the
 first in `change-workflow.yaml`, and keep `cub sveltos status --watch`
-running. Without the reporter, the gate never opens. ConfigHub checks the
-words in the reading, not which release it is about. So promote after
-`status` has reported the new release, which it does within one interval of
-Sveltos applying it.
+running. Without the reporter, the gate never opens. ConfigHub reads the
+newest published release of each Space in the stage ahead: it must be Synced
+and Healthy, with nothing running or failed. Measured on 2026-10-09 on two
+kind clusters, against ConfigHub v0.8.10, with `Healthy` added before prod:
+
+```text
+$ cub variant promote --change-order rh-sv-web-base/replicas-3 --target-stage prod --squash
+Failed: Variant 'mgmt' has no live status for release 3 yet          # published; 0.13 had reported Synced and Healthy, to the annotation
+Failed: Variant 'mgmt' release 2 is not synced (OutOfSync)           # an earlier change, reported by 0.14 before Sveltos applied it
+```
+
+The same promotion passed once `status` had recorded Synced and Healthy on
+release 3. The whole run is in
+[live-status-2026-10-09.log](../../examples/onboard/live-status-2026-10-09.log).
 
 ## When a cluster joins
 

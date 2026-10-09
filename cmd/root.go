@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -285,32 +286,38 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 		Long: `Report what Sveltos delivered to each cluster as ConfigHub live status.
 
 For each delivery profile on the management cluster, it reads the ClusterSummary
-Sveltos keeps and the variant's published releases, and writes the variant
-Space's confighub.com/live-status: Synced and Healthy once Sveltos has applied
-the latest release and its workloads were available, OutOfSync while a newer
-release is on its way, Degraded when Sveltos reports a failure. ConfigHub's
-healthy gate and its change orders read it.
+Sveltos keeps and the variant's published releases, and records a reading on
+the variant's newest published release: Synced and Healthy once Sveltos has
+applied that release and its workloads were available, OutOfSync while it is
+on its way, Degraded when Sveltos reports a failure. ConfigHub's Healthy gate,
+its change orders and its UI read the newest published release, so a release
+just published has no reading until Sveltos is seen to have applied it.
 
 Sveltos does not report which release it fetched, so the release is worked
 out: the latest one created before Sveltos last applied the profile. Health is
-what Sveltos checked when it applied.
+what Sveltos checked when it applied, and what the profile's ClusterHealthCheck
+has seen since.
 
-It writes only when a reading changes, or when the one ConfigHub holds is older
-than --refresh.`,
+It writes only when a reading changes, or when the one the release holds is
+older than --refresh. A reading another reporter wrote is left alone while it
+is fresh or says the same. It writes as the cub user it runs as, who needs Edit
+on the release. Needs ConfigHub v0.8.2 or newer, where live status moved from
+the Space onto the Release; the reading an earlier version left on a Space is
+removed when the first new one is recorded.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
 			for {
+				// A Space that could not be read or written is an error, and
+				// the readings of the others are still shown.
 				reports, err := onboard.ReportStatus(onboard.Run, hub(), so)
-				if err != nil && !watch {
+				if len(reports) > 0 {
+					printStatus(c.OutOrStdout(), reports)
+				}
+				if !watch {
 					return err
 				}
 				if err != nil {
 					fmt.Fprintln(c.ErrOrStderr(), "Error:", err)
-				} else {
-					printStatus(c.OutOrStdout(), reports)
-				}
-				if !watch {
-					return nil
 				}
 				time.Sleep(interval)
 				// A login renewed since reaches the next reading.
@@ -320,7 +327,7 @@ than --refresh.`,
 	}
 	status.Flags().StringVar(&so.Context, "context", "", "kubectl context of the management cluster")
 	status.Flags().BoolVar(&so.DryRun, "dry-run", false, "show what would be written, and write nothing")
-	status.Flags().DurationVar(&so.Refresh, "refresh", 10*time.Minute, "write an unchanged reading again once the one ConfigHub holds is this old")
+	status.Flags().DurationVar(&so.Refresh, "refresh", 10*time.Minute, "write an unchanged reading again once the one the release holds is this old")
 	status.Flags().BoolVar(&watch, "watch", false, "keep reporting")
 	status.Flags().DurationVar(&interval, "interval", 30*time.Second, "how often to report, with --watch")
 
@@ -732,14 +739,17 @@ func appendLog(path, stamp string, r onboard.WatchReport) error {
 // printStatus shows each delivery profile's reading, one line each.
 func printStatus(w io.Writer, reports []onboard.StatusReport) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CLUSTER\tSPACE\tSYNC\tHEALTH\tREVISION\tWRITTEN\tMESSAGE")
+	fmt.Fprintln(tw, "CLUSTER\tSPACE\tRELEASE\tSYNC\tHEALTH\tWRITTEN\tMESSAGE")
 	for _, r := range reports {
 		written := "yes"
 		if !r.Wrote {
 			written = r.Why
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Cluster, r.Space, r.Status.SyncStatus, r.Status.HealthStatus,
-			onboard.ShortDigest(r.Status.Revision), written, r.Status.Message)
+		release := "-"
+		if r.Release != 0 {
+			release = strconv.Itoa(r.Release)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.Cluster, r.Space, release, r.Status.Sync, r.Status.Health, written, r.Status.Message)
 	}
 	tw.Flush()
 }

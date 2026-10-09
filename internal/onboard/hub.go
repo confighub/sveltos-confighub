@@ -35,6 +35,9 @@ type Hub interface {
 
 	// Releases lists the Space's releases, published or not.
 	Releases(space string) ([]HubRelease, error)
+	// SetLiveStatus records what is running on one release of a Space, which
+	// is where ConfigHub's gates, change orders and UI read it.
+	SetLiveStatus(space string, release int, s LiveStatus) error
 	// ReleasedSpaces names the Spaces whose slug starts with prefix and that
 	// have a published release.
 	ReleasedSpaces(prefix string) ([]string, error)
@@ -86,6 +89,9 @@ type HubRelease struct {
 	Digest    string
 	Published bool
 	CreatedAt time.Time
+	// Live is the live status the release holds, if a tool has reported on
+	// it.
+	Live *LiveStatus
 }
 
 // HubChangeOrder is a change order, with the stages its workflow had when it

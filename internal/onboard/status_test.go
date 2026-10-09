@@ -1,11 +1,11 @@
 package onboard
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 var (
@@ -36,44 +36,58 @@ func feature(status string, applied time.Time, failure string) map[string]any {
 	return f
 }
 
-// What Sveltos reports, in ConfigHub's words: the healthy gate passes only on
-// Synced, Succeeded and Healthy, and a revision naming the release applied.
+// What Sveltos reports, in ConfigHub's words, as a reading of the newest
+// published release: the Healthy gate passes only on Synced and Healthy with
+// no operation running or failed.
 func TestLiveStatus(t *testing.T) {
-	two := []release{{1, "sha256:one", earlier}, {2, "sha256:two", published}}
+	two := []release{{num: 1, digest: "sha256:one", createdAt: earlier}, {num: 2, digest: "sha256:two", createdAt: published}}
 	now := later.Add(time.Minute)
 	for _, c := range []struct {
-		name                               string
-		summary                            map[string]any
-		releases                           []release
-		checked                            bool
-		sync, health, phase, revision, msg string
+		name                           string
+		summary                        map[string]any
+		releases                       []release
+		checked                        bool
+		sync, health, op, sveltos, msg string
+		running                        int
 	}{
-		{"applied after the latest release, checked", summary(feature("Provisioned", later, "")), two, true, "Synced", "Healthy", "Succeeded", "sha256:two", ""},
-		{"applied before the latest release", summary(feature("Provisioned", published.Add(-time.Minute), "")), two, true, "OutOfSync", "Progressing", "Running", "sha256:one", "release 2, created 2026-09-28T10:00:00Z, not applied yet"},
-		{"still deploying", summary(feature("Provisioning", time.Time{}, "")), two, true, "OutOfSync", "Progressing", "Running", "", "Sveltos: Provisioning"},
-		{"failed", summary(feature("Failed", time.Time{}, "GVK nvidia.com/v1, Kind=ClusterPolicy not found")), two, true, "OutOfSync", "Degraded", "Failed", "", "Sveltos: Failed: GVK nvidia.com/v1, Kind=ClusterPolicy not found"},
-		{"no summary yet", nil, two, true, "Unknown", "Unknown", "", "", "Sveltos has not deployed this profile yet"},
-		{"applied, but no health checks", summary(feature("Provisioned", later, "")), two, false, "Synced", "Unknown", "Succeeded", "sha256:two", "applied; this delivery profile has no health checks, so Sveltos does not wait for its workloads"},
-		{"no release published", summary(feature("Provisioned", later, "")), nil, true, "Unknown", "Unknown", "", "", "the variant has no published release"},
+		{"applied after the latest release, checked", summary(feature("Provisioned", later, "")), two, true, "Synced", "Healthy", "Succeeded", "Provisioned", "release 2 applied", 2},
+		{"applied before the latest release", summary(feature("Provisioned", published.Add(-time.Minute), "")), two, true, "OutOfSync", "Progressing", "Running", "Provisioned", "release 2, created 2026-09-28T10:00:00Z, not applied yet; the cluster runs release 1", 1},
+		{"applied before any release", summary(feature("Provisioned", earlier.Add(-time.Minute), "")), two, true, "OutOfSync", "Progressing", "Running", "Provisioned", "release 2, created 2026-09-28T10:00:00Z, not applied yet", 0},
+		{"still deploying", summary(feature("Provisioning", time.Time{}, "")), two, true, "OutOfSync", "Progressing", "Running", "Provisioning", "Sveltos: Provisioning", 0},
+		{"failed", summary(feature("Failed", time.Time{}, "GVK nvidia.com/v1, Kind=ClusterPolicy not found")), two, true, "OutOfSync", "Degraded", "Failed", "Failed", "Sveltos: Failed: GVK nvidia.com/v1, Kind=ClusterPolicy not found", 0},
+		{"no summary yet", nil, two, true, "Unknown", "Unknown", "", "", "Sveltos has not deployed this profile yet", 0},
+		{"applied, but no health checks", summary(feature("Provisioned", later, "")), two, false, "Synced", "Unknown", "Succeeded", "Provisioned", "release 2 applied; this delivery profile has no health checks, so Sveltos does not wait for its workloads", 2},
+		{"no release published", summary(feature("Provisioned", later, "")), nil, true, "Unknown", "Unknown", "", "Provisioned", "the variant has no published release", 0},
 	} {
-		s := liveStatus("kyverno-prod-eu", c.summary, c.releases, c.checked, now)
-		if s.SyncStatus != c.sync || s.HealthStatus != c.health || s.OperationPhase != c.phase || s.Revision != c.revision || s.Message != c.msg {
-			t.Errorf("%s: got %s/%s/%s %q %q", c.name, s.SyncStatus, s.HealthStatus, s.OperationPhase, s.Revision, s.Message)
+		s, running := liveStatus("kyverno-prod-eu", c.summary, c.releases, c.checked, now)
+		if s.Sync != c.sync || s.Health != c.health || s.Operation != c.op || s.ReporterSync != c.sveltos || s.Message != c.msg {
+			t.Errorf("%s: got %s/%s/%s %q %q", c.name, s.Sync, s.Health, s.Operation, s.ReporterSync, s.Message)
 		}
-		if s.Source != "sveltos" || s.App != "kyverno-prod-eu" || s.ObservedAt != now.Format(time.RFC3339) {
-			t.Errorf("%s: every reading names its source, its profile and when it was made: %+v", c.name, s)
+		got := 0
+		if running != nil {
+			got = running.num
 		}
-		if doc, _ := json.Marshal(s); len(doc) > 1024 {
-			t.Errorf("%s: the reading must fit the annotation's 1024 bytes", c.name)
+		if got != c.running {
+			t.Errorf("%s: the release Sveltos is taken to run: %d, want %d", c.name, got, c.running)
+		}
+		if s.Reporter != "cub-sveltos" || s.DataSource != "kyverno-prod-eu" || s.ObservedAt != now.Format(time.RFC3339) {
+			t.Errorf("%s: every reading names its reporter, its profile and when it was made: %+v", c.name, s)
+		}
+		if len(s.Message) > 1024 || len(s.ReporterSync) > 64 {
+			t.Errorf("%s: the reading must fit what a release holds: %+v", c.name, s)
 		}
 	}
-	if s := liveStatus("p", summary(feature("Failed", time.Time{}, strings.Repeat("x", 2000))), two, true, now); len(s.Message) > 400 {
+	if s, _ := liveStatus("p", summary(feature("Failed", time.Time{}, strings.Repeat("x", 2000))), two, true, now); len(s.Message) > 400 {
 		t.Errorf("a long failure message is clipped")
+	}
+	if s, _ := liveStatus("p", summary(feature("Failed", time.Time{}, strings.Repeat("é", 2000))), two, true, now); !utf8.ValidString(s.Message) {
+		t.Errorf("a long message is cut on a character, not inside one: %q", s.Message[len(s.Message)-8:])
 	}
 }
 
-// ReportStatus reads the management cluster and ConfigHub, and writes a
-// reading only when it changes or the one ConfigHub holds has gone stale.
+// ReportStatus reads the management cluster and ConfigHub, and records a
+// reading on the newest published release only when it changes or the one the
+// release holds has gone stale.
 func TestReportStatus(t *testing.T) {
 	profiles := `{"items":[
 	  {"metadata":{"name":"kyverno-prod-eu"},"spec":{"validateHealths":[{"name":"deployments-kyverno"}],"policyRefs":[{"deploymentType":"Remote","remoteURL":{"url":"oci://oci.hub.confighub.com/space/sveltos-kyverno-prod-eu:latest"}}]}},
@@ -81,7 +95,6 @@ func TestReportStatus(t *testing.T) {
 	summaries := `{"items":[{"metadata":{"labels":{"projectsveltos.io/cluster-profile-name":"kyverno-prod-eu"}},"spec":{"clusterNamespace":"projectsveltos","clusterName":"prod-eu"},
 	  "status":{"featureSummaries":[{"featureID":"Resources","status":"Provisioned","lastAppliedTime":"` + later.Format(time.RFC3339) + `"}]}}]}`
 	releases := []HubRelease{{Num: 1, Published: true, Digest: "sha256:one", CreatedAt: published}, {Num: 2, Digest: "sha256:draft", CreatedAt: later}}
-	held := ""
 	watching := `{"items":[]}`
 	run := func(name string, args ...string) ([]byte, error) {
 		all := name + " " + strings.Join(args, " ")
@@ -96,7 +109,13 @@ func TestReportStatus(t *testing.T) {
 		t.Errorf("unexpected: %s", all)
 		return nil, errors.New("unexpected")
 	}
-	var writes []string
+	type write struct {
+		release int
+		status  LiveStatus
+	}
+	var writes []write
+	annotations := map[string]string{LegacyLiveStatusAnnotation: `{"source":"sveltos","syncStatus":"Synced"}`, "kept": "yes"}
+	var patches []string
 	now := later.Add(time.Minute)
 	opts := StatusOptions{Context: "mgmt", Refresh: 10 * time.Minute, Now: func() time.Time { return now }}
 	hub := &fakeHub{t: t,
@@ -106,19 +125,25 @@ func TestReportStatus(t *testing.T) {
 			}
 			return releases, nil
 		},
-		space: func(space string) (HubSpace, error) {
+		setLive: func(space string, release int, s LiveStatus) error {
 			if space != "sveltos-kyverno-prod-eu" {
-				t.Errorf("the reading held is read from the variant's Space: %s", space)
+				t.Errorf("the reading is recorded in the variant's Space: %s", space)
 			}
-			return HubSpace{Slug: space, Annotations: map[string]string{LiveStatusAnnotation: held}}, nil
+			writes = append(writes, write{release, s})
+			for i := range releases {
+				if releases[i].Num == release {
+					held := s
+					releases[i].Live = &held
+				}
+			}
+			return nil
+		},
+		space: func(space string) (HubSpace, error) {
+			return HubSpace{Slug: space, Annotations: annotations}, nil
 		},
 		patch: func(space string, patch []byte) error {
-			var p struct{ Annotations map[string]string }
-			if err := json.Unmarshal(patch, &p); err != nil {
-				t.Fatal(err)
-			}
-			held = p.Annotations[LiveStatusAnnotation]
-			writes = append(writes, space+" "+held)
+			patches = append(patches, string(patch))
+			delete(annotations, LegacyLiveStatusAnnotation)
 			return nil
 		}}
 
@@ -126,8 +151,16 @@ func TestReportStatus(t *testing.T) {
 	if err != nil || len(reports) != 1 || !reports[0].Wrote || reports[0].Cluster != "prod-eu" {
 		t.Fatalf("one delivery profile, reported and written; a profile not from ConfigHub is left alone: %+v %v", reports, err)
 	}
-	if !strings.Contains(writes[0], `"syncStatus":"Synced"`) || !strings.Contains(writes[0], `"healthStatus":"Healthy"`) || !strings.Contains(writes[0], `"revision":"sha256:one"`) {
-		t.Errorf("the reading written: %s", writes[0])
+	// Release 2 is a draft: release 1 is the newest published one, the one
+	// the gate reads.
+	if w := writes[0]; w.release != 1 || w.status.Sync != "Synced" || w.status.Health != "Healthy" || w.status.Operation != "Succeeded" || w.status.Message != "release 1 applied" {
+		t.Errorf("the reading written: %+v", w)
+	}
+	if r := reports[0]; r.Release != 1 || r.Running != 1 || r.Revision != "sha256:one" {
+		t.Errorf("the report names the release recorded on and the one running: %+v", r)
+	}
+	if len(patches) != 1 || patches[0] != `{"Annotations":{"confighub.com/live-status":null}}` {
+		t.Errorf("the reading an earlier version left on the Space is removed, and nothing else: %v", patches)
 	}
 
 	now = now.Add(time.Minute)
@@ -136,8 +169,8 @@ func TestReportStatus(t *testing.T) {
 		t.Errorf("the same reading a minute later is not written again: %+v", reports[0])
 	}
 	now = now.Add(15 * time.Minute)
-	if reports, _ = ReportStatus(run, hub, opts); !reports[0].Wrote {
-		t.Errorf("an unchanged reading is written again once the one held is older than --refresh")
+	if reports, _ = ReportStatus(run, hub, opts); !reports[0].Wrote || len(patches) != 1 {
+		t.Errorf("an unchanged reading is written again once the one held is older than --refresh, and the Space is not patched twice: %+v %v", reports[0], patches)
 	}
 	// The profile's ClusterHealthCheck sees a workload go down after the
 	// release was applied, and Sveltos still says Provisioned.
@@ -146,15 +179,102 @@ func TestReportStatus(t *testing.T) {
 	   "message":"Deployment: kyverno/kyverno-cleanup-controller status is Degraded  \nMessage: kyverno-cleanup-controller: 0 of 1 available  \n"}]},
 	  {"clusterInfo":{"cluster":{"namespace":"projectsveltos","name":"prod-us"}},"conditions":[{"type":"HealthCheck:workloads","name":"workloads","status":"True"}]}]}}]}`
 	reports, _ = ReportStatus(run, hub, opts)
-	if s := reports[0].Status; s.SyncStatus != "Synced" || s.HealthStatus != "Degraded" ||
+	if s := reports[0].Status; s.Sync != "Synced" || s.Health != "Degraded" ||
 		s.Message != "ClusterHealthCheck sveltos-kyverno: Deployment: kyverno/kyverno-cleanup-controller status is Degraded Message: kyverno-cleanup-controller: 0 of 1 available" {
 		t.Errorf("a workload down after the release is Degraded, naming it, and the release still Synced: %+v", s)
+	}
+	if w := writes[len(writes)-1]; w.release != 1 || w.status.Health != "Degraded" {
+		t.Errorf("the Degraded reading replaces the Healthy one on the release the gate reads: %+v", w)
+	}
+	watching = `{"items":[]}`
+
+	// A newer release is published: the reading is now of that one, and says
+	// it is not applied yet. Release 1 keeps what was true of it.
+	releases[1].Published, releases[1].CreatedAt = true, later.Add(30*time.Second)
+	n := len(writes)
+	reports, _ = ReportStatus(run, hub, opts)
+	if w := writes[len(writes)-1]; len(writes) != n+1 || w.release != 2 || w.status.Sync != "OutOfSync" || w.status.Operation != "Running" || reports[0].Running != 1 {
+		t.Errorf("a newly published release gets its own reading, not release 1's: %+v %+v", w, reports[0])
+	}
+
+	// Another reporter's reading is left alone while it is fresh, and while
+	// it says the same; it is replaced once it is old and says otherwise.
+	theirs := LiveStatus{Reporter: "argobot", Sync: "Synced", Health: "Healthy", Operation: "Succeeded", ObservedAt: now.Format(time.RFC3339)}
+	releases[1].Live = &theirs
+	n = len(writes)
+	if reports, _ = ReportStatus(run, hub, opts); reports[0].Wrote || reports[0].Why != "left to argobot" || len(writes) != n {
+		t.Errorf("a fresh reading from another reporter is left alone: %+v", reports[0])
+	}
+	now = now.Add(time.Hour)
+	if reports, _ = ReportStatus(run, hub, opts); !reports[0].Wrote || releases[1].Live.Reporter != "cub-sveltos" {
+		t.Errorf("an old reading from another reporter that says otherwise is replaced: %+v", reports[0])
 	}
 
 	opts.DryRun = true
 	summaries = strings.Replace(summaries, `"Provisioned"`, `"Provisioning"`, 1)
-	if reports, _ = ReportStatus(run, hub, opts); reports[0].Wrote || reports[0].Why != "dry run" || reports[0].Status.SyncStatus != "OutOfSync" {
+	n = len(writes)
+	if reports, _ = ReportStatus(run, hub, opts); reports[0].Wrote || reports[0].Why != "dry run" || reports[0].Status.Message != "Sveltos: Provisioning" || len(writes) != n {
 		t.Errorf("a dry run reports a changed reading, and writes nothing: %+v", reports[0])
+	}
+	opts.DryRun = false
+
+	// A Space with no published release has nowhere to record a reading.
+	releases = []HubRelease{{Num: 1, Digest: "sha256:draft", CreatedAt: published}}
+	n = len(writes)
+	if reports, err = ReportStatus(run, hub, opts); err != nil || reports[0].Wrote || reports[0].Why != "no release" || reports[0].Release != 0 || len(writes) != n {
+		t.Errorf("no published release: nothing is written, and it is no error: %+v %v", reports[0], err)
+	}
+}
+
+// One Space that cannot be read or written does not stop the others being
+// reported.
+func TestReportStatusCarriesOn(t *testing.T) {
+	profile := func(space string) string {
+		return `{"metadata":{"name":"` + space + `"},"spec":{"validateHealths":[{"name":"x"}],"policyRefs":[{"remoteURL":{"url":"oci://oci.hub.confighub.com/space/` + space + `:latest"}}]}}`
+	}
+	sum := func(space string) string {
+		return `{"metadata":{"labels":{"projectsveltos.io/cluster-profile-name":"` + space + `"}},"spec":{"clusterNamespace":"projectsveltos","clusterName":"c-` + space + `"},
+		  "status":{"featureSummaries":[{"featureID":"Resources","status":"Provisioned","lastAppliedTime":"` + later.Format(time.RFC3339) + `"}]}}`
+	}
+	run := func(name string, args ...string) ([]byte, error) {
+		all := name + " " + strings.Join(args, " ")
+		switch {
+		case strings.Contains(all, "get clusterhealthchecks"):
+			return []byte(`{"items":[]}`), nil
+		case strings.Contains(all, "get clusterprofiles"):
+			return []byte(`{"items":[` + profile("a-gone") + `,` + profile("b-denied") + `,` + profile("c-fine") + `]}`), nil
+		case strings.Contains(all, "get clustersummaries"):
+			return []byte(`{"items":[` + sum("a-gone") + `,` + sum("b-denied") + `,` + sum("c-fine") + `]}`), nil
+		}
+		return nil, errors.New("unexpected")
+	}
+	var wrote []string
+	hub := &fakeHub{t: t,
+		releases: func(space string) ([]HubRelease, error) {
+			if space == "a-gone" {
+				return nil, errors.New("space not found")
+			}
+			return []HubRelease{{Num: 1, Published: true, Digest: "sha256:one", CreatedAt: published}}, nil
+		},
+		setLive: func(space string, release int, s LiveStatus) error {
+			if space == "b-denied" {
+				return errors.New("HTTP 403: permission denied\nDetails:\n  failed to update entity\n")
+			}
+			wrote = append(wrote, space)
+			return nil
+		},
+		space: func(space string) (HubSpace, error) { return HubSpace{Slug: space}, nil },
+	}
+	now := later.Add(time.Minute)
+	reports, err := ReportStatus(run, hub, StatusOptions{Refresh: 10 * time.Minute, Now: func() time.Time { return now }})
+	if err == nil || !strings.Contains(err.Error(), "a-gone: space not found") || !strings.Contains(err.Error(), "b-denied: recording the live status of release 1, which takes EditChildren on the Space or on its Target: HTTP 403: permission denied Details: failed to update entity") {
+		t.Errorf("each Space that failed is named, with why: %v", err)
+	}
+	if len(wrote) != 1 || wrote[0] != "c-fine" {
+		t.Errorf("the Space after the two that failed is still written: %v", wrote)
+	}
+	if len(reports) != 2 || reports[0].Space != "b-denied" || reports[0].Wrote || reports[0].Why != "failed" || !reports[1].Wrote {
+		t.Errorf("the readings taken are still reported: %+v", reports)
 	}
 }
 
@@ -167,22 +287,22 @@ func TestWatchApply(t *testing.T) {
 		return watch{check: "c", conditions: []any{map[string]any{"type": "HealthCheck:workloads", "status": status, "message": message, "lastTransitionTime": at.Format(time.RFC3339)}}}
 	}
 	after, before := applied.Add(time.Minute), applied.Add(-time.Minute)
-	if s := cond("False", "", after).apply(LiveStatus{SyncStatus: "OutOfSync", HealthStatus: "Progressing"}, applied); s.HealthStatus != "Progressing" {
+	if s := cond("False", "", after).apply(LiveStatus{Sync: "OutOfSync", Health: "Progressing"}, applied); s.Health != "Progressing" {
 		t.Errorf("while a release is on its way, Sveltos's reading stands: %+v", s)
 	}
-	if s := cond("False", "", after).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Healthy"}, applied); s.HealthStatus != "Degraded" || s.Message != "ClusterHealthCheck c: a workload is not healthy" {
+	if s := cond("False", "", after).apply(LiveStatus{Sync: "Synced", Health: "Healthy"}, applied); s.Health != "Degraded" || s.Message != "ClusterHealthCheck c: a workload is not healthy" {
 		t.Errorf("a failing check with no message still says so: %+v", s)
 	}
-	if s := cond("False", "Deployment: kyverno/x status is Progressing Message: x: rolling out", after).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Healthy"}, applied); s.HealthStatus != "Progressing" {
+	if s := cond("False", "Deployment: kyverno/x status is Progressing Message: x: rolling out", after).apply(LiveStatus{Sync: "Synced", Health: "Healthy"}, applied); s.Health != "Progressing" {
 		t.Errorf("a workload rolling out is Progressing, not Degraded: %+v", s)
 	}
-	if s := cond("False", "old news", before).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Healthy"}, applied); s.HealthStatus != "Healthy" {
+	if s := cond("False", "old news", before).apply(LiveStatus{Sync: "Synced", Health: "Healthy"}, applied); s.Health != "Healthy" {
 		t.Errorf("a failure seen before the release was applied is stale: %+v", s)
 	}
-	if s := cond("True", "", after).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Unknown"}, applied); s.HealthStatus != "Healthy" || s.Message != "watched by ClusterHealthCheck c" {
+	if s := cond("True", "", after).apply(LiveStatus{Sync: "Synced", Health: "Unknown"}, applied); s.Health != "Healthy" || s.Message != "watched by ClusterHealthCheck c" {
 		t.Errorf("a profile without apply-time checks is healthy when its continuous check passes: %+v", s)
 	}
-	if s := (watch{check: "c"}).apply(LiveStatus{SyncStatus: "Synced", HealthStatus: "Unknown"}, applied); s.HealthStatus != "Unknown" {
+	if s := (watch{check: "c"}).apply(LiveStatus{Sync: "Synced", Health: "Unknown"}, applied); s.Health != "Unknown" {
 		t.Errorf("a check that has not evaluated yet says nothing: %+v", s)
 	}
 	w := map[string]map[string]watch{"kyverno": {}, "kyverno-extra": {}}

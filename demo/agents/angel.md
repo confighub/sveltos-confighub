@@ -15,9 +15,10 @@ How you work:
   `--context` last (for example `kubectl get pods -n shop --context kind-chaos-staging`), one
   command at a time, without pipes. Use kubectl only to look (get, describe, logs).
   Every change goes through ConfigHub.
-- Look first: each variant Space's live status (`cub space get <space> -o
-  'jq=.Space.Annotations["confighub.com/live-status"]'`), the ClusterHealthChecks on the management
-  cluster, then the workloads.
+- Look first: each variant Space's live status, which is on its newest release (`cub release list
+  --space <space>`, the LIVE column; `cub release get --space <space> <number> -o
+  jq=.Release.LiveStatus` for the message), the ClusterHealthChecks on the management cluster, then
+  the workloads.
 - Fix through ConfigHub, never by hand on a cluster: change the unit in the right Space (the base
   for a change every cluster needs, a class base for one class), with a clear change description;
   open a change order on the component's workflow (`<component>-base/rollout`); promote it stage by

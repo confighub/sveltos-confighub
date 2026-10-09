@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Live status: what Sveltos reports for each delivery profile, written where
@@ -16,19 +17,29 @@ import (
 // to a release's manifest digest lets it move that release's change order on
 // by itself.
 
-// LiveStatusAnnotation is the Space annotation ConfigHub reads.
-const LiveStatusAnnotation = "confighub.com/live-status"
+// LegacyLiveStatusAnnotation is the Space annotation ConfigHub read live
+// status from before v0.8.2, and that this plugin wrote up to 0.13. Nothing
+// reads it now, so one found on a Space is removed.
+const LegacyLiveStatusAnnotation = "confighub.com/live-status"
 
-// LiveStatus is ConfigHub's live-status document.
+// StatusReporter names this reporter on each Release it reports on.
+const StatusReporter = "cub-sveltos"
+
+// LiveStatus is what is recorded on a Release, where ConfigHub v0.8.2 and
+// newer read live status. Sync, Health and Operation are ConfigHub's
+// normalized words, which its gates read; ReporterSync keeps Sveltos's own
+// beside them.
 type LiveStatus struct {
-	Source         string `json:"source"`
-	App            string `json:"app,omitempty"`
-	SyncStatus     string `json:"syncStatus,omitempty"`
-	HealthStatus   string `json:"healthStatus,omitempty"`
-	OperationPhase string `json:"operationPhase,omitempty"`
-	Revision       string `json:"revision,omitempty"`
-	Message        string `json:"message,omitempty"`
-	ObservedAt     string `json:"observedAt"`
+	Reporter          string `json:"reporter"`
+	DataSource        string `json:"dataSource,omitempty"`
+	Sync              string `json:"sync"`
+	Health            string `json:"health"`
+	Operation         string `json:"operation,omitempty"`
+	ReporterSync      string `json:"reporterSync,omitempty"`
+	ReporterHealth    string `json:"reporterHealth,omitempty"`
+	ReporterOperation string `json:"reporterOperation,omitempty"`
+	Message           string `json:"message,omitempty"`
+	ObservedAt        string `json:"observedAt"`
 }
 
 // same says whether two reports say the same, whenever they were made.
@@ -41,6 +52,14 @@ func (s LiveStatus) same(o LiveStatus) bool {
 type StatusReport struct {
 	Profile, Cluster, Space string
 	Status                  LiveStatus
+	// Release is the release the reading is recorded on: the Space's newest
+	// published one, which is the one ConfigHub's Healthy gate reads. It is 0
+	// when the Space has none.
+	Release int
+	// Running is the release Sveltos is taken to have applied, and Revision
+	// its digest; 0 and empty when none can be named.
+	Running  int
+	Revision string
 	// Wrote says whether the reading was written to ConfigHub, and Why not.
 	Wrote bool
 	Why   string
@@ -58,20 +77,23 @@ type StatusOptions struct {
 	Now     func() time.Time
 }
 
-// statusSource names the reporter to ConfigHub.
-const statusSource = "sveltos"
-
 var gatewaySpace = regexp.MustCompile(`^oci://[^/]+/space/([a-z0-9-]+):`)
 
 type release struct {
 	num       int
 	digest    string
 	createdAt time.Time
+	// live is what the release holds now, if a tool has reported on it.
+	live *LiveStatus
 }
 
 // ReportStatus reads every delivery profile on the management cluster, the
 // ClusterSummary Sveltos keeps for it, and its variant's published releases,
-// and writes each reading to the variant's Space.
+// and records each reading on the variant's newest published release.
+//
+// A Space that cannot be read or written is reported in the error, and the
+// rest are still reported: one deleted Space must not freeze every reading
+// after it.
 func ReportStatus(run Runner, hub Hub, opts StatusOptions) ([]StatusReport, error) {
 	now := time.Now
 	if opts.Now != nil {
@@ -114,6 +136,7 @@ func ReportStatus(run Runner, hub Hub, opts StatusOptions) ([]StatusReport, erro
 	}
 
 	var reports []StatusReport
+	var errs []string
 	for _, p := range profiles.Items {
 		name := str(obj(p["metadata"])["name"])
 		space := ""
@@ -129,21 +152,36 @@ func ReportStatus(run Runner, hub Hub, opts StatusOptions) ([]StatusReport, erro
 		report := StatusReport{Profile: name, Space: space, Cluster: str(obj(summary["spec"])["clusterName"])}
 		releases, err := publishedReleases(hub, space)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", space, err)
+			errs = append(errs, fmt.Sprintf("%s: %s", space, oneLine(err)))
+			continue
 		}
 		checked := len(list(obj(p["spec"])["validateHealths"])) > 0
-		report.Status = liveStatus(name, summary, releases, checked, now())
+		var running *release
+		report.Status, running = liveStatus(name, summary, releases, checked, now())
+		if running != nil {
+			report.Running, report.Revision = running.num, running.digest
+		}
 		cluster := str(obj(summary["spec"])["clusterNamespace"]) + "/" + report.Cluster
 		if w, ok := watched[watchingProfile(watched, name)][cluster]; ok {
 			report.Status = w.apply(report.Status, appliedAt(summary))
 		}
-		if err := writeStatus(hub, &report, opts, now()); err != nil {
-			return nil, fmt.Errorf("%s: %w", space, err)
+		if err := writeStatus(hub, &report, releases, opts, now()); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %s", space, oneLine(err)))
 		}
 		reports = append(reports, report)
 	}
 	sort.Slice(reports, func(i, j int) bool { return reports[i].Space < reports[j].Space })
+	if len(errs) > 0 {
+		sort.Strings(errs)
+		return reports, fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
 	return reports, nil
+}
+
+// oneLine is an error as one line: ConfigHub's own run over several, and each
+// Space's goes in a list.
+func oneLine(err error) string {
+	return strings.Join(strings.Fields(err.Error()), " ")
 }
 
 func publishedReleases(hub Hub, space string) ([]release, error) {
@@ -156,7 +194,7 @@ func publishedReleases(hub Hub, space string) ([]release, error) {
 		if !r.Published || r.CreatedAt.IsZero() {
 			continue
 		}
-		releases = append(releases, release{num: r.Num, digest: r.Digest, createdAt: r.CreatedAt})
+		releases = append(releases, release{num: r.Num, digest: r.Digest, createdAt: r.CreatedAt, live: r.Live})
 	}
 	sort.Slice(releases, func(i, j int) bool { return releases[i].num < releases[j].num })
 	return releases, nil
@@ -166,19 +204,22 @@ func publishedReleases(hub Hub, space string) ([]release, error) {
 var workloadGVKs = []string{"Deployment.v1.apps", "StatefulSet.v1.apps", "DaemonSet.v1.apps"}
 
 // liveStatus maps what Sveltos reports for a delivery profile onto ConfigHub's
-// words. Sveltos does not report which release it fetched, so the release a
-// cluster runs is inferred: the latest one created before Sveltos last applied
-// the profile, since Sveltos fetches the variant's release each time it
-// applies. Releases created close together, or clocks that disagree, can make
-// the inference wrong, and ConfigHub moves a change order on when the revision
-// equals a release's digest.
-func liveStatus(profile string, summary map[string]any, releases []release, checked bool, now time.Time) LiveStatus {
-	s := LiveStatus{Source: statusSource, App: profile, ObservedAt: now.UTC().Format(time.RFC3339)}
+// words, as a reading of the variant's newest published release: Sveltos
+// fetches the variant's newest release each time it applies, so what it
+// reports is about that one. It also names the release Sveltos is taken to
+// have applied, when one can be named.
+//
+// Sveltos does not report which release it fetched, so the release a cluster
+// runs is inferred: the latest one created before Sveltos last applied the
+// profile. Releases created close together, or clocks that disagree, can make
+// the inference wrong.
+func liveStatus(profile string, summary map[string]any, releases []release, checked bool, now time.Time) (LiveStatus, *release) {
+	s := LiveStatus{Reporter: StatusReporter, DataSource: profile, ObservedAt: now.UTC().Format(time.RFC3339)}
 	features := list(obj(summary["status"])["featureSummaries"])
 	if summary == nil || len(features) == 0 {
-		s.SyncStatus, s.HealthStatus = "Unknown", "Unknown"
+		s.Sync, s.Health = "Unknown", "Unknown"
 		s.Message = "Sveltos has not deployed this profile yet"
-		return s
+		return s, nil
 	}
 	var applied time.Time
 	pending := ""
@@ -191,41 +232,51 @@ func liveStatus(profile string, summary map[string]any, releases []release, chec
 				applied = t
 			}
 		case "Failed", "FailedNonRetriable":
-			s.SyncStatus, s.HealthStatus, s.OperationPhase = "OutOfSync", "Degraded", "Failed"
+			s.Sync, s.Health, s.Operation, s.ReporterSync = "OutOfSync", "Degraded", "Failed", reporterWord(status)
 			s.Message = clip(fmt.Sprintf("Sveltos: %s: %s", status, strings.TrimSpace(str(f["failureMessage"]))))
-			return s
+			return s, nil
 		default:
 			pending = status
 		}
 	}
-	running := -1
+	var running *release
 	for i, r := range releases {
 		if !applied.IsZero() && !r.createdAt.After(applied) {
-			running = i
+			running = &releases[i]
 		}
-	}
-	if running >= 0 {
-		s.Revision = releases[running].digest
 	}
 	switch {
 	case pending != "":
-		s.SyncStatus, s.HealthStatus, s.OperationPhase = "OutOfSync", "Progressing", "Running"
-		s.Message = "Sveltos: " + pending
+		s.Sync, s.Health, s.Operation, s.ReporterSync = "OutOfSync", "Progressing", "Running", reporterWord(pending)
+		s.Message = clip("Sveltos: " + pending)
 	case len(releases) == 0:
-		s.SyncStatus, s.HealthStatus = "Unknown", "Unknown"
+		s.Sync, s.Health, s.ReporterSync = "Unknown", "Unknown", "Provisioned"
 		s.Message = "the variant has no published release"
-	case running < len(releases)-1:
+	case running == nil || running.num != releases[len(releases)-1].num:
 		latest := releases[len(releases)-1]
-		s.SyncStatus, s.HealthStatus, s.OperationPhase = "OutOfSync", "Progressing", "Running"
+		s.Sync, s.Health, s.Operation, s.ReporterSync = "OutOfSync", "Progressing", "Running", "Provisioned"
 		s.Message = fmt.Sprintf("release %d, created %s, not applied yet", latest.num, latest.createdAt.UTC().Format(time.RFC3339))
+		if running != nil {
+			s.Message += fmt.Sprintf("; the cluster runs release %d", running.num)
+		}
 	default:
-		s.SyncStatus, s.OperationPhase, s.HealthStatus = "Synced", "Succeeded", "Healthy"
+		s.Sync, s.Operation, s.Health, s.ReporterSync = "Synced", "Succeeded", "Healthy", "Provisioned"
+		s.Message = fmt.Sprintf("release %d applied", running.num)
 		if !checked && deploysWorkloads(summary) {
-			s.HealthStatus = "Unknown"
-			s.Message = "applied; this delivery profile has no health checks, so Sveltos does not wait for its workloads"
+			s.Health = "Unknown"
+			s.Message += "; this delivery profile has no health checks, so Sveltos does not wait for its workloads"
 		}
 	}
-	return s
+	return s, running
+}
+
+// reporterWord is one of Sveltos's own words, short enough for the 64
+// characters ConfigHub keeps of it.
+func reporterWord(w string) string {
+	if len(w) > 64 {
+		return w[:64]
+	}
+	return w
 }
 
 // watch is what a profile's ClusterHealthCheck last said about one cluster.
@@ -303,7 +354,7 @@ var spaces = regexp.MustCompile(`\s+`)
 // saw before the release was applied is stale, since Sveltos's own checks
 // passed at apply. While a release is on its way, Sveltos's reading stands.
 func (w watch) apply(s LiveStatus, applied time.Time) LiveStatus {
-	if s.SyncStatus != "Synced" {
+	if s.Sync != "Synced" {
 		return s
 	}
 	failing, passing := "", false
@@ -329,13 +380,15 @@ func (w watch) apply(s LiveStatus, applied time.Time) LiveStatus {
 	}
 	switch {
 	case failing != "":
-		s.HealthStatus = "Degraded"
+		s.Health = "Degraded"
 		if strings.Contains(failing, "status is Progressing") && !strings.Contains(failing, "status is Degraded") {
-			s.HealthStatus = "Progressing"
+			s.Health = "Progressing"
 		}
+		s.ReporterHealth = s.Health
 		s.Message = clip(fmt.Sprintf("ClusterHealthCheck %s: %s", w.check, failing))
-	case passing && s.HealthStatus == "Unknown":
-		s.HealthStatus = "Healthy"
+	case passing && s.Health == "Unknown":
+		s.Health = "Healthy"
+		s.ReporterHealth = s.Health
 		s.Message = "watched by ClusterHealthCheck " + w.check
 	}
 	return s
@@ -352,52 +405,85 @@ func deploysWorkloads(summary map[string]any) bool {
 	return false
 }
 
-// clip keeps a message short enough for the annotation's 1024 bytes.
+// clip keeps a message short enough to read in a list; ConfigHub allows 1024
+// bytes.
 func clip(s string) string {
 	const most = 400
-	if len(s) > most {
-		return s[:most-3] + "..."
+	if len(s) <= most {
+		return s
 	}
-	return s
+	// Cut on a character, not inside one: half a character reads back as a
+	// different one, and the reading would never match what was written.
+	cut := most - 3
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
 
-// writeStatus writes a reading to the Space unless ConfigHub already holds
-// the same one, recently enough.
-func writeStatus(hub Hub, r *StatusReport, opts StatusOptions, now time.Time) error {
-	space, err := hub.Space(r.Space)
-	if err != nil {
-		return err
+// writeStatus records a reading on the Space's newest published release,
+// unless that release already holds the same one, recently enough.
+//
+// A reading another reporter wrote is left alone while it is fresher than
+// --refresh, and for as long as it says the same: two reporters would
+// overwrite each other. It is replaced only when it is both old and
+// different.
+func writeStatus(hub Hub, r *StatusReport, releases []release, opts StatusOptions, now time.Time) error {
+	if len(releases) == 0 {
+		r.Why = "no release"
+		return nil
 	}
-	var held LiveStatus
-	if text := space.Annotations[LiveStatusAnnotation]; text != "" && json.Unmarshal([]byte(text), &held) == nil && held.same(r.Status) {
+	newest := releases[len(releases)-1]
+	r.Release = newest.num
+	held := newest.live
+	fresh := false
+	if held != nil {
 		if at, err := time.Parse(time.RFC3339, held.ObservedAt); err == nil && now.Sub(at) < opts.Refresh {
-			r.Why = "unchanged"
+			fresh = true
+		}
+	}
+	if held != nil && held.Reporter != StatusReporter {
+		same := held.Sync == r.Status.Sync && held.Health == r.Status.Health && held.Operation == r.Status.Operation
+		if fresh || same {
+			r.Why = "left to " + held.Reporter
 			return nil
 		}
+	}
+	if held != nil && held.same(r.Status) && fresh {
+		r.Why = "unchanged"
+		return nil
 	}
 	if opts.DryRun {
 		r.Why = "dry run"
 		return nil
 	}
-	doc, err := json.Marshal(r.Status)
-	if err != nil {
-		return err
-	}
-	patch, err := json.Marshal(map[string]any{"Annotations": map[string]string{LiveStatusAnnotation: string(doc)}})
-	if err != nil {
-		return err
-	}
-	if err := hub.PatchSpace(r.Space, patch); err != nil {
-		return err
+	if err := hub.SetLiveStatus(r.Space, newest.num, r.Status); err != nil {
+		r.Why = "failed"
+		if strings.Contains(err.Error(), "permission denied") {
+			return fmt.Errorf("recording the live status of release %d, which takes EditChildren on the Space or on its Target: %w", newest.num, err)
+		}
+		return fmt.Errorf("recording the live status of release %d: %w", newest.num, err)
 	}
 	r.Wrote = true
-	return nil
+	return dropLegacyStatus(hub, r.Space)
 }
 
-// ShortDigest is a digest as a person reads it.
-func ShortDigest(d string) string {
-	if i := strings.Index(d, ":"); i >= 0 && len(d) > i+13 {
-		return d[:i+13]
+// dropLegacyStatus removes the reading an earlier version left on the Space,
+// which nothing updates now and which would go on saying what was true then.
+func dropLegacyStatus(hub Hub, space string) error {
+	s, err := hub.Space(space)
+	if err != nil {
+		return fmt.Errorf("looking for the live status an earlier version left on the Space: %w", err)
 	}
-	return d
+	if _, ok := s.Annotations[LegacyLiveStatusAnnotation]; !ok {
+		return nil
+	}
+	patch, err := json.Marshal(map[string]any{"Annotations": map[string]any{LegacyLiveStatusAnnotation: nil}})
+	if err != nil {
+		return err
+	}
+	if err := hub.PatchSpace(space, patch); err != nil {
+		return fmt.Errorf("removing the live status an earlier version left on the Space: %w", err)
+	}
+	return nil
 }

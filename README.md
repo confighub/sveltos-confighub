@@ -386,11 +386,11 @@ cub changeorder get --space sveltos-kyverno-base replicas-4          # where a r
 cub sveltos status --context <management cluster context> --watch    # live status, from Sveltos
 ```
 
-`cub sveltos status` writes what Sveltos delivered to each cluster into
-ConfigHub, as its live status:
-- **Synced and Healthy** once Sveltos has applied the latest release and its
+`cub sveltos status` records what Sveltos delivered to each cluster in
+ConfigHub, as the live status of the variant's newest published release:
+- **Synced and Healthy** once Sveltos has applied that release and its
   workloads were available;
-- **OutOfSync** while a newer release waits, or Sveltos is still deploying.
+- **OutOfSync** while it waits, or Sveltos is still deploying.
 
 - **Degraded** when a workload goes down after its release was applied:
   `apply` writes a ClusterHealthCheck for each profile, which Sveltos runs all

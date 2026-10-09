@@ -18,6 +18,7 @@ type fakeHub struct {
 	data         func(space, unit string, revision int) ([]byte, error)
 	tagID        func(space, tag string) (string, error)
 	releases     func(space string) ([]HubRelease, error)
+	setLive      func(space string, release int, s LiveStatus) error
 	released     func(prefix string) ([]string, error)
 	order        func(space, order string) (HubChangeOrder, error)
 	attest       func(a HubAttestation, dryRun bool) (HubAttested, error)
@@ -95,6 +96,13 @@ func (h *fakeHub) Releases(space string) ([]HubRelease, error) {
 		return nil, h.unexpected("Releases", space)
 	}
 	return h.releases(space)
+}
+
+func (h *fakeHub) SetLiveStatus(space string, release int, s LiveStatus) error {
+	if h.setLive == nil {
+		return h.unexpected("SetLiveStatus", space)
+	}
+	return h.setLive(space, release, s)
 }
 
 func (h *fakeHub) ReleasedSpaces(prefix string) ([]string, error) {

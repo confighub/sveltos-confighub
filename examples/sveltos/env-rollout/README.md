@@ -204,6 +204,11 @@ approval is requested until the preceding checkpoint shows the clusters it
 depends on reporting healthy, and every wave records that evidence as
 `unlockedBy`.
 
+That was the position on 2026-09-26, when this chapter was recorded. Since
+then `cub sveltos status` reports live status, and ConfigHub v0.8.2 reads it
+from each release, not from the annotation: see
+[live status](../../../docs/user/onboard-your-sveltos-fleet.md#live-status-in-confighub).
+
 ## Approval is an attestation
 
 On 2026-09-25 ConfigHub removed its trigger-based approval gate, the
