@@ -59,7 +59,7 @@ func TestLiveStatus(t *testing.T) {
 		{"applied, but no health checks", summary(feature("Provisioned", later, "")), two, false, "Synced", "Unknown", "Succeeded", "Provisioned", "release 2 applied; this delivery profile has no health checks, so Sveltos does not wait for its workloads", 2},
 		{"no release published", summary(feature("Provisioned", later, "")), nil, true, "Unknown", "Unknown", "", "Provisioned", "the variant has no published release", 0},
 	} {
-		s, running := liveStatus("kyverno-prod-eu", c.summary, c.releases, c.checked, now)
+		s, running := liveStatus("kyverno-prod-eu", c.summary, c.releases, c.checked, 90*time.Second, now)
 		if s.Sync != c.sync || s.Health != c.health || s.Operation != c.op || s.ReporterSync != c.sveltos || s.Message != c.msg {
 			t.Errorf("%s: got %s/%s/%s %q %q", c.name, s.Sync, s.Health, s.Operation, s.ReporterSync, s.Message)
 		}
@@ -77,11 +77,34 @@ func TestLiveStatus(t *testing.T) {
 			t.Errorf("%s: the reading must fit what a release holds: %+v", c.name, s)
 		}
 	}
-	if s, _ := liveStatus("p", summary(feature("Failed", time.Time{}, strings.Repeat("x", 2000))), two, true, now); len(s.Message) > 400 {
+	if s, _ := liveStatus("p", summary(feature("Failed", time.Time{}, strings.Repeat("x", 2000))), two, true, 90*time.Second, now); len(s.Message) > 400 {
 		t.Errorf("a long failure message is clipped")
 	}
-	if s, _ := liveStatus("p", summary(feature("Failed", time.Time{}, strings.Repeat("é", 2000))), two, true, now); !utf8.ValidString(s.Message) {
+	if s, _ := liveStatus("p", summary(feature("Failed", time.Time{}, strings.Repeat("é", 2000))), two, true, 90*time.Second, now); !utf8.ValidString(s.Message) {
 		t.Errorf("a long message is cut on a character, not inside one: %q", s.Message[len(s.Message)-8:])
+	}
+	// Sveltos stamps when it finished applying, not when it fetched. Release 2
+	// was published while it was still applying release 1, and it finished 30
+	// seconds later: the stamp is after release 2 was created, and release 2
+	// is not what it applied. Until Sveltos has had its interval to fetch it,
+	// the newest release is not called applied.
+	soon := summary(feature("Provisioned", published.Add(30*time.Second), ""))
+	s, running := liveStatus("p", soon, two, true, 90*time.Second, published.Add(time.Minute))
+	if s.Sync != "OutOfSync" || s.Operation != "Running" || running != nil ||
+		s.Message != "release 2, created 2026-09-28T10:00:00Z, is too new to tell from the one before: Sveltos fetches every 1m0s" {
+		t.Errorf("a release newer than the fetch interval is not called applied yet: %+v %+v", s, running)
+	}
+	if s, running := liveStatus("p", soon, two, true, 90*time.Second, published.Add(2*time.Minute)); s.Sync != "Synced" || running == nil || running.num != 2 {
+		t.Errorf("once it is older than that, and Sveltos still says it applied after, it is applied: %+v", s)
+	}
+	profile := map[string]any{"spec": map[string]any{"policyRefs": []any{
+		map[string]any{"remoteURL": map[string]any{"url": "oci://oci.hub.confighub.com/space/other:latest", "interval": "10m"}},
+		map[string]any{"remoteURL": map[string]any{"url": "oci://oci.hub.confighub.com/space/mine:latest", "interval": "5m0s"}}}}}
+	if d := settleAfter(profile, "mine"); d != 5*time.Minute+30*time.Second {
+		t.Errorf("the settle time follows the interval the profile fetches this Space at: %s", d)
+	}
+	if d := settleAfter(map[string]any{}, "mine"); d != 90*time.Second {
+		t.Errorf("a profile that names no interval is given a minute: %s", d)
 	}
 }
 
@@ -94,7 +117,7 @@ func TestReportStatus(t *testing.T) {
 	  {"metadata":{"name":"hand-made"},"spec":{"policyRefs":[{"kind":"ConfigMap","name":"x","namespace":"default"}]}}]}`
 	summaries := `{"items":[{"metadata":{"labels":{"projectsveltos.io/cluster-profile-name":"kyverno-prod-eu"}},"spec":{"clusterNamespace":"projectsveltos","clusterName":"prod-eu"},
 	  "status":{"featureSummaries":[{"featureID":"Resources","status":"Provisioned","lastAppliedTime":"` + later.Format(time.RFC3339) + `"}]}}]}`
-	releases := []HubRelease{{Num: 1, Published: true, Digest: "sha256:one", CreatedAt: published}, {Num: 2, Digest: "sha256:draft", CreatedAt: later}}
+	releases := []HubRelease{{Num: 1, Published: true, Current: true, Digest: "sha256:one", CreatedAt: published}, {Num: 2, Current: true, Digest: "sha256:draft", CreatedAt: later}}
 	watching := `{"items":[]}`
 	run := func(name string, args ...string) ([]byte, error) {
 		all := name + " " + strings.Join(args, " ")
@@ -218,8 +241,15 @@ func TestReportStatus(t *testing.T) {
 	}
 	opts.DryRun = false
 
+	// A release published for a Target the Space has since moved away from is
+	// not what ConfigHub serves or its gate reads, however new it is.
+	releases = append(releases, HubRelease{Num: 3, Published: true, Digest: "sha256:elsewhere", CreatedAt: later.Add(time.Minute)})
+	if reports, _ = ReportStatus(run, hub, opts); reports[0].Release != 2 {
+		t.Errorf("the reading stays on the newest release for the Space's own Target: %+v", reports[0])
+	}
+
 	// A Space with no published release has nowhere to record a reading.
-	releases = []HubRelease{{Num: 1, Digest: "sha256:draft", CreatedAt: published}}
+	releases = []HubRelease{{Num: 1, Current: true, Digest: "sha256:draft", CreatedAt: published}}
 	n = len(writes)
 	if reports, err = ReportStatus(run, hub, opts); err != nil || reports[0].Wrote || reports[0].Why != "no release" || reports[0].Release != 0 || len(writes) != n {
 		t.Errorf("no published release: nothing is written, and it is no error: %+v %v", reports[0], err)
@@ -254,7 +284,7 @@ func TestReportStatusCarriesOn(t *testing.T) {
 			if space == "a-gone" {
 				return nil, errors.New("space not found")
 			}
-			return []HubRelease{{Num: 1, Published: true, Digest: "sha256:one", CreatedAt: published}}, nil
+			return []HubRelease{{Num: 1, Published: true, Current: true, Digest: "sha256:one", CreatedAt: published}}, nil
 		},
 		setLive: func(space string, release int, s LiveStatus) error {
 			if space == "b-denied" {
@@ -263,7 +293,10 @@ func TestReportStatusCarriesOn(t *testing.T) {
 			wrote = append(wrote, space)
 			return nil
 		},
-		space: func(space string) (HubSpace, error) { return HubSpace{Slug: space}, nil },
+		space: func(space string) (HubSpace, error) {
+			return HubSpace{Slug: space, Annotations: map[string]string{LegacyLiveStatusAnnotation: "{}"}}, nil
+		},
+		patch: func(space string, patch []byte) error { return errors.New("HTTP 403: permission denied") },
 	}
 	now := later.Add(time.Minute)
 	reports, err := ReportStatus(run, hub, StatusOptions{Refresh: 10 * time.Minute, Now: func() time.Time { return now }})
@@ -275,6 +308,14 @@ func TestReportStatusCarriesOn(t *testing.T) {
 	}
 	if len(reports) != 2 || reports[0].Space != "b-denied" || reports[0].Wrote || reports[0].Why != "failed" || !reports[1].Wrote {
 		t.Errorf("the readings taken are still reported: %+v", reports)
+	}
+	// c-fine's reading is recorded; the old annotation it may not remove is
+	// something to say, and no failure.
+	if strings.Contains(err.Error(), "c-fine") || !strings.Contains(reports[1].Note, "c-fine still holds the annotation confighub.com/live-status") || !strings.Contains(reports[1].Note, "takes Edit on the Space") {
+		t.Errorf("an annotation that cannot be removed is a note: %q; %v", reports[1].Note, err)
+	}
+	if reports[0].Note != "" {
+		t.Errorf("nothing is tidied in a Space whose reading was not recorded: %q", reports[0].Note)
 	}
 }
 

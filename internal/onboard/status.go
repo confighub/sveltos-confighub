@@ -10,12 +10,11 @@ import (
 	"unicode/utf8"
 )
 
-// Live status: what Sveltos reports for each delivery profile, written where
-// ConfigHub shows it. ConfigHub reads a deployment Space's
-// confighub.com/live-status annotation, a small JSON document; its healthy
-// gate passes on Synced, Succeeded and Healthy exactly, and a revision equal
-// to a release's manifest digest lets it move that release's change order on
-// by itself.
+// Live status: what Sveltos reports for each delivery profile, recorded where
+// ConfigHub reads it. From v0.8.2 that is the LiveStatus of a Release. The
+// Healthy gate reads the newest release published for the Target the Space
+// releases to, and passes when it is Synced and Healthy with no operation
+// running or failed; recording a reading can also move a change order on.
 
 // LegacyLiveStatusAnnotation is the Space annotation ConfigHub read live
 // status from before v0.8.2, and that this plugin wrote up to 0.13. Nothing
@@ -63,6 +62,8 @@ type StatusReport struct {
 	// Wrote says whether the reading was written to ConfigHub, and Why not.
 	Wrote bool
 	Why   string
+	// Note is something to tell the person running it that is no failure.
+	Note string
 }
 
 // StatusOptions are how cub sveltos status runs.
@@ -157,7 +158,7 @@ func ReportStatus(run Runner, hub Hub, opts StatusOptions) ([]StatusReport, erro
 		}
 		checked := len(list(obj(p["spec"])["validateHealths"])) > 0
 		var running *release
-		report.Status, running = liveStatus(name, summary, releases, checked, now())
+		report.Status, running = liveStatus(name, summary, releases, checked, settleAfter(p, space), now())
 		if running != nil {
 			report.Running, report.Revision = running.num, running.digest
 		}
@@ -191,7 +192,9 @@ func publishedReleases(hub Hub, space string) ([]release, error) {
 	}
 	var releases []release
 	for _, r := range all {
-		if !r.Published || r.CreatedAt.IsZero() {
+		// Only what ConfigHub serves, and its gate reads: published for the
+		// Target the Space releases to now.
+		if !r.Published || !r.Current || r.CreatedAt.IsZero() {
 			continue
 		}
 		releases = append(releases, release{num: r.Num, digest: r.Digest, createdAt: r.CreatedAt, live: r.Live})
@@ -213,7 +216,13 @@ var workloadGVKs = []string{"Deployment.v1.apps", "StatefulSet.v1.apps", "Daemon
 // runs is inferred: the latest one created before Sveltos last applied the
 // profile. Releases created close together, or clocks that disagree, can make
 // the inference wrong.
-func liveStatus(profile string, summary map[string]any, releases []release, checked bool, now time.Time) (LiveStatus, *release) {
+//
+// One case is known: Sveltos stamps the time it finished applying, not the
+// time it fetched. A release published while Sveltos was still applying the
+// one before is created before that stamp, and would be taken as applied.
+// Sveltos fetches it within its interval and starts again, so the newest
+// release is not called applied until it is older than settle.
+func liveStatus(profile string, summary map[string]any, releases []release, checked bool, settle time.Duration, now time.Time) (LiveStatus, *release) {
 	s := LiveStatus{Reporter: StatusReporter, DataSource: profile, ObservedAt: now.UTC().Format(time.RFC3339)}
 	features := list(obj(summary["status"])["featureSummaries"])
 	if summary == nil || len(features) == 0 {
@@ -259,6 +268,11 @@ func liveStatus(profile string, summary map[string]any, releases []release, chec
 		if running != nil {
 			s.Message += fmt.Sprintf("; the cluster runs release %d", running.num)
 		}
+	case now.Sub(running.createdAt) < settle:
+		s.Sync, s.Health, s.Operation, s.ReporterSync = "OutOfSync", "Progressing", "Running", "Provisioned"
+		s.Message = fmt.Sprintf("release %d, created %s, is too new to tell from the one before: Sveltos fetches every %s",
+			running.num, running.createdAt.UTC().Format(time.RFC3339), settle-settleSlack)
+		running = nil
 	default:
 		s.Sync, s.Operation, s.Health, s.ReporterSync = "Synced", "Succeeded", "Healthy", "Provisioned"
 		s.Message = fmt.Sprintf("release %d applied", running.num)
@@ -268,6 +282,27 @@ func liveStatus(profile string, summary map[string]any, releases []release, chec
 		}
 	}
 	return s, running
+}
+
+// settleSlack is how long after a fetch Sveltos is given to start applying
+// what it fetched.
+const settleSlack = 30 * time.Second
+
+// settleAfter is how old the newest release must be before it can be called
+// applied: the interval the delivery profile fetches the Space at, a minute
+// when it names none, and settleSlack.
+func settleAfter(profile map[string]any, space string) time.Duration {
+	interval := time.Minute
+	for _, r := range list(obj(profile["spec"])["policyRefs"]) {
+		remote := obj(obj(r)["remoteURL"])
+		if m := gatewaySpace.FindStringSubmatch(str(remote["url"])); m == nil || m[1] != space {
+			continue
+		}
+		if d, err := time.ParseDuration(str(remote["interval"])); err == nil && d > 0 {
+			interval = d
+		}
+	}
+	return interval + settleSlack
 }
 
 // reporterWord is one of Sveltos's own words, short enough for the 64
@@ -465,25 +500,30 @@ func writeStatus(hub Hub, r *StatusReport, releases []release, opts StatusOption
 		return fmt.Errorf("recording the live status of release %d: %w", newest.num, err)
 	}
 	r.Wrote = true
-	return dropLegacyStatus(hub, r.Space)
+	r.Note = dropLegacyStatus(hub, r.Space)
+	return nil
 }
 
 // dropLegacyStatus removes the reading an earlier version left on the Space,
 // which nothing updates now and which would go on saying what was true then.
-func dropLegacyStatus(hub Hub, space string) error {
+// The reading that matters is recorded by now, so failing to tidy up is
+// something to say, not a failure: removing an annotation takes Edit on the
+// Space, which recording a reading does not.
+func dropLegacyStatus(hub Hub, space string) string {
+	const left = "%s still holds the annotation " + LegacyLiveStatusAnnotation + ", which an earlier version wrote and nothing reads; it could not be removed (that takes Edit on the Space): %s"
 	s, err := hub.Space(space)
 	if err != nil {
-		return fmt.Errorf("looking for the live status an earlier version left on the Space: %w", err)
+		return ""
 	}
 	if _, ok := s.Annotations[LegacyLiveStatusAnnotation]; !ok {
-		return nil
+		return ""
 	}
 	patch, err := json.Marshal(map[string]any{"Annotations": map[string]any{LegacyLiveStatusAnnotation: nil}})
 	if err != nil {
-		return err
+		return fmt.Sprintf(left, space, err)
 	}
 	if err := hub.PatchSpace(space, patch); err != nil {
-		return fmt.Errorf("removing the live status an earlier version left on the Space: %w", err)
+		return fmt.Sprintf(left, space, oneLine(err))
 	}
-	return nil
+	return ""
 }

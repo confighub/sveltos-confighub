@@ -557,14 +557,14 @@ the Release, so 0.13's readings reach nothing: the `Healthy` gate answers
 0.14, `status` records on the Release, and removes the annotation an earlier
 version left on a Space.
 
-The reading is always of the newest published release, because that is the
-one Sveltos fetches and the one the `Healthy` gate reads. A release just
-published holds nothing until `status` next runs; an older release keeps the
-last reading made of it.
+The reading is always of the newest release published for the Target the
+Space releases to, because that is the one Sveltos fetches and the one the
+`Healthy` gate reads. A release just published holds nothing until `status`
+next runs; an older release keeps the last reading made of it.
 
-ConfigHub's component map shows the same readings on each cluster's variant.
-Each is marked Live and Synced, and is marked behind while a rollout still
-has a release to bring it (the picture is from before v0.8.2):
+Before v0.8.2, ConfigHub's component map showed the readings on each
+cluster's variant, as in this picture from then. We have not looked at the
+map again since live status moved:
 
 ![The Meridian slice in ConfigHub's component map: mer-kyverno-base, three class bases (prod, test, uat), and six cluster variants, each marked Live and Synced, some one release behind a rollout in progress](../images/sveltos/sveltos-meridian-tree.png)
 
@@ -587,6 +587,14 @@ reading says what Sveltos applied and when; it is not proof that the cluster
 runs that exact release. Checking the running objects against the release is
 [#39](https://github.com/confighub/sveltos-confighub/issues/39)'s drift report.
 
+One case is guarded. Sveltos stamps the time it finished applying, not the
+time it fetched. A release published while Sveltos is still applying the one
+before is older than that stamp, and would be taken as applied. So the newest
+release is not called applied until it is older than the delivery profile's
+fetch interval and 30 seconds, a minute and a half as `apply` writes them. By
+then Sveltos has fetched it and started again. Until then the reading is
+OutOfSync, and says the release is too new to tell.
+
 It writes a reading only when it changes, or when the one the release holds is
 older than `--refresh` (ten minutes by default). A refreshed reading has a new
 time, but the health checks did not run again. A reading another reporter
@@ -598,8 +606,10 @@ reported.
 user, as a member of the organization, can. A worker with no role in the
 organization needs `View` and `ViewChildren` on each variant Space to read
 its releases, and `EditChildren` on the Space, or on its Target, to record a
-reading; `Edit` on the Space is not enough. Measured on 2026-10-09 against
-ConfigHub v0.8.10:
+reading; `Edit` on the Space is not enough. Removing the annotation an
+earlier version left takes `Edit` on the Space; without it the reading is
+still recorded, and `status` says once that the annotation is still there.
+Measured on 2026-10-09 against ConfigHub v0.8.10:
 
 ```bash
 cub space update <variant Space> --permission "View:<bot user>" \

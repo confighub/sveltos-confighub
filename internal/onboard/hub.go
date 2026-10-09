@@ -88,6 +88,10 @@ type HubRelease struct {
 	Num       int
 	Digest    string
 	Published bool
+	// Current says the release was published for the Target the Space
+	// releases to now. ConfigHub serves, and its Healthy gate reads, the
+	// newest published release that is.
+	Current   bool
 	CreatedAt time.Time
 	// Live is the live status the release holds, if a tool has reported on
 	// it.

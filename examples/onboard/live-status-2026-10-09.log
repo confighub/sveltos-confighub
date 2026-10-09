@@ -165,3 +165,48 @@ NUM    TAG                                       PUBLISHED    DIGEST          LI
 1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         8beb206b971d    Synced/Healthy     2026-10-09 16:00:50    
 mgmt Provisioned@2026-10-09T16:08:12Z
 prod-1 Provisioned@2026-10-09T16:07:40Z
+
+=================== 6. A new release, read every 10 seconds: not called applied until it is older than
+                    the fetch interval and 30 seconds (a review of this change found the hole; see the guide)
+##### a release published for staging, read every 10 seconds [16:32:25]
+16:32:27  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  yes        release 4, created 2026-10-09T16:32:27Z, not applied yet; the cluster runs release 3
+          Sveltos: Provisioned@2026-10-09T16:08:12Z
+16:32:38  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, not applied yet; the cluster runs release 3
+          Sveltos: Provisioned@2026-10-09T16:08:12Z
+16:32:49  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, not applied yet; the cluster runs release 3
+          Sveltos: Provisioned@2026-10-09T16:08:12Z
+16:33:02  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  yes      release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:33:26  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:33:37  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:33:49  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:01  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  yes        release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:13  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:24  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:35  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:46  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:57  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:35:08  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE              CREATED             
+4      release-4                                 true         8c3252a6ef3a    Synced/Healthy    2026-10-09 16:32:27    
+3      rh-sv-web-base/replicas-3-co-end          true         ae3fbd26bf4a    Synced/Healthy    2026-10-09 16:06:04    
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966    Synced/Healthy    2026-10-09 16:03:18    
+
+=================== 7. An annotation 0.13 left, and a worker with EditChildren on prod-1's Space but not Edit
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    4        Synced  Healthy  failed   release 4 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Healthy  yes      release 2 applied
+Note: rh-sv-web-prod-1 still holds the annotation confighub.com/live-status, which an earlier version wrote and nothing reads; it could not be removed (that takes Edit on the Space): HTTP 403 for req cEffpwODvyNXdoySdkZQLfviZwwHobUv: permission denied Details: failed to update entity
+Error: rh-sv-web-mgmt: recording the live status of release 4, which takes EditChildren on the Space or on its Target: HTTP 403 for req atTtjOssLNbPqnvohneiAmapyKfnArew: permission denied Details: failed to update entity
+
+As a user with Edit on the Space, the same command then removed it.

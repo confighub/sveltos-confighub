@@ -40,12 +40,20 @@ Healthy, promotion into prod was refused; once 0.14 had recorded the same
 reading on the release, it passed
 ([the run](../examples/onboard/live-status-2026-10-09.log)).
 
-- A release just published holds no reading until Sveltos is seen to have
-  applied it, so the gate cannot pass on what was true of the release before.
+- A release just published holds no reading until `status` next runs, and
+  none that passes until Sveltos is seen to have applied it. The gate no
+  longer passes on what was true of the release before.
+- The newest release is not called applied until it is older than the
+  delivery profile's fetch interval and 30 seconds. Sveltos stamps when it
+  finished applying, so a release published while it was applying the one
+  before would otherwise be taken as applied.
+- Only releases published for the Target the Space releases to now are
+  counted, as ConfigHub itself counts them.
 - The table shows the release each reading is recorded on, in place of a
   digest, and `cub release list --space <variant>` shows it in ConfigHub.
 - The annotation an earlier version left on a Space is removed when the first
-  new reading is recorded.
+  new reading is recorded. That takes `Edit` on the Space; without it `status`
+  says so once and carries on.
 - A reading another reporter wrote on the release is left alone while it is
   fresh or says the same.
 - A Space that cannot be read or written no longer stops the others being

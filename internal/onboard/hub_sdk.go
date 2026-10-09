@@ -398,7 +398,7 @@ func (h *SDKHub) Releases(space string) ([]HubRelease, error) {
 	}
 	// Named fields only: a release's bundle is large, and none of it is
 	// wanted here.
-	fields := "ReleaseID,ReleaseNum,SpaceID,OrganizationID,Published,ManifestDigest,CreatedAt,LiveStatus"
+	fields := "ReleaseID,ReleaseNum,SpaceID,OrganizationID,Published,TargetID,ManifestDigest,CreatedAt,LiveStatus"
 	res, err := c.API.ListExtendedReleasesWithResponse(ctx, s.SpaceID, &goclientnew.ListExtendedReleasesParams{Select: &fields})
 	if cubapi.IsAPIError(err, res) {
 		return nil, cubapi.InterpretErrorGeneric(err, res)
@@ -413,6 +413,7 @@ func (h *SDKHub) Releases(space string) ([]HubRelease, error) {
 			continue
 		}
 		hr := HubRelease{Num: int(r.ReleaseNum), Digest: r.ManifestDigest, Published: r.Published, CreatedAt: r.CreatedAt}
+		hr.Current = s.ReleaseTargetID != nil && r.TargetID != nil && *r.TargetID == *s.ReleaseTargetID
 		if ls := r.LiveStatus; ls != nil {
 			hr.Live = &LiveStatus{
 				Reporter: ls.Reporter, DataSource: ls.DataSource,

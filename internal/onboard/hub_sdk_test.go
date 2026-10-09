@@ -20,6 +20,7 @@ const (
 	revisionID      = "55555555-5555-5555-5555-555555555555"
 	emptyRevisionID = "66666666-6666-6666-6666-666666666666"
 	releaseID       = "77777777-7777-7777-7777-777777777777"
+	targetID        = "99999999-9999-9999-9999-999999999999"
 	revisions       = "/api/space/" + spaceID + "/unit/" + unitID + "/revision"
 	spaceReleases   = "/api/space/" + spaceID + "/release"
 )
@@ -41,7 +42,7 @@ func hubServer(t *testing.T) (*httptest.Server, *[]asked) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/api/space":
-			fmt.Fprintf(w, `[{"Space":{"SpaceID":%q,"Slug":"s"}}]`, spaceID)
+			fmt.Fprintf(w, `[{"Space":{"SpaceID":%q,"Slug":"s","ReleaseTargetID":%q}}]`, spaceID, targetID)
 		case r.Method == "POST" && r.URL.Path == "/api/space/"+spaceID+"/attestation":
 			id := "22222222-2222-2222-2222-222222222222"
 			if r.URL.Query().Get("dry_run") == "true" {
@@ -51,9 +52,9 @@ func hubServer(t *testing.T) (*httptest.Server, *[]asked) {
 		case r.Method == "PATCH" && r.URL.Path == "/api/space/"+spaceID:
 			fmt.Fprintf(w, `{"SpaceID":%q,"Slug":"s"}`, spaceID)
 		case r.Method == "GET" && r.URL.Path == spaceReleases:
-			fmt.Fprintf(w, `[{"Release":{"ReleaseID":"88888888-8888-8888-8888-888888888888","ReleaseNum":1,"Published":true,"ManifestDigest":"sha256:one","CreatedAt":"2026-09-28T09:00:00Z",`+
+			fmt.Fprintf(w, `[{"Release":{"ReleaseID":"88888888-8888-8888-8888-888888888888","ReleaseNum":1,"Published":true,"TargetID":%q,"ManifestDigest":"sha256:one","CreatedAt":"2026-09-28T09:00:00Z",`+
 				`"LiveStatus":{"Reporter":"cub-sveltos","DataSource":"kyverno-prod-eu","Sync":"Synced","Health":"Healthy","Operation":"Succeeded","ReporterSync":"Provisioned","Message":"release 1 applied","ObservedAt":"2026-09-28T09:05:00+02:00"}}},`+
-				`{"Release":{"ReleaseID":%q,"ReleaseNum":2,"Published":true,"ManifestDigest":"sha256:two","CreatedAt":"2026-09-28T10:00:00Z"}}]`, releaseID)
+				`{"Release":{"ReleaseID":%q,"ReleaseNum":2,"Published":true,"TargetID":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","ManifestDigest":"sha256:two","CreatedAt":"2026-09-28T10:00:00Z"}}]`, targetID, releaseID)
 		case r.Method == "PATCH" && r.URL.Path == spaceReleases+"/"+releaseID:
 			fmt.Fprintf(w, `{"ReleaseID":%q,"ReleaseNum":2}`, releaseID)
 		case r.Method == "GET" && r.URL.Path == "/api/release":
@@ -210,7 +211,7 @@ func TestSDKHubLiveStatus(t *testing.T) {
 	if err != nil || len(releases) != 2 {
 		t.Fatalf("the Space's releases: %+v %v", releases, err)
 	}
-	if q := last(got); q.path != spaceReleases || q.selected != "ReleaseID,ReleaseNum,SpaceID,OrganizationID,Published,ManifestDigest,CreatedAt,LiveStatus" {
+	if q := last(got); q.path != spaceReleases || q.selected != "ReleaseID,ReleaseNum,SpaceID,OrganizationID,Published,TargetID,ManifestDigest,CreatedAt,LiveStatus" {
 		t.Errorf("only the fields read are asked for, not each release's bundle: %+v", q)
 	}
 	want := LiveStatus{Reporter: "cub-sveltos", DataSource: "kyverno-prod-eu", Sync: "Synced", Health: "Healthy", Operation: "Succeeded",
@@ -220,6 +221,9 @@ func TestSDKHubLiveStatus(t *testing.T) {
 	}
 	if releases[1].Live != nil {
 		t.Errorf("a release nothing has reported on holds no reading: %+v", releases[1].Live)
+	}
+	if !releases[0].Current || releases[1].Current {
+		t.Errorf("a release is current when it was published for the Target the Space releases to now: %+v", releases)
 	}
 
 	st := LiveStatus{Reporter: "cub-sveltos", DataSource: "kyverno-prod-eu", Sync: "OutOfSync", Health: "Progressing", Operation: "Running",

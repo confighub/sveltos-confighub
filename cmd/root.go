@@ -291,27 +291,39 @@ the variant's newest published release: Synced and Healthy once Sveltos has
 applied that release and its workloads were available, OutOfSync while it is
 on its way, Degraded when Sveltos reports a failure. ConfigHub's Healthy gate,
 its change orders and its UI read the newest published release, so a release
-just published has no reading until Sveltos is seen to have applied it.
+just published has no reading until status next runs, and none that passes the
+gate until Sveltos is seen to have applied it.
 
 Sveltos does not report which release it fetched, so the release is worked
-out: the latest one created before Sveltos last applied the profile. Health is
-what Sveltos checked when it applied, and what the profile's ClusterHealthCheck
-has seen since.
+out: the latest one created before Sveltos last applied the profile. A release
+newer than the profile's fetch interval and 30 seconds is not called applied
+yet, because Sveltos may have been applying the one before. Health is what
+Sveltos checked when it applied, and what the profile's ClusterHealthCheck has
+seen since.
 
 It writes only when a reading changes, or when the one the release holds is
 older than --refresh. A reading another reporter wrote is left alone while it
-is fresh or says the same. It writes as the cub user it runs as, who needs Edit
-on the release. Needs ConfigHub v0.8.2 or newer, where live status moved from
-the Space onto the Release; the reading an earlier version left on a Space is
-removed when the first new one is recorded.`,
+is fresh or says the same. It writes as the cub user it runs as, who needs
+EditChildren on the variant Space or on its Target. Needs ConfigHub v0.8.2 or
+newer, where live status moved from the Space onto the Release; the reading an
+earlier version left on a Space is removed when the first new one is
+recorded, which takes Edit on the Space.`,
 		Args: cobra.NoArgs,
 		RunE: func(c *cobra.Command, _ []string) error {
+			noted := map[string]bool{}
 			for {
 				// A Space that could not be read or written is an error, and
 				// the readings of the others are still shown.
 				reports, err := onboard.ReportStatus(onboard.Run, hub(), so)
 				if len(reports) > 0 {
 					printStatus(c.OutOrStdout(), reports)
+				}
+				for _, r := range reports {
+					// Said once, not on every pass of --watch.
+					if r.Note != "" && !noted[r.Note] {
+						noted[r.Note] = true
+						fmt.Fprintln(c.ErrOrStderr(), "Note:", r.Note)
+					}
 				}
 				if !watch {
 					return err
