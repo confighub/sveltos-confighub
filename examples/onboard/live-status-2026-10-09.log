@@ -1,0 +1,212 @@
+Live status on the Release: cub sveltos status, run on 2026-10-09 (UTC).
+
+Two kind clusters with stock Sveltos v1.15.0: the management cluster, which is
+also the staging cluster (mgmt), and one workload cluster (prod-1). One live
+profile, web (the podinfo chart), onboarded with --prefix rh-sv and handed
+over. ConfigHub v0.8.10. "cub sveltos" is the released v0.13.0; "./cub-sveltos"
+is this change, built from source. The workflow's prod stage requires Released
+and Healthy. Lines starting "Promoting" are left out.
+
+=================== 1. The released plugin, then this change, on the first release
+$ cub sveltos status --context kind-rh-sv-mgmt
+CLUSTER  SPACE             SYNC    HEALTH   REVISION             WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    Synced  Healthy  sha256:6fea19c3b641  yes
+prod-1   rh-sv-web-prod-1  Synced  Healthy  sha256:8beb206b971d  yes
+$ cub release list --space rh-sv-web-mgmt
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE    CREATED
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641            2026-10-09 16:00:47
+$ ./cub-sveltos status --context kind-rh-sv-mgmt
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    1        Synced  Healthy  yes      release 1 applied
+prod-1   rh-sv-web-prod-1  1        Synced  Healthy  yes      release 1 applied
+$ cub release list --space rh-sv-web-mgmt
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE              CREATED
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641    Synced/Healthy    2026-10-09 16:00:47
+$ cub space get rh-sv-web-mgmt -o 'jq=.Space.Annotations'     # the annotation 0.13 wrote is gone
+{
+  "UpstreamSpaceID": "16c1fdf1-8782-4a96-8302-728e217b513f"
+}
+$ ./cub-sveltos status --context kind-rh-sv-mgmt
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN    MESSAGE
+mgmt     rh-sv-web-mgmt    1        Synced  Healthy  unchanged  release 1 applied
+prod-1   rh-sv-web-prod-1  1        Synced  Healthy  unchanged  release 1 applied
+
+=================== 2. A change released to staging; prod's promotion while Sveltos applies it
+##### a change on the base: 2 replicas [16:03:14]
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE              CREATED             
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966                      2026-10-09 16:03:18    
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641    Synced/Healthy    2026-10-09 16:00:47    
+
+##### EXPECT REFUSAL: promote to prod the moment staging's release is published [16:03:19]
+Failed: Variant 'mgmt' has no live status for release 2 yet
+
+##### this change, while Sveltos has not applied release 2 yet [16:03:19]
+CLUSTER  SPACE             RELEASE  SYNC       HEALTH       WRITTEN    MESSAGE
+mgmt     rh-sv-web-mgmt    2        OutOfSync  Progressing  yes        release 2, created 2026-10-09T16:03:18Z, not applied yet; the cluster runs release 1
+prod-1   rh-sv-web-prod-1  1        Synced     Healthy      unchanged  release 1 applied
+Failed: Variant 'mgmt' release 2 is not synced (OutOfSync)
+
+##### wait for Sveltos to apply release 2 on staging [16:03:22]
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+web-podinfo   2/2     2            2           4m25s
+mgmt Provisioning@2026-10-09T16:02:03Z
+prod-1 Provisioned@2026-10-09T16:02:02Z
+
+##### the released plugin (v0.13.0) reports too, to the annotation; the release keeps what this change recorded [16:04:13]
+CLUSTER  SPACE             SYNC       HEALTH       REVISION             WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    OutOfSync  Progressing                       yes      Sveltos: Provisioning
+prod-1   rh-sv-web-prod-1  Synced     Healthy      sha256:8beb206b971d  yes      
+Failed: Variant 'mgmt' release 2 is not synced (OutOfSync)
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE                     CREATED             
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966    OutOfSync/Progressing    2026-10-09 16:03:18    
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641    Synced/Healthy           2026-10-09 16:00:47    
+
+##### this change reports again: Sveltos now says Failed, its health check having run while pods were starting [16:04:16]
+CLUSTER  SPACE             RELEASE  SYNC       HEALTH    WRITTEN    MESSAGE
+mgmt     rh-sv-web-mgmt    2        OutOfSync  Degraded  yes        Sveltos: Failed: health check 'deployments-web' for feature Resources failed: resource Deployment web/web-podinfo is not healthy "resource web/web-podinfo is not healthy: web-podinfo: 1 of 2 available"
+prod-1   rh-sv-web-prod-1  1        Synced     Healthy   unchanged  release 1 applied
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE                  CREATED             
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966    OutOfSync/Degraded    2026-10-09 16:03:18    
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641    Synced/Healthy        2026-10-09 16:00:47    
+false
+Failed: Variant 'mgmt' release 2 is not synced (OutOfSync)
+promote exit 1
+
+Sveltos reported Failed while the new pods were starting, tried again, and
+reported Provisioned at 16:05:38. Then:
+$ ./cub-sveltos status --context kind-rh-sv-mgmt
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN    MESSAGE
+mgmt     rh-sv-web-mgmt    2        Synced  Healthy  yes        release 2 applied
+prod-1   rh-sv-web-prod-1  1        Synced  Healthy  unchanged  release 1 applied
+$ cub variant promote --change-order rh-sv-web-base/replicas-2 --target-stage prod --squash --quiet     # passes
+
+=================== 3. A release only the released plugin has reported on, then this change
+##### a second change: 3 replicas, released to staging [16:06:00]
+
+##### wait until Sveltos has applied it and settled [16:06:04]
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+web-podinfo   3/3     3            3           8m25s
+mgmt Provisioned@2026-10-09T16:08:12Z
+prod-1 Provisioned@2026-10-09T16:07:40Z
+
+##### the released plugin (v0.13.0) reports Synced and Healthy, into the Space annotation [16:08:13]
+CLUSTER  SPACE             SYNC    HEALTH   REVISION             WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    Synced  Healthy  sha256:ae3fbd26bf4a  yes      
+prod-1   rh-sv-web-prod-1  Synced  Healthy  sha256:e46a551c29cf  yes      
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE              CREATED             
+3      rh-sv-web-base/replicas-3-co-end          true         ae3fbd26bf4a                      2026-10-09 16:06:04    
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966    Synced/Healthy    2026-10-09 16:03:18    
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641    Synced/Healthy    2026-10-09 16:00:47    
+
+##### EXPECT REFUSAL: ConfigHub reads the release, which holds nothing [16:08:20]
+Failed: Variant 'mgmt' has no live status for release 3 yet
+
+##### this change records the same reading on the release [16:08:20]
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    3        Synced  Healthy  yes      release 3 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Healthy  yes      release 2 applied
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE              CREATED             
+3      rh-sv-web-base/replicas-3-co-end          true         ae3fbd26bf4a    Synced/Healthy    2026-10-09 16:06:04    
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966    Synced/Healthy    2026-10-09 16:03:18    
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         6fea19c3b641    Synced/Healthy    2026-10-09 16:00:47    
+{"DataSource":"web-mgmt","Health":"Healthy","Message":"release 3 applied","ObservedAt":"2026-10-09T16:08:21Z","Operation":"Succeeded","Reporter":"cub-sveltos","ReporterSync":"Provisioned","Sync":"Synced"}
+old annotation still there: false
+
+The promotion to prod then passed: rh-sv-web-prod-1/web moved to revision 4.
+
+=================== 4. Which grant lets a worker with no organization role record a reading
+--- no grant
+Error: rh-sv-web-mgmt: space "rh-sv-web-mgmt" not found; rh-sv-web-prod-1: space "rh-sv-web-prod-1" not found
+--- View and ViewChildren on each variant Space
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    3        Synced  Healthy  failed   release 3 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Healthy  failed   release 2 applied
+Error: rh-sv-web-mgmt: recording the live status of release 3: HTTP 403 for req xSWtrNFzcnTfynINdDVJKrWjPNqyuAza: permission denied
+Details:
+  failed to update entity
+; rh-sv-web-prod-1: recording the live status of release 2: HTTP 403 for req PcdeDRFrGVuAesPGaMtMDKLZxkMdxNgn: permission denied
+Details:
+  failed to update entity
+
+--- plus Edit on each variant Space (what the demo's grant-agents.sh gives)
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    3        Synced  Healthy  failed   release 3 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Healthy  failed   release 2 applied
+Error: rh-sv-web-mgmt: recording the live status of release 3: HTTP 403 for req TqzZCiPFsbjkIMdqKghLajZXNGiuPhVG: permission denied
+Details:
+  failed to update entity
+; rh-sv-web-prod-1: recording the live status of release 2: HTTP 403 for req DTmkEVzHMKzDoyTrCMxKGmLqTVvIiOOS: permission denied
+Details:
+  failed to update entity
+
+--- plus EditChildren on each variant Space
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    3        Synced  Healthy  yes      release 3 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Healthy  yes      release 2 applied
+
+=================== 5. One Space it may not write; a workload down after its release was applied
+
+##### one Space the worker may no longer write: the other is still reported [16:10:08]
+remove grant exit 0
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    3        Synced  Healthy  failed   release 3 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Healthy  yes      release 2 applied
+Error: rh-sv-web-mgmt: recording the live status of release 3, which takes EditChildren on the Space or on its Target: HTTP 403 for req iNVmZmDrypIemvjOZPDSVoNzFYoxUNFZ: permission denied Details: failed to update entity
+status exit 1
+
+##### the pods of web stop on prod-1 after release 2 was applied [16:10:11]
+deployment.apps/web-podinfo patched
+16:10:46
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH    WRITTEN    MESSAGE
+mgmt     rh-sv-web-mgmt    3        Synced  Healthy   unchanged  release 3 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Degraded  yes        ClusterHealthCheck rh-sv-web: Deployment: web/web-podinfo status is Degraded Message: web-podinfo: 1 of 2 available
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE               CREATED             
+2      rh-sv-web-base/replicas-2-co-end          true         e46a551c29cf    Synced/Degraded    2026-10-09 16:06:00    
+1      rh-sv-web-base/onboard-a8e3fdb4-co-end    true         8beb206b971d    Synced/Healthy     2026-10-09 16:00:50    
+mgmt Provisioned@2026-10-09T16:08:12Z
+prod-1 Provisioned@2026-10-09T16:07:40Z
+
+=================== 6. A new release, read every 10 seconds: not called applied until it is older than
+                    the fetch interval and 30 seconds (a review of this change found the hole; see the guide)
+##### a release published for staging, read every 10 seconds [16:32:25]
+16:32:27  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  yes        release 4, created 2026-10-09T16:32:27Z, not applied yet; the cluster runs release 3
+          Sveltos: Provisioned@2026-10-09T16:08:12Z
+16:32:38  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, not applied yet; the cluster runs release 3
+          Sveltos: Provisioned@2026-10-09T16:08:12Z
+16:32:49  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, not applied yet; the cluster runs release 3
+          Sveltos: Provisioned@2026-10-09T16:08:12Z
+16:33:02  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  yes      release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:33:26  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:33:37  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:33:49  mgmt     rh-sv-web-mgmt    4        OutOfSync  Progressing  unchanged  release 4, created 2026-10-09T16:32:27Z, is too new to tell from the one before: Sveltos fetches every 1m0s
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:01  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  yes        release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:13  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:24  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:35  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:46  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:34:57  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+16:35:08  mgmt     rh-sv-web-mgmt    4        Synced  Healthy  unchanged  release 4 applied
+          Sveltos: Provisioned@2026-10-09T16:33:10Z
+NUM    TAG                                       PUBLISHED    DIGEST          LIVE              CREATED             
+4      release-4                                 true         8c3252a6ef3a    Synced/Healthy    2026-10-09 16:32:27    
+3      rh-sv-web-base/replicas-3-co-end          true         ae3fbd26bf4a    Synced/Healthy    2026-10-09 16:06:04    
+2      rh-sv-web-base/replicas-2-co-end          true         2a0acb546966    Synced/Healthy    2026-10-09 16:03:18    
+
+=================== 7. An annotation 0.13 left, and a worker with EditChildren on prod-1's Space but not Edit
+CLUSTER  SPACE             RELEASE  SYNC    HEALTH   WRITTEN  MESSAGE
+mgmt     rh-sv-web-mgmt    4        Synced  Healthy  failed   release 4 applied
+prod-1   rh-sv-web-prod-1  2        Synced  Healthy  yes      release 2 applied
+Note: rh-sv-web-prod-1 still holds the annotation confighub.com/live-status, which an earlier version wrote and nothing reads; it could not be removed (that takes Edit on the Space): HTTP 403 for req cEffpwODvyNXdoySdkZQLfviZwwHobUv: permission denied Details: failed to update entity
+Error: rh-sv-web-mgmt: recording the live status of release 4, which takes EditChildren on the Space or on its Target: HTTP 403 for req atTtjOssLNbPqnvohneiAmapyKfnArew: permission denied Details: failed to update entity
+
+As a user with Edit on the Space, the same command then removed it.

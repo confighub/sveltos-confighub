@@ -28,9 +28,10 @@ Measured on ConfigHub (v0.6.5 where a log records the version) and on kind with 
 - **Issue:** confighubai/confighub#5530.
 - **Measured:** 28 September ([policy-checks.md](policy-checks.md)).
 
-**The Healthy gate reads words, not releases.**
-- **What happens:** a stage's `Healthy` prerequisite passes on a live-status reading of Synced and Healthy, whichever release the reading is about. A reading whose revision equals a release's digest also moves that release's change order on by itself.
-- **What to do:** keep `cub sveltos status --watch` running, and promote after it has reported the new release.
+**The Healthy gate reads the newest published release.**
+- **What happens:** from ConfigHub v0.8.2, a stage's `Healthy` prerequisite reads the live status recorded on the newest published release of each Space in the stage ahead. It no longer reads the Space annotation `cub sveltos` wrote up to 0.13, so with 0.13 the gate never opens: "has no live status for release N yet".
+- **What to do:** use `cub sveltos` 0.14 or newer, and keep `cub sveltos status --watch` running.
+- **Measured:** 9 October, against ConfigHub v0.8.10.
 - **See:** [live status](onboard-your-sveltos-fleet.md#live-status-in-confighub).
 
 **The release a cluster runs is worked out, not reported.**
@@ -55,7 +56,7 @@ Measured on ConfigHub (v0.6.5 where a log records the version) and on kind with 
 - Our organization's quota was 100 Spaces, and each variant is a Space. `cub sveltos plan` prints the count; ask for more before onboarding a large fleet.
 
 **The UI:**
-- It does not yet recognise live status from Sveltos: its cards read "Not reported yet" (confighubai/confighub#5049, patch attached).
+- Before ConfigHub v0.8.2 it did not recognise live status from Sveltos: its cards read "Not reported yet" (confighubai/confighub#5049). From v0.8.2 live status is a field of each release, whoever reports it, and `cub release list` shows it; we have not looked at the cards again.
 
 ## Sveltos
 

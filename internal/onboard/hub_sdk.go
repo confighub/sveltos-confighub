@@ -3,11 +3,13 @@ package onboard
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/confighub/sdk/core/cubapi"
 	goclientnew "github.com/confighub/sdk/core/openapi/goclient-new"
@@ -394,7 +396,10 @@ func (h *SDKHub) Releases(space string) ([]HubRelease, error) {
 	if err != nil {
 		return nil, err
 	}
-	res, err := c.API.ListExtendedReleasesWithResponse(ctx, s.SpaceID, &goclientnew.ListExtendedReleasesParams{})
+	// Named fields only: a release's bundle is large, and none of it is
+	// wanted here.
+	fields := "ReleaseID,ReleaseNum,SpaceID,OrganizationID,Published,TargetID,ManifestDigest,CreatedAt,LiveStatus"
+	res, err := c.API.ListExtendedReleasesWithResponse(ctx, s.SpaceID, &goclientnew.ListExtendedReleasesParams{Select: &fields})
 	if cubapi.IsAPIError(err, res) {
 		return nil, cubapi.InterpretErrorGeneric(err, res)
 	}
@@ -403,11 +408,83 @@ func (h *SDKHub) Releases(space string) ([]HubRelease, error) {
 		return out, nil
 	}
 	for _, er := range *res.JSON200 {
-		if r := er.Release; r != nil {
-			out = append(out, HubRelease{Num: int(r.ReleaseNum), Digest: r.ManifestDigest, Published: r.Published, CreatedAt: r.CreatedAt})
+		r := er.Release
+		if r == nil {
+			continue
 		}
+		hr := HubRelease{Num: int(r.ReleaseNum), Digest: r.ManifestDigest, Published: r.Published, CreatedAt: r.CreatedAt}
+		hr.Current = s.ReleaseTargetID != nil && r.TargetID != nil && *r.TargetID == *s.ReleaseTargetID
+		if ls := r.LiveStatus; ls != nil {
+			hr.Live = &LiveStatus{
+				Reporter: ls.Reporter, DataSource: ls.DataSource,
+				Sync: string(ls.Sync), Health: string(ls.Health), Operation: string(ls.Operation),
+				ReporterSync: ls.ReporterSync, ReporterHealth: ls.ReporterHealth, ReporterOperation: ls.ReporterOperation,
+				Message: ls.Message,
+			}
+			if !ls.ObservedAt.IsZero() {
+				hr.Live.ObservedAt = ls.ObservedAt.UTC().Format(time.RFC3339)
+			}
+		}
+		out = append(out, hr)
 	}
 	return out, nil
+}
+
+// SetLiveStatus records a reading on one release. Every field is sent, an
+// empty one as null: a merge patch keeps what it does not name, and a word
+// left over from the reading before would not be this reading's.
+func (h *SDKHub) SetLiveStatus(space string, release int, st LiveStatus) error {
+	ctx := context.Background()
+	c, err := h.client(ctx)
+	if err != nil {
+		return err
+	}
+	s, err := h.resolveSpace(ctx, c, space)
+	if err != nil {
+		return err
+	}
+	where := "ReleaseNum = " + strconv.Itoa(release)
+	only := "ReleaseID,ReleaseNum,SpaceID,OrganizationID"
+	res, err := c.API.ListExtendedReleasesWithResponse(ctx, s.SpaceID, &goclientnew.ListExtendedReleasesParams{Where: &where, Select: &only})
+	if cubapi.IsAPIError(err, res) {
+		return cubapi.InterpretErrorGeneric(err, res)
+	}
+	var releaseID *goclientnew.UUID
+	if res.JSON200 != nil {
+		for _, er := range *res.JSON200 {
+			if er.Release != nil && int(er.Release.ReleaseNum) == release {
+				releaseID = &er.Release.ReleaseID
+			}
+		}
+	}
+	if releaseID == nil {
+		return fmt.Errorf("release %d not found in space %s", release, space)
+	}
+	if _, err := time.Parse(time.RFC3339, st.ObservedAt); err != nil {
+		return fmt.Errorf("the status names no time it was observed: %w", err)
+	}
+	fields := map[string]any{}
+	for name, value := range map[string]string{
+		"Reporter": st.Reporter, "DataSource": st.DataSource,
+		"Sync": st.Sync, "Health": st.Health, "Operation": st.Operation,
+		"ReporterSync": st.ReporterSync, "ReporterHealth": st.ReporterHealth, "ReporterOperation": st.ReporterOperation,
+		"Message": st.Message, "ObservedAt": st.ObservedAt,
+	} {
+		if value == "" {
+			fields[name] = nil
+		} else {
+			fields[name] = value
+		}
+	}
+	patch, err := json.Marshal(map[string]any{"LiveStatus": fields})
+	if err != nil {
+		return err
+	}
+	pres, err := c.API.PatchReleaseWithBodyWithResponse(ctx, s.SpaceID, *releaseID, &goclientnew.PatchReleaseParams{}, "application/merge-patch+json", bytes.NewReader(patch))
+	if cubapi.IsAPIError(err, pres) {
+		return cubapi.InterpretErrorGeneric(err, pres)
+	}
+	return nil
 }
 
 func (h *SDKHub) ReleasedSpaces(prefix string) ([]string, error) {
