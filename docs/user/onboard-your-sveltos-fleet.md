@@ -240,6 +240,24 @@ Target grants View and ViewChildren. That credential does not expire, it can
 pull only the releases of those Targets, and the script
 moves it from `cub` into the Secret without writing it to disk or showing it.
 
+### Which registry Sveltos fetches from
+
+Every delivery profile names the registry of the ConfigHub server you are
+logged in to, as that server advertises it (`OCIHost` and `OCIPort` in
+`GET /api/info`): `oci.hub.confighub.com` for hub.confighub.com, and over
+plain HTTP (`plainHTTP: true` on each `remoteURL`) when the server's URL is
+`http://`. With no login, `plan` names `oci.hub.confighub.com`, so a plan
+needs no account. When the management cluster reaches the registry at
+another address, name it with `--gateway` on `plan`, `apply` and `watch`:
+`host[:port]` over TLS, or `http://host:port` over plain HTTP. A ConfigHub
+server run on your laptop advertises a loopback address the clusters cannot
+reach, so `plan` stops and asks for one; kind clusters on the same machine
+reach it as, for example:
+
+```bash
+cub sveltos apply my-fleet.yaml --out onboard --gateway http://host.docker.internal:9093
+```
+
 ### The management cluster's record, delivered from ConfigHub
 
 By default, step 6 puts the delivery profiles on your management cluster with

@@ -45,6 +45,7 @@ type planFlags struct {
 	require      string
 	approvers    []string
 	mgmtRelease  bool
+	gateway      string
 }
 
 func (f *planFlags) register(c *cobra.Command) {
@@ -59,6 +60,7 @@ func (f *planFlags) register(c *cobra.Command) {
 	c.Flags().StringVar(&f.require, "require", "", "attestation types each stage's release also waits for, comma-separated, such as PolicyCheck")
 	c.Flags().StringArrayVar(&f.approvers, "approver", nil, "a ConfigHub user ID whose approval counts (repeatable); with any named, no one else's does, and never the change's author's. cub user list shows each user's ID")
 	c.Flags().BoolVar(&f.mgmtRelease, "management-release", false, "deliver the management record from ConfigHub: its Space publishes releases, and one root profile on the management cluster fetches them")
+	c.Flags().StringVar(&f.gateway, "gateway", "", "the registry Sveltos fetches releases from, as the management cluster reaches it: host[:port] over TLS, or http://host:port over plain HTTP. By default, the one the ConfigHub server cub is logged in to names, or "+onboard.DefaultGatewayHost+" with no login")
 }
 
 func split(s string) []string {
@@ -71,7 +73,13 @@ func split(s string) []string {
 	return out
 }
 
-func (f *planFlags) options() onboard.Options {
+// options are the plan's options, with the gateway --gateway names or the
+// logged-in server advertises.
+func (f *planFlags) options() (onboard.Options, error) {
+	gateway, err := onboard.ResolveGateway(f.gateway, hub().Registry)
+	if err != nil {
+		return onboard.Options{}, err
+	}
 	return onboard.Options{
 		Prefix:            f.prefix,
 		StageLabel:        f.stageLabel,
@@ -82,7 +90,8 @@ func (f *planFlags) options() onboard.Options {
 		IncludeHooks:      split(f.includeHooks),
 		Gates:             onboard.Gates{Policy: f.policy, Require: split(f.require), Approvers: f.approvers},
 		ManagementRelease: f.mgmtRelease,
-	}
+		Gateway:           gateway,
+	}, nil
 }
 
 func readInputs(stdin io.Reader, inputs []string) ([]onboard.Doc, error) {
@@ -162,7 +171,11 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 			if err != nil {
 				return err
 			}
-			p, err := onboard.PlanFleet(docs, pf.options())
+			opts, err := pf.options()
+			if err != nil {
+				return err
+			}
+			p, err := onboard.PlanFleet(docs, opts)
 			if err != nil {
 				return err
 			}
@@ -170,7 +183,7 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 			case "ascii":
 				fmt.Fprint(c.OutOrStdout(), onboard.RenderPlan(p, true))
 			case "json":
-				data, err := onboard.BuildPreview(docs, p, time.Now(), Version(), pf.options())
+				data, err := onboard.BuildPreview(docs, p, time.Now(), Version(), opts)
 				if err != nil {
 					return err
 				}
@@ -201,7 +214,11 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 			if err != nil {
 				return err
 			}
-			p, err := onboard.PlanFleet(docs, af.options())
+			opts, err := af.options()
+			if err != nil {
+				return err
+			}
+			p, err := onboard.PlanFleet(docs, opts)
 			if err != nil {
 				return err
 			}
@@ -375,7 +392,11 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 			if err != nil {
 				return err
 			}
-			wo.Profiles, wo.Plan = docs, wf.options()
+			opts, err := wf.options()
+			if err != nil {
+				return err
+			}
+			wo.Profiles, wo.Plan = docs, opts
 			w := onboard.NewWatcher(onboard.Run, hub(), wo)
 			out, errs := c.OutOrStdout(), c.ErrOrStderr()
 			last, told := "", ""

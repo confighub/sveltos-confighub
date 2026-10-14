@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,5 +81,55 @@ func TestPlanASCIIIsDefault(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Onboarding plan:") || strings.HasPrefix(strings.TrimSpace(stdout.String()), "{") {
 		t.Fatalf("default output changed: %s", stdout.String())
+	}
+}
+
+// The tests plan with no login, as a user without an account does: never as
+// whoever runs them is logged in.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "cub-config")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("CUB_CONFIG", dir)
+	for _, v := range []string{"CUB_SERVER", "CUB_TOKEN", "CUB_CONTEXT"} {
+		os.Unsetenv(v)
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// Without a login, the profiles fetch from ConfigHub's hosted registry;
+// --gateway names another, and plain HTTP marks each remoteURL plainHTTP.
+func TestApplyGateway(t *testing.T) {
+	profileOf := func(args ...string) string {
+		t.Helper()
+		out := t.TempDir()
+		c := newRoot()
+		c.SetArgs(append([]string{"apply", "-", "--out", out}, args...))
+		c.SetIn(strings.NewReader(jsonPlanInput))
+		c.SetOut(&bytes.Buffer{})
+		if err := c.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join(out, "management", "app.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	if s := profileOf(); !strings.Contains(s, "url: oci://oci.hub.confighub.com/space/sveltos-app-prod:latest") || strings.Contains(s, "plainHTTP") {
+		t.Errorf("with no login, the hosted registry:\n%s", s)
+	}
+	if s := profileOf("--gateway", "http://host.docker.internal:9093"); !strings.Contains(s, "url: oci://host.docker.internal:9093/space/sveltos-app-prod:latest") || !strings.Contains(s, "plainHTTP: true") {
+		t.Errorf("--gateway over plain HTTP:\n%s", s)
+	}
+	c := newRoot()
+	c.SetArgs([]string{"plan", "-", "--gateway", "oci://nowhere"})
+	c.SetIn(strings.NewReader(jsonPlanInput))
+	c.SetOut(&bytes.Buffer{})
+	if err := c.Execute(); err == nil || !strings.Contains(err.Error(), "--gateway") {
+		t.Errorf("a gateway that is not host[:port] or http://host:port is refused: %v", err)
 	}
 }

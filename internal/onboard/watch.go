@@ -245,7 +245,7 @@ func (w *Watcher) Once() (WatchReport, error) {
 		name := str(obj(item["metadata"])["name"])
 		for _, p := range plan.Profiles {
 			for _, m := range p.Members {
-				if m.Name == name && !deliveredByConfigHub(item) {
+				if m.Name == name && !deliveredByConfigHub(item, plan.Gateway) {
 					return report, fmt.Errorf("%s is still live on the management cluster: hand it over with handover.sh first, so no object has two profiles managing it", name)
 				}
 			}

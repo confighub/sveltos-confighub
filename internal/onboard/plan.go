@@ -20,7 +20,6 @@ const (
 	workflowSlug  = "rollout"
 	workerSlug    = "server-worker"
 	defaultStage  = "fleet"
-	gatewayHost   = "oci.hub.confighub.com"
 	releaseTag    = "latest"
 	fetchInterval = "1m0s"
 	// MinimumSveltos is the first release whose addon controller reads the
@@ -67,6 +66,9 @@ type Options struct {
 	// cluster fetches them, as Argo CD's app of apps does. Otherwise apply.sh
 	// puts the delivery profiles there with kubectl.
 	ManagementRelease bool
+	// Gateway is the registry Sveltos fetches releases from; ConfigHub's
+	// hosted one when its Host is empty.
+	Gateway Gateway
 	// Render renders a chart; CubHelm when nil.
 	Render Renderer
 }
@@ -217,6 +219,8 @@ type Plan struct {
 	Problems     []string
 	// Gates are what each stage waits for beyond its approval.
 	Gates Gates
+	// Gateway is the registry every delivery profile fetches from.
+	Gateway Gateway
 }
 
 var slugInvalid = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -472,10 +476,9 @@ func stripKind(key string) string {
 // A bootstrap profile reads a Space from the ConfigHub gateway. A profile it
 // delivered carries ConfigHub's origin annotation, and Sveltos records the
 // gateway reference it came from. Both are ConfigHub's already.
-func deliveredByConfigHub(v map[string]any) bool {
-	gateway := "oci://" + gatewayHost + "/"
+func deliveredByConfigHub(v map[string]any, gateway Gateway) bool {
 	for _, r := range list(obj(v["spec"])["policyRefs"]) {
-		if strings.HasPrefix(str(obj(obj(r)["remoteURL"])["url"]), gateway) {
+		if gateway.serves(str(obj(obj(r)["remoteURL"])["url"])) {
 			return true
 		}
 	}
@@ -483,7 +486,7 @@ func deliveredByConfigHub(v map[string]any) bool {
 	if _, ok := annotations["confighub.com/origin"]; ok {
 		return true
 	}
-	return strings.HasPrefix(str(annotations["projectsveltos.io/reference-name"]), gateway)
+	return gateway.serves(str(annotations["projectsveltos.io/reference-name"]))
 }
 
 var eventOwner = regexp.MustCompile(`^Event(Trigger|BasedAddOn)$`)
@@ -578,7 +581,11 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	if opts.StageLabel != "" {
 		stageOrder = opts.Stages
 	}
-	plan := &Plan{Prefix: prefix, StageLabel: opts.StageLabel, StageOrder: stageOrder, TargetsSpace: prefix + "-targets", Gates: opts.Gates}
+	gateway := opts.Gateway
+	if gateway.Host == "" {
+		gateway = Gateway{Host: DefaultGatewayHost}
+	}
+	plan := &Plan{Prefix: prefix, StageLabel: opts.StageLabel, StageOrder: stageOrder, TargetsSpace: prefix + "-targets", Gates: opts.Gates, Gateway: gateway}
 	plan.Problems = append(plan.Problems, opts.Gates.problems()...)
 	render := opts.Render
 	if render == nil {
@@ -628,7 +635,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	var delivered []string
 	for _, p := range allProfiles {
 		name := str(obj(p.value["metadata"])["name"])
-		if deliveredByConfigHub(p.value) {
+		if deliveredByConfigHub(p.value, gateway) {
 			delivered = append(delivered, name)
 			continue
 		}
@@ -1028,14 +1035,14 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 			}
 			checks := healthChecks(p.Units)
 			for _, v := range p.Variants {
-				set.Profiles = append(set.Profiles, deliveryProfile(v, sources[v.Member], gatewaySecretName(plan.TargetsSpace), keptHooks, checks))
+				set.Profiles = append(set.Profiles, deliveryProfile(v, sources[v.Member], gateway, gatewaySecretName(plan.TargetsSpace), keptHooks, checks))
 				set.Spaces = append(set.Spaces, v.Space)
 			}
 			set.Health = continuousHealth(p)
 			m.ByProfile = append(m.ByProfile, set)
 		}
 		if opts.ManagementRelease {
-			m.Root = rootProfile(m, plan.TargetsSpace)
+			m.Root = rootProfile(m, gateway, plan.TargetsSpace)
 		}
 		plan.Management = m
 	}
@@ -1050,7 +1057,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	}
 	for _, p := range allProfiles {
 		name := str(obj(p.value["metadata"])["name"])
-		if c, clash := delivery[name]; clash && !deliveredByConfigHub(p.value) {
+		if c, clash := delivery[name]; clash && !deliveredByConfigHub(p.value, gateway) {
 			plan.Problems = append(plan.Problems, fmt.Sprintf("the delivery profile for %s would be named %s, which is already the name of one of your profiles; rename that profile first", c, name))
 		}
 	}
@@ -1111,7 +1118,7 @@ const basesStage = "bases"
 // check, and applies it to the management cluster itself. Removing it leaves
 // everything it delivered in place: withdrawing would take every add-on off
 // every cluster.
-func rootProfile(m *Management, targetsSpace string) *yaml.Node {
+func rootProfile(m *Management, gateway Gateway, targetsSpace string) *yaml.Node {
 	return mapping(
 		scalar("apiVersion"), scalar(profileAPIVersion),
 		scalar("kind"), scalar("ClusterProfile"),
@@ -1127,10 +1134,7 @@ func rootProfile(m *Management, targetsSpace string) *yaml.Node {
 			scalar("continueOnError"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: "true"},
 			scalar("policyRefs"), seq(mapping(
 				scalar("deploymentType"), scalar("Remote"),
-				scalar("remoteURL"), mapping(
-					scalar("url"), scalar(fmt.Sprintf("oci://%s/space/%s:%s", gatewayHost, m.Space, releaseTag)),
-					scalar("interval"), scalar(fetchInterval),
-					scalar("secretRef"), mapping(scalar("name"), scalar(gatewaySecretName(targetsSpace)), scalar("namespace"), scalar(secretNamespace)))))))
+				scalar("remoteURL"), gateway.remoteURL(m.Space, gatewaySecretName(targetsSpace))))))
 }
 
 // selectorUnlessRefs is a profile's selector for its continuous health check,

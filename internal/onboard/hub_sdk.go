@@ -71,6 +71,53 @@ func (h *SDKHub) client(ctx context.Context) (*cubapi.Client, error) {
 	return h.conn, nil
 }
 
+// Registry is the OCI registry the ConfigHub server cub is logged in to
+// advertises, which every delivery profile fetches from. It is nil when there
+// is no login, so a plan needs no account.
+func (h *SDKHub) Registry() (*Registry, error) {
+	ctx := context.Background()
+	if !loggedIn(ctx) {
+		return nil, nil
+	}
+	c, err := h.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.API.ApiInfoWithResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("%s/api/info: %s", c.Server, resp.Status())
+	}
+	return &Registry{Server: c.Server, Host: resp.JSON200.OCIHost, Port: resp.JSON200.OCIPort}, nil
+}
+
+// loggedIn says whether there is a login to connect as: the one cub passes a
+// plugin, or a saved context with its token.
+func loggedIn(ctx context.Context) bool {
+	env, err := cubapi.LoadEnvironment(ctx)
+	if err != nil {
+		return false
+	}
+	if env.HasCredentials() {
+		return true
+	}
+	store, err := cubapi.LoadConfig("")
+	if err != nil {
+		return false
+	}
+	if env.Context != "" && store.Use(env.Context) != nil {
+		return false
+	}
+	active, err := store.ActiveContext()
+	if err != nil {
+		return false
+	}
+	_, err = store.TokenData(active)
+	return err == nil
+}
+
 // connect is the first connection: as cub passed this plugin, or as the
 // active context when run alone. It names the context it connected as.
 func connect(ctx context.Context, opts cubapi.ClientOptions) (*cubapi.Client, string, error) {

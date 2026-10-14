@@ -14,6 +14,10 @@
 # --management-release, the published management record and the root profile
 # that fetches it).
 #
+# Sveltos fetches each variant's releases from the registry of the ConfigHub
+# server this was planned for (another with cub sveltos apply --gateway):
+#   oci://oci.hub.confighub.com/space/<space>:latest
+#
 # PROPOSE_ONLY=1 bash apply.sh approves nothing: a release waits for a
 # person to approve it in ConfigHub, and a delivery profile for its release.
 set -euo pipefail

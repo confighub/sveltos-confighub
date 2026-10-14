@@ -78,7 +78,7 @@ const VariantLabel = "sveltos.confighub.com/variant"
 // variant's releases to its cluster: addressed to that cluster alone, reading
 // the variant's latest release from the ConfigHub gateway, and keeping every
 // other setting of the profile it replaces, such as its syncMode.
-func deliveryProfile(v Variant, source *yaml.Node, secretName string, keptHooks bool, checks []*yaml.Node) *yaml.Node {
+func deliveryProfile(v Variant, source *yaml.Node, gw Gateway, secretName string, keptHooks bool, checks []*yaml.Node) *yaml.Node {
 	metadata := mapping(scalar("name"), scalar(v.ProfileName))
 	// The profile's own labels, and the variant it delivers, so one cluster's
 	// delivery profile can be applied alone: kubectl apply -l.
@@ -100,10 +100,7 @@ func deliveryProfile(v Variant, source *yaml.Node, secretName string, keptHooks 
 	spec := mapping(scalar("clusterRefs"), seq(ref))
 	gateway := mapping(
 		scalar("deploymentType"), scalar("Remote"),
-		scalar("remoteURL"), mapping(
-			scalar("url"), scalar(fmt.Sprintf("oci://%s/space/%s:%s", gatewayHost, v.Space, releaseTag)),
-			scalar("interval"), scalar(fetchInterval),
-			scalar("secretRef"), mapping(scalar("name"), scalar(secretName), scalar("namespace"), scalar(secretNamespace))))
+		scalar("remoteURL"), gw.remoteURL(v.Space, secretName))
 	refs := seq(gateway)
 	if s := mapGet(source, "spec"); s != nil {
 		for i := 0; i+1 < len(s.Content); i += 2 {
