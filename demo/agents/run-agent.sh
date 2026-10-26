@@ -36,6 +36,12 @@ never=("Bash(cub variant approve:*)" "Bash(cub attestation create:*)" "Bash(cub 
        "Bash(cub changeworkflow edit:*)" "Bash(cub changeworkflow delete:*)" "Bash(cub component update:*)"
        "Bash(cub worker:*)" "Bash(cub auth:*)" "Bash(cub context:*)" "Bash(cub serviceaccount:*)"
        "Bash(kubectl delete namespace:*)" "Bash(kubectl delete ns:*)")
+# Gates are yours: no agent makes, changes or removes a trigger, or changes
+# which triggers a Space runs (the repave gate is a set of triggers).
+gates=("Bash(cub trigger create:*)" "Bash(cub trigger update:*)" "Bash(cub trigger delete:*)" "Bash(cub trigger edit:*)"
+       "Bash(cub space update *--where-trigger*)" "Bash(cub space update *--trigger-filter*)"
+       "Bash(cub space update *WhereTrigger*)" "Bash(cub space update *TriggerFilter*)"
+       "Bash(cub space update *--from-stdin*)" "Bash(cub space update *--filename*)")
 # Every agent: no cub command that names a context or prints credentials, and
 # no command that sets cub's context or configuration; no reading your cub
 # configuration, the keys, the agents' cub configurations or these guards.
@@ -44,7 +50,7 @@ never=("Bash(cub variant approve:*)" "Bash(cub attestation create:*)" "Bash(cub 
 chaos=$(cd "$AI_CHAOS_DIR" && pwd -P)
 cubconfig=$(cd "${CUB_CONFIG:-$HOME/.confighub}" && pwd -P)
 home=$(cd "$HOME" && pwd -P)
-guard=("Bash(cub *--context*)" "Bash(cub *--debug*)" "Bash(*CUB_CONTEXT*)" "Bash(*CUB_CONFIG*)"
+guard=("${gates[@]}" "Bash(cub *--context*)" "Bash(cub *--debug*)" "Bash(*CUB_CONTEXT*)" "Bash(*CUB_CONFIG*)"
        "Read(/$cubconfig/**)" "Read(/$chaos/keys/**)" "Read(/$chaos/cub/**)" "Read(/$chaos/guards/**)"
        "Read(./.cub/**)" "Read(./.kubeconfig)" "Edit(./.claude/**)")
 # kubectl naming Secrets as a resource, in any case: get secret, secrets/x,

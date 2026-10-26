@@ -59,26 +59,26 @@ baseline, and the record's first, which the handover publishes.
 | The policy is on the management cluster, delivered by the record | `kubectl get validatingadmissionpolicies,validatingadmissionpolicybindings --context kind-chaos-mgmt -o wide`. The binding's field managers include `application/apply-patch` (Sveltos) |
 | The repeat is refused | Devil's transcript: both profile writes Forbidden by the policy Angel wrote, with its message |
 
-## Outage 3: staging said yes, prod said no
+## Outage 3: the nightly repave
 
 | Claim | How to check |
 | --- | --- |
-| A change order can carry an edit its own summary doesn't show | `cub changeorder get --space chaos-shop-base <the cut>` against `cub unit diff --space chaos-shop-prod-eu shop` before its release |
-| Staging ran the cache; prod was OOMKilled | Devil's staging transcript (about 46 MiB under 128Mi). `kubectl get pods -n shop --context kind-chaos-prod-eu`: restarts, last state OOMKilled |
-| The fix makes prod match staging | `evidence.sh`: a ParityCheck Pass by `angel` in each prod Space, "parity with chaos-shop-staging/shop@N passed" |
-| Prod's release now needs the check | `evidence.sh`, Gates: `stage prod releases need approval, parity` and `parity = 1 ParityCheck from chaos-angel (Service Account); authors counted: True` |
-| The repeat is refused before release | Devil's transcript: "requires approval ... requires parity". `evidence.sh`: a ParityCheck Fail in each prod Space, naming `limits.memory "96Mi" here and "128Mi" in chaos-shop-staging` |
+| The repave left prod empty, and ConfigHub said Healthy | `kubectl get ns --context kind-chaos-prod-eu`: system namespaces only. `cub sveltos status --kube-context kind-chaos-mgmt --dry-run`: Synced and Healthy, with Sveltos's last delivery before the repave |
+| The shop came back without its token | If Sveltos delivered before the token Job did, `kubectl get pods -n shop --context kind-chaos-prod-eu` showed `web` CreateContainerConfigError, `secret "shop-token" not found`. Either way, `cub unit data --space chaos-shop-prod-eu shop` held no Secret before Angel's fix |
+| ConfigHub sees what the shop needs | `cub function get --space chaos-shop-base --unit shop get-references`: `shop-token`, used by `web` and `api` |
+| The fix went through the gates | Rollouts: Angel's orders, each approved by you or `milton` before its release. The release holds the Job that makes the token, never the token |
+| The gate is ConfigHub's own | `evidence.sh`, Gates: the repave gate's triggers in `chaos-shop-base`, with the restore list. `cub trigger list --space chaos-shop-base` |
+| The repeat is refused before release | Devil's transcript: the unit's ValidationResults name `ConfigMap/feature-flags`, "not on the restore list" |
+| The next repave needs nobody | After `repave.sh --redeliver prod`: each prod cluster Synced and Healthy within minutes, and the Job's log says "shop-token made" |
 
-**Without the agents.** `bash $DEMO/proof/parity-gate-check.sh`, after
-onboarding, checks this prevention in about two minutes and costs nothing:
-- the check passes where prod matches staging;
-- a prod-only cut is refused at release, for approval and parity;
-- the check fails it, naming the field.
-
-It adds the gate (outage 3's step 10) if it isn't there yet, and takes it off
-again at the end, so outage 3 can still be staged. It withdraws its own cut,
-and ends by saying whether each expectation held. Run it when no outage is in
-progress.
+**Without the agents.** `bash $DEMO/proof/repave-gate-check.sh` checks the
+gate in about a minute and costs nothing. It works in a Space of its own,
+`chaos-repave-check`, on a copy of the shop, so it can run at any time:
+- the shop as stand-up made it is refused: nothing in the release makes its
+  token;
+- with the Job that makes the token, it passes;
+- `web` reading a ConfigMap made by hand is refused, naming it;
+- with the gate off, nothing is refused.
 
 ## Every outage
 

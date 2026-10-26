@@ -42,7 +42,10 @@ And no agent, Milton included, may:
 - read, with its Read tool or with `cat` and the like, your `cub`
   configuration, `$AI_CHAOS_DIR/keys`, `$AI_CHAOS_DIR/cub` or
   `$AI_CHAOS_DIR/guards`. These rules also refuse Edit and Write there;
-- write its own `.claude` settings.
+- write its own `.claude` settings;
+- make, change or remove a trigger, or change which triggers a Space runs.
+  Outage 3's repave gate is a set of triggers, and like a workflow it is
+  yours.
 
 Each run has its own kubeconfig, with no current context, so every `kubectl`
 command names its cluster.
