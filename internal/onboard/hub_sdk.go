@@ -75,8 +75,15 @@ func (h *SDKHub) client(ctx context.Context) (*cubapi.Client, error) {
 // advertises, which every delivery profile fetches from. It is nil when there
 // is no login, so a plan needs no account.
 func (h *SDKHub) Registry() (*Registry, error) {
-	ctx := context.Background()
-	if !loggedIn(ctx) {
+	// A server that accepts the connection and never answers must not hang
+	// plan, apply or watch at the start.
+	ctx, cancel := context.WithTimeout(context.Background(), registryTimeout)
+	defer cancel()
+	ok, err := loggedIn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
 		return nil, nil
 	}
 	c, err := h.client(ctx)
@@ -93,29 +100,50 @@ func (h *SDKHub) Registry() (*Registry, error) {
 	return &Registry{Server: c.Server, Host: resp.JSON200.OCIHost, Port: resp.JSON200.OCIPort}, nil
 }
 
+// registryTimeout bounds asking the server which registry it serves.
+const registryTimeout = 20 * time.Second
+
+// hostedServer is ConfigHub's hosted service, whose registry is the default.
+const hostedServer = "https://hub.confighub.com"
+
 // loggedIn says whether there is a login to connect as: the one cub passes a
-// plugin, or a saved context with its token.
-func loggedIn(ctx context.Context) bool {
+// plugin, or a saved context with its token. It is false without an error only
+// when no context is configured, or when the context is the hosted service's
+// and holds no token, where the hosted registry is the right answer anyway.
+// Anything else (an unreadable config, a context that does not exist, another
+// server's context that is not signed in) is an error, so a plan never names
+// the hosted registry for a fleet onboarded to another server.
+func loggedIn(ctx context.Context) (bool, error) {
 	env, err := cubapi.LoadEnvironment(ctx)
 	if err != nil {
-		return false
+		return false, err
 	}
 	if env.HasCredentials() {
-		return true
+		return true, nil
 	}
 	store, err := cubapi.LoadConfig("")
 	if err != nil {
-		return false
+		return false, err
 	}
-	if env.Context != "" && store.Use(env.Context) != nil {
-		return false
+	if env.Context != "" {
+		if err := store.Use(env.Context); err != nil {
+			return false, fmt.Errorf("cub context %q: %w", env.Context, err)
+		}
+	}
+	if env.Context == "" && store.CurrentContextName() == "" {
+		return false, nil
 	}
 	active, err := store.ActiveContext()
 	if err != nil {
-		return false
+		return false, err
 	}
-	_, err = store.TokenData(active)
-	return err == nil
+	if _, err := store.TokenData(active); err == nil {
+		return true, nil
+	}
+	if cubapi.SameServer(active.Coordinate.ServerURL, hostedServer) {
+		return false, nil
+	}
+	return false, fmt.Errorf("cub context %q, for %s, is not signed in: sign in with cub auth login, or name the registry Sveltos fetches from with --gateway", active.Name, active.Coordinate.ServerURL)
 }
 
 // connect is the first connection: as cub passed this plugin, or as the

@@ -139,7 +139,8 @@ These were each paid for once so you do not have to.
   v1.15.0 with its stock controller and no override. Every receipt records
   the image its run used.
 - **The gateway auth secret must be typed** `addons.projectsveltos.io/cluster-profile`;
-  an Opaque secret is rejected. The ORAS client is HTTPS-only. For a fleet
+  an Opaque secret is rejected. Sveltos fetches over TLS unless the profile's
+  `remoteURL` sets `plainHTTP: true` (Sveltos v1.14.0 and later). For a fleet
   that runs longer than a day, put a server-hosted worker in it, its ID
   under `username` and its secret under `password`: the gateway lets a
   worker pull the releases of the Targets that grant its bot user View and

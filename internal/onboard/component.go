@@ -107,7 +107,7 @@ func renderComponent(name string, members []memberDoc, configMaps map[string]Doc
 			out.problems = append(out.problems, fmt.Sprintf("%s's chart %s runs Helm hooks when it installs (%s), and only Helm runs hooks, so a cluster installing it from what ConfigHub holds would lack what they make. Pass --include-hooks %s to hold its hooks as plain objects, which Sveltos applies with each release and, as it does for Helm, does not treat as drift once they are gone", root.name, u.Chart.Release, strings.Join(install, ", "), u.Chart.Release))
 		}
 		if len(other) > 0 {
-			out.notes = append(out.notes, fmt.Sprintf("%s's chart %s has %s for upgrade, delete or test%s. They are left out, as cub helm leaves them out, because only Helm runs them.", root.name, u.Chart.Release, count(len(other), "Helm hook"), jobsAmong(u.Hooks)))
+			out.notes = append(out.notes, fmt.Sprintf("%s's chart %s has %s for upgrade, delete or test%s. They are left out, as helm template --no-hooks leaves them out, because only Helm runs them.", root.name, u.Chart.Release, count(len(other), "Helm hook"), jobsAmong(u.Hooks)))
 		}
 	}
 	out.departures = map[string][]Departure{}

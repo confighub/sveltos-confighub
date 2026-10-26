@@ -57,8 +57,10 @@ revision each cluster runs, and a rollout order that ConfigHub enforces.
 
 ```bash
 cub plugin install confighub/sveltos-confighub
-cub plugin install confighub/cub-helm        # renders charts; v0.1.1 or newer
 ```
+
+Charts are rendered with Helm's own `helm template`, so `plan` also needs
+[Helm](https://helm.sh/docs/intro/install/) on the PATH (tested with v4.1.4).
 
 Already installed? `cub plugin upgrade sveltos-confighub` moves you to the
 latest release. `cub sveltos version` prints which one you run.
@@ -67,7 +69,7 @@ plugin installation stays CLI-only.
 
 | Command | What it does |
 | --- | --- |
-| `cub sveltos plan` | Reads your Sveltos ClusterProfiles and clusters, and shows what ConfigHub would hold. **Changes nothing**, and needs no account or cluster. |
+| `cub sveltos plan` | Reads your Sveltos ClusterProfiles and clusters, and shows what ConfigHub would hold. **Changes nothing**, and needs no cluster. It works without an account; signed in, it asks ConfigHub which registry Sveltos fetches from. |
 | `cub sveltos apply` | Writes the plan out as files and a script, `apply.sh`, for you to read and then run. Writes `handover.sh` too, if your profiles are live. With `--management-release`, the management cluster takes its delivery profiles from ConfigHub through one root profile, as Argo CD's app of apps does. |
 | `cub sveltos compare` | Checks that what ConfigHub will deliver to a cluster is exactly what Helm installed there. `handover.sh` runs it for you. |
 | `cub sveltos status` | Tells ConfigHub what Sveltos delivered to each cluster: synced, healthy, and which release it runs. |
@@ -268,9 +270,9 @@ Kyverno policy" are changes the policy stopped before they reached a cluster:
 version the same way, and store it on the base:
 
 ```bash
-cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 \
-  --namespace kyverno --create-namespace -f onboard/kyverno/kyverno.values.yaml \
-  | grep -vxF '$comment$head$: ""' > kyverno.yaml
+{ printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' kyverno
+  helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 \
+    --namespace kyverno --include-crds --no-hooks -f onboard/kyverno/kyverno.values.yaml; } > kyverno.yaml
 cub unit update --space sveltos-kyverno-base kyverno kyverno.yaml --change-desc "Kyverno 3.8.2"
 cub unit diff --space sveltos-kyverno-base kyverno --from=-1 -o mutations
 ```
@@ -346,7 +348,7 @@ yet**: in this setup, a label alone deploys nothing. Keep the watcher running
 against your management cluster, with the options you planned with:
 
 ```bash
-cub sveltos watch onboard/profiles.yaml --out onboard --context <your management cluster context> --stage-label env --stages staging,prod
+cub sveltos watch onboard/profiles.yaml --out onboard --kube-context <your management cluster context> --stage-label env --stages staging,prod
 ```
 
 When a profile selects the new cluster, the watcher gives it its own variant,
@@ -383,7 +385,7 @@ cub space list --where "Labels.Cluster = 'prod-eu'"                  # everythin
 cub unit data --space sveltos-kyverno-prod-eu kyverno                # the exact objects it runs
 cub revision list --space sveltos-kyverno-prod-eu kyverno            # every change, with who and why
 cub changeorder get --space sveltos-kyverno-base replicas-4          # where a rollout has got to
-cub sveltos status --context <management cluster context> --watch    # live status, from Sveltos
+cub sveltos status --kube-context <management cluster context> --watch    # live status, from Sveltos
 ```
 
 `cub sveltos status` records what Sveltos delivered to each cluster in
@@ -435,7 +437,7 @@ can do the work:
 | You ask | It runs |
 | --- | --- |
 | "What would ConfigHub hold for my fleet?" | `cub sveltos plan …` |
-| "Upgrade Kyverno to 3.8.2, and show me what changes" | `cub helm template …`, `cub unit update …`, `cub unit diff … -o mutations` |
+| "Upgrade Kyverno to 3.8.2, and show me what changes" | `helm template …`, `cub unit update …`, `cub unit diff … -o mutations` |
 | "Four replicas, for uat only" | `cub function set …` on uat's class base, then `cub unit set-protection …` |
 | "Roll it out" | `cub changeorder create …`, then `cub variant promote … --squash` into each stage |
 | "Does it pass our policies in staging?" | `cub sveltos check --change-order … --stage staging … vet-kyverno-server` |

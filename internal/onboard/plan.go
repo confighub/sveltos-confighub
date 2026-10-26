@@ -56,7 +56,7 @@ type Options struct {
 	ClassLabel string
 	// IncludeHooks names the chart releases whose Helm hook manifests are kept
 	// as plain objects; "all" keeps every chart's. Otherwise hooks are left
-	// out, as cub helm leaves them out.
+	// out, as helm template --no-hooks leaves them out.
 	IncludeHooks []string
 	// Gates are what each stage waits for beyond its approval: a policy's
 	// Triggers, and attestations.
@@ -69,7 +69,7 @@ type Options struct {
 	// Gateway is the registry Sveltos fetches releases from; ConfigHub's
 	// hosted one when its Host is empty.
 	Gateway Gateway
-	// Render renders a chart; CubHelm when nil.
+	// Render renders a chart; Helm when nil.
 	Render Renderer
 }
 
@@ -589,7 +589,7 @@ func PlanFleet(docs []Doc, opts Options) (*Plan, error) {
 	plan.Problems = append(plan.Problems, opts.Gates.problems()...)
 	render := opts.Render
 	if render == nil {
-		render = CubHelm
+		render = Helm
 	}
 	rc := &renderCache{render: render, done: map[string]renderResult{}}
 

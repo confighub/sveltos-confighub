@@ -6,10 +6,13 @@
 //   - the hooks it leaves out are named, since only Helm runs them;
 //   - the stray line cub helm template prints is dropped.
 //
-// It renders with cub helm template, ConfigHub's own Helm renderer. cub sveltos
-// uses it to onboard the charts of Sveltos ClusterProfiles; anything else that
-// flattens charts into ConfigHub, such as a Flux HelmRelease or an Argo CD
-// chart source, can use the same rules.
+// Helm renders with Helm's own template command, helm template, the way helm
+// install would install the chart. CubHelm renders with cub helm template, as
+// cub helm v0.1.1 and earlier printed it; from v0.1.2 that command previews
+// units instead, so CubHelm is kept only for tools that still pin v0.1.1. cub
+// sveltos uses Helm to onboard the charts of Sveltos ClusterProfiles; anything
+// else that flattens charts into ConfigHub, such as a Flux HelmRelease or an
+// Argo CD chart source, can use the same rules.
 package chartrender
 
 import (
@@ -23,6 +26,8 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Chart is one Helm chart, and how it is rendered.
@@ -70,6 +75,39 @@ func (c Chart) Command(valuesFile string) []string {
 	return args
 }
 
+// HelmCommand is the helm template command line that renders the chart, with
+// the values read from valuesFile: CRDs included unless SkipCRDs, hooks left
+// out unless IncludeHooks. helm template renders no Namespace for the release
+// namespace, so when the chart has none, Helm (the Renderer) puts NamespaceDoc
+// in front of its output, and a recorded command has to do the same.
+func (c Chart) HelmCommand(valuesFile string) []string {
+	args := []string{"helm", "template", c.Release, c.Ref}
+	if c.Repo != "" {
+		args = append(args, "--repo", c.Repo)
+	}
+	if c.Version != "" {
+		args = append(args, "--version", c.Version)
+	}
+	args = append(args, "--namespace", c.Namespace)
+	if !c.SkipCRDs {
+		args = append(args, "--include-crds")
+	}
+	if !c.IncludeHooks {
+		args = append(args, "--no-hooks")
+	}
+	if c.Values != "" && valuesFile != "" {
+		args = append(args, "-f", valuesFile)
+	}
+	return args
+}
+
+// NamespaceDoc is the Namespace object Helm puts first in a rendering whose
+// chart renders no Namespace of its own, as helm install --create-namespace
+// would create it.
+func NamespaceDoc(namespace string) string {
+	return "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: " + namespace + "\n"
+}
+
 // ExactVersion says whether a chart version is one exact version. A range
 // (1.2.x, ^1.2.0) or a partial version (1.2) resolves to whatever is newest
 // when it is rendered, which need not be what is running; cub helm template
@@ -85,7 +123,7 @@ type Rendering struct {
 	Stderr []byte
 }
 
-// Renderer renders a chart the way cub helm install would.
+// Renderer renders a chart the way helm install would install it.
 type Renderer func(Chart) (Rendering, error)
 
 // CubHelm renders with the cub helm plugin's template command, which needs no
@@ -124,6 +162,142 @@ func CubHelm(c Chart) (Rendering, error) {
 		return Rendering{}, fmt.Errorf("%s: %s", strings.Join(args[:5], " "), text)
 	}
 	return Rendering{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, nil
+}
+
+// Helm renders with helm template (Helm on the PATH; tested with v4.1.4), as
+// helm install would render the chart for a default cluster, without reading
+// the cluster's version or APIs, and needs no ConfigHub connection. Stdout is
+// the objects, with NamespaceDoc in front when the chart renders no Namespace
+// for the release namespace. Stderr names each hook left out, in the form
+// HooksOf reads, so Render reports them as it does for CubHelm.
+func Helm(c Chart) (Rendering, error) {
+	helm, err := exec.LookPath("helm")
+	if err != nil {
+		return Rendering{}, errors.New("rendering charts needs Helm on the PATH: https://helm.sh/docs/intro/install/")
+	}
+	valuesFile, done, err := writeValues(c)
+	if err != nil {
+		return Rendering{}, err
+	}
+	defer done()
+	args := c.HelmCommand(valuesFile)
+	objects, err := runHelm(helm, args)
+	if err != nil {
+		return Rendering{}, err
+	}
+	var report strings.Builder
+	if !c.IncludeHooks {
+		var withHooks []string
+		for _, a := range args {
+			if a != "--no-hooks" {
+				withHooks = append(withHooks, a)
+			}
+		}
+		all, err := runHelm(helm, withHooks)
+		if err != nil {
+			return Rendering{}, err
+		}
+		docs, err := docsOf(all)
+		if err != nil {
+			return Rendering{}, fmt.Errorf("reading the hooks of %s: %w", strings.Join(args[:4], " "), err)
+		}
+		for _, d := range docs {
+			if events, ok := d.Metadata.Annotations["helm.sh/hook"]; ok {
+				fmt.Fprintf(&report, "Dropped hook manifest: %s %s (helm.sh/hook: %s)\n", d.Kind, d.Metadata.Name, events)
+			}
+		}
+	}
+	docs, err := docsOf(objects)
+	if err != nil {
+		return Rendering{}, fmt.Errorf("reading %s: %w", strings.Join(args[:4], " "), err)
+	}
+	hasNamespace := false
+	for _, d := range docs {
+		if d.Kind == "Namespace" && d.Metadata.Name == c.Namespace {
+			hasNamespace = true
+		}
+	}
+	if !hasNamespace && c.Namespace != "" {
+		objects = append([]byte(NamespaceDoc(c.Namespace)), objects...)
+	}
+	return Rendering{Stdout: objects, Stderr: []byte(report.String())}, nil
+}
+
+// writeValues writes a chart's values to a temporary file, for -f.
+func writeValues(c Chart) (string, func(), error) {
+	if c.Values == "" {
+		return "", func() {}, nil
+	}
+	f, err := os.CreateTemp("", "chart-values-*.yaml")
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := io.WriteString(f, c.Values); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", nil, err
+	}
+	f.Close()
+	return f.Name(), func() { os.Remove(f.Name()) }, nil
+}
+
+// runHelm runs helm with args (args[0] is "helm") and returns what it printed,
+// or an error carrying the last line it printed on stderr.
+func runHelm(helm string, args []string) ([]byte, error) {
+	cmd := exec.Command(helm, args[1:]...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%s: %s", strings.Join(args[:4], " "), helmError(stderr.String(), err))
+	}
+	return stdout.Bytes(), nil
+}
+
+// helmError is what to show of Helm's stderr: its "Error:" line, which is the
+// reason, rather than the advice it prints after it (such as "Use --debug flag
+// to render out invalid YAML"); else its last line; else err.
+func helmError(stderr string, err error) string {
+	text := strings.TrimSpace(stderr)
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "Error:") {
+			return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "Error:"))
+		}
+	}
+	if i := strings.LastIndex(text, "\n"); i >= 0 {
+		text = text[i+1:]
+	}
+	if text == "" {
+		return err.Error()
+	}
+	return text
+}
+
+// doc is what Helm says of one rendered object: enough to find Namespaces and hooks.
+type doc struct {
+	Kind     string `yaml:"kind"`
+	Metadata struct {
+		Name        string            `yaml:"name"`
+		Annotations map[string]string `yaml:"annotations"`
+	} `yaml:"metadata"`
+}
+
+// docsOf reads a multi-document rendering.
+func docsOf(data []byte) ([]doc, error) {
+	var out []doc
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var d doc
+		err := dec.Decode(&d)
+		if err == io.EOF {
+			return out, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if d.Kind != "" {
+			out = append(out, d)
+		}
+	}
 }
 
 // ErrNotRepeatable is a chart that renders differently each time it is
@@ -175,7 +349,8 @@ func (h Hook) AtInstall() bool {
 
 var droppedHook = regexp.MustCompile(`Dropped hook manifest: (\S+) (\S+) \(helm\.sh/hook: ([^)]*)\)`)
 
-// HooksOf reads the hook manifests cub helm template reports leaving out.
+// HooksOf reads the hook manifests a rendering reports leaving out, as cub
+// helm template v0.1.1 printed them and Helm here writes them.
 func HooksOf(stderr []byte) []Hook {
 	var out []Hook
 	for _, m := range droppedHook.FindAllStringSubmatch(string(stderr), -1) {

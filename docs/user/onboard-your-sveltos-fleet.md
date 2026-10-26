@@ -23,18 +23,20 @@ nothing reinstalled.
 
 You need the `cub` CLI, v0.7.0 or newer, logged in to your ConfigHub organization
 (`cub auth login`), `kubectl` access to your management cluster, which must
-run Sveltos v1.14.0 or newer, and two plugins:
+run Sveltos v1.14.0 or newer, the plugin, and [Helm](https://helm.sh/docs/intro/install/) v3 or v4:
 
 ```bash
 cub plugin install confighub/sveltos-confighub
-cub plugin install confighub/cub-helm
 ```
 
-If you installed them before, `cub plugin upgrade sveltos-confighub` and
-`cub plugin upgrade helm` bring them up to date.
+If you installed it before, `cub plugin upgrade sveltos-confighub` brings it
+up to date.
 
-`cub sveltos` renders charts with `cub helm template`, ConfigHub's own Helm
-renderer, so a chart onboarded here holds the objects `cub helm` would.
+`cub sveltos` renders charts with Helm's own `helm template`, as `helm install`
+renders them for a default cluster, so a chart onboarded here holds the objects
+Helm would install, unless the chart reads the cluster's version or APIs (see
+[what this version leaves alone](#what-this-version-leaves-alone)). (Before v0.14.1 it used `cub helm template`, which
+from `cub helm` v0.1.2 previews units instead of printing them.)
 
 In this guide:
 - [The words you will meet](#the-words-you-will-meet)
@@ -82,8 +84,8 @@ flowchart LR
   as --> ho["handover.sh<br/>only if your profiles<br/>are live"]
 ```
 
-The first three steps change nothing anywhere: `plan` needs no account and no
-cluster, and `apply` only writes files. You read `apply.sh` before you run it.
+The first three steps change nothing anywhere: `plan` needs no cluster, and works
+without an account, and `apply` only writes files. You read `apply.sh` before you run it.
 
 ## 1. Export what Sveltos knows
 
@@ -150,8 +152,8 @@ cub sveltos plan my-fleet.yaml kyverno-policies.yaml \
   --stage-label env --stages staging,prod --include-hooks ingress-nginx
 ```
 
-The plan renders each chart, needs no account and no cluster, and shows what
-ConfigHub would hold:
+The plan renders each chart, needs no cluster and works without an account,
+and shows what ConfigHub would hold:
 
 ```text
 kyverno  (selects env In [staging, prod])
@@ -166,22 +168,23 @@ kyverno  (selects env In [staging, prod])
 
 ```mermaid
 flowchart LR
-  hc["helmCharts entry<br/>kyverno 3.8.1 and its values"] -->|"cub helm template"| u1["unit kyverno<br/>71 objects, 22 of them CRDs"]
+  hc["helmCharts entry<br/>kyverno 3.8.1 and its values"] -->|"helm template"| u1["unit kyverno<br/>71 objects, 22 of them CRDs"]
   pr["policyRefs ConfigMap<br/>default/kyverno-policies"] -->|"the objects it holds"| u2["unit kyverno-policies<br/>1 ClusterPolicy"]
 ```
 
-Each chart becomes one unit holding the objects `cub helm template`
-renders, in the order it prints them. Your labels chose the clusters, and
+Each chart becomes one unit holding the objects `helm template` renders,
+in the order it prints them, with a Namespace for the release namespace in
+front when the chart has none, as `helm install --create-namespace` makes it. Your labels chose the clusters, and
 `--stage-label` turns them into the order a change rolls out in; leave it
 out and every cluster is in one stage, `fleet`. The [full plan for the example](../../examples/onboard/plan.txt)
 also lists what is left out and why, and how many Spaces and Links the fleet
 needs: check your organization's quotas for both first.
 
-**Helm hooks.** Only Helm runs hooks, so rendered objects leave them out, as
-`cub helm` does. A chart whose hooks run when it installs, such as
+**Helm hooks.** Only Helm runs hooks, so rendered objects leave them out,
+as `helm template --no-hooks` does. A chart whose hooks run when it installs, such as
 ingress-nginx's jobs that make its webhook certificate, is a problem in the
 plan until you pass `--include-hooks <release>`. That keeps its hooks, exactly
-as `cub helm template --include-hooks` prints them, and its delivery profiles
+as `helm template` prints them, and its delivery profiles
 mark them the way Sveltos treats hooks when it runs Helm: annotated
 `projectsveltos.io/driftDetectionIgnore`, so they are not watched for drift.
 Measured on kind with a hook Job that deletes itself when it finishes, as
@@ -215,7 +218,7 @@ releases cannot read the gzipped layers ConfigHub's gateway serves), then:
    `CLUSTER_KUBECONFIGS=<dir>` holding `<cluster>.kubeconfig`, and without it
    the script goes on and says so.
 2. Stores each base, and the workflow its changes follow. Above each chart
-   it notes the `cub helm template` command the chart was rendered with,
+   it notes the `helm template` command the chart was rendered with,
    and `apply` writes the chart's values beside it, so the next version can
    be rendered the same way.
 3. Creates each class base with what its class differs in, and each
@@ -225,6 +228,14 @@ releases cannot read the gzipped layers ConfigHub's gateway serves), then:
 5. Rolls out the first release stage by stage: promote, approve, publish.
    A variant missing a unit is never released: Sveltos would remove from its
    cluster whatever the release no longer holds.
+   On recent ConfigHub servers this step can stop for a variant that has never
+   been released: its change order counts it as released, so its first release
+   cannot go through the order (confighubai/confighub#5794). The script says
+   so, with ConfigHub's reason. You then choose: publish that variant's first
+   release at head as the onboarding baseline, which skips the workflow's
+   release gates for that one release, with `FIRST_RELEASE=baseline bash
+   apply.sh`; or wait for ConfigHub's fix. Every change after the baseline goes
+   through the workflow.
 6. On your management cluster, adds the gateway Secret and the delivery
    profiles. From then on Sveltos delivers each variant's latest release to
    its cluster, within a minute of it being published, and puts back
@@ -247,7 +258,8 @@ logged in to, as that server advertises it (`OCIHost` and `OCIPort` in
 `GET /api/info`): `oci.hub.confighub.com` for hub.confighub.com, and over
 plain HTTP (`plainHTTP: true` on each `remoteURL`) when the server's URL is
 `http://`. With no login, `plan` names `oci.hub.confighub.com`, so a plan
-needs no account. When the management cluster reaches the registry at
+works without an account. A login that is broken, or a context for another
+server that is not signed in, stops the plan instead of falling back. When the management cluster reaches the registry at
 another address, name it with `--gateway` on `plan`, `apply` and `watch`:
 `host[:port]` over TLS, or `http://host:port` over plain HTTP. A ConfigHub
 server run on your laptop advertises a loopback address the clusters cannot
@@ -481,14 +493,17 @@ at onboarding, which `apply.sh` notes above the chart's unit, and store it
 on the base:
 
 ```bash
-cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 \
-  --namespace kyverno --create-namespace -f onboard/kyverno/kyverno.values.yaml \
-  | grep -vxF '$comment$head$: ""' > kyverno.yaml
+{ printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' kyverno
+  helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 \
+    --namespace kyverno --include-crds --no-hooks -f onboard/kyverno/kyverno.values.yaml; } > kyverno.yaml
 cub unit update --space sveltos-kyverno-base kyverno kyverno.yaml --change-desc "Kyverno 3.8.2"
 ```
 
-The `grep` drops a stray line `cub helm template` prints at the top of some
-documents, which is no part of the chart; `apply.sh` renders the same way.
+The `printf` puts back the Namespace the chart does not render, which onboarding
+put in front; `apply.sh` notes the exact command, with it or without it.
+A chart onboarded before v0.14.1 was rendered with `cub helm template`, whose
+layout differs, so its first upgrade this way shows a large text diff. Review
+it with `-o mutations`, which lists only the fields that changed.
 
 Review it object by object: this lists what the new version changes, each
 changed field by its path, including what the chart changed besides your
@@ -545,8 +560,8 @@ refuses an approval from the change's author.
 Run it once, or keep it running:
 
 ```bash
-cub sveltos status --context <management cluster context>
-cub sveltos status --context <management cluster context> --watch   # every 30 seconds
+cub sveltos status --kube-context <management cluster context>
+cub sveltos status --kube-context <management cluster context> --watch   # every 30 seconds
 ```
 
 It prints one line per cluster, and records the same reading on the newest
@@ -736,7 +751,7 @@ Run by hand as above, `apply.sh` approves the release itself. `cub sveltos
 watch` does the same work as each cluster registers, but approves nothing:
 
 ```bash
-cub sveltos watch onboard/profiles.yaml --out onboard --context <management cluster context> \
+cub sveltos watch onboard/profiles.yaml --out onboard --kube-context <management cluster context> \
   --stage-label env --stages staging,prod --include-hooks ingress-nginx
 ```
 
@@ -831,7 +846,7 @@ again on your machine.
 - Profiles another object owns, such as those a ClusterPromotion makes; the
   plan skips them, since the owner would make them again. Govern the owner.
 - Charts that render differently by the cluster's Kubernetes version or APIs
-  (`.Capabilities`), or through `lookup`. `cub helm template` renders them for
+  (`.Capabilities`), or through `lookup`. `helm template` renders them for
   a default cluster without reading it, so the plan cannot know.
   `handover.sh` finds where the result differs from what Helm installed, and
   stops.

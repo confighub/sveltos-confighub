@@ -34,7 +34,7 @@ need "cub"                                   cub version
 need "cub signed in"                         cub auth status
 need "the cub sveltos plugin, v0.14.0 or later" \
      sh -c 'v=$(cub sveltos version | awk "{print \$3}" | tr -d v); [ "$(printf "%s\n0.14.0\n" "$v" | sort -V | head -1)" = 0.14.0 ]'
-need "the cub helm plugin"                   cub helm --help
+need "Helm, to render charts"               helm version --short
 need "Claude Code, signed in (for the agents)" sh -c 'claude auth status | grep -Eq "\"loggedIn\": *true"'
 if [ "$missing" = 1 ]; then
   echo "Install or sign in to what is missing; demo/README.md lists the versions we used." >&2

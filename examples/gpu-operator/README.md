@@ -108,7 +108,6 @@ kubectl and helm installed:
 
 ```bash
 cub plugin install confighub/sveltos-confighub
-cub plugin install confighub/cub-helm
 node examples/gpu-operator/kind-fleet.mjs
 bash examples/gpu-operator/run.sh
 node examples/gpu-operator/kind-fleet.mjs --delete

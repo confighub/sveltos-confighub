@@ -51,38 +51,80 @@ func (g Gateway) remoteURL(space, secretName string) *yaml.Node {
 	return n
 }
 
-// serves says whether a reference is to one of this gateway's releases.
+// serves says whether a reference is to one of this gateway's releases, with
+// or without the scheme's default port, as profiles written before or after
+// --gateway dropped it name it.
 func (g Gateway) serves(ref string) bool {
-	return strings.HasPrefix(ref, "oci://"+g.Host+"/")
+	if strings.HasPrefix(ref, "oci://"+g.Host+"/") {
+		return true
+	}
+	if _, _, err := net.SplitHostPort(g.Host); err == nil {
+		return false
+	}
+	port := "443"
+	if g.PlainHTTP {
+		port = "80"
+	}
+	return strings.HasPrefix(ref, "oci://"+net.JoinHostPort(strings.Trim(g.Host, "[]"), port)+"/")
 }
 
 // ParseGateway reads --gateway: host[:port] for a registry served over TLS,
-// or http://host:port for one served over plain HTTP.
+// or http://host:port for one served over plain HTTP. An IPv6 address goes in
+// brackets. The host is lowercased and a scheme's default port dropped, as for
+// the advertised registry, so a profile written either way is recognised. A
+// loopback or unspecified address is refused: Sveltos fetches from inside the
+// management cluster, which cannot reach it.
 func ParseGateway(s string) (Gateway, error) {
 	s = strings.TrimSpace(s)
+	want := fmt.Errorf("--gateway %s: want host[:port] for TLS or http://host:port for plain HTTP, with an IPv6 address in brackets", s)
 	g := Gateway{}
 	rest := s
 	if scheme, after, ok := strings.Cut(s, "://"); ok {
-		switch scheme {
+		switch strings.ToLower(scheme) {
 		case "http":
 			g.PlainHTTP = true
 		case "https":
 		default:
-			return Gateway{}, fmt.Errorf("--gateway %s: want host[:port] for TLS or http://host:port for plain HTTP", s)
+			return Gateway{}, want
 		}
-		rest = strings.TrimSuffix(after, "/")
+		rest = after
+	}
+	rest = strings.ToLower(strings.TrimSuffix(rest, "/"))
+	if h, p, ok := strings.Cut(rest, ":"); ok && !strings.HasPrefix(rest, "[") {
+		rest = strings.TrimSuffix(h, ".") + ":" + p
+	} else {
+		rest = strings.TrimSuffix(rest, ".")
 	}
 	u, err := url.Parse("//" + rest)
-	if err != nil || rest == "" || u.Host != rest || u.Hostname() == "" {
-		return Gateway{}, fmt.Errorf("--gateway %s: want host[:port] for TLS or http://host:port for plain HTTP", s)
+	if err != nil || rest == "" || u.Host != rest || u.Hostname() == "" || strings.HasSuffix(rest, ":") {
+		return Gateway{}, want
 	}
-	if p := u.Port(); p != "" {
-		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
-			return Gateway{}, fmt.Errorf("--gateway %s: %s is not a port", s, p)
+	host, port := u.Hostname(), u.Port()
+	if strings.Contains(host, ":") && !strings.HasPrefix(rest, "[") {
+		return Gateway{}, want
+	}
+	if port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return Gateway{}, fmt.Errorf("--gateway %s: %s is not a port", s, port)
 		}
 	}
-	g.Host = rest
+	if unreachable(host) {
+		return Gateway{}, fmt.Errorf("--gateway %s is a loopback address your clusters cannot reach: Sveltos fetches from inside the management cluster. Name the address they reach it at, such as http://host.docker.internal:<port> for kind clusters on this machine with Docker Desktop", s)
+	}
+	g.Host = hostPort(host, port, g.PlainHTTP)
 	return g, nil
+}
+
+// hostPort is host, or host:port when port is not the scheme's default, with
+// an IPv6 host in brackets.
+func hostPort(host, port string, plainHTTP bool) string {
+	if port == "" || (port == "443" && !plainHTTP) || (port == "80" && plainHTTP) {
+		if strings.Contains(host, ":") {
+			return "[" + host + "]"
+		}
+		return host
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // Registry is the OCI registry a ConfigHub server says it serves releases
@@ -112,11 +154,9 @@ func ResolveGateway(flag string, registry func() (*Registry, error)) (Gateway, e
 	if r.Host == "" {
 		return Gateway{}, fmt.Errorf("ConfigHub at %s names no registry to fetch its releases from; name the one your clusters reach with --gateway", r.Server)
 	}
-	g := Gateway{Host: r.Host, PlainHTTP: strings.HasPrefix(r.Server, "http://")}
-	if r.Port != "" && !(r.Port == "443" && !g.PlainHTTP) && !(r.Port == "80" && g.PlainHTTP) {
-		g.Host = net.JoinHostPort(r.Host, r.Port)
-	}
-	if loopback(r.Host) {
+	g := Gateway{PlainHTTP: strings.HasPrefix(r.Server, "http://")}
+	g.Host = hostPort(strings.ToLower(strings.Trim(r.Host, "[]")), r.Port, g.PlainHTTP)
+	if unreachable(r.Host) {
 		port := r.Port
 		if port == "" {
 			port = "<port>"
@@ -126,11 +166,13 @@ func ResolveGateway(flag string, registry func() (*Registry, error)) (Gateway, e
 	return g, nil
 }
 
-func loopback(host string) bool {
+// unreachable is a loopback or unspecified address: one a cluster cannot
+// fetch from.
+func unreachable(host string) bool {
 	host = strings.ToLower(strings.TrimSuffix(host, "."))
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return true
 	}
 	ip := net.ParseIP(strings.Trim(host, "[]"))
-	return ip != nil && ip.IsLoopback()
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
 }

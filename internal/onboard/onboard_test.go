@@ -24,20 +24,20 @@ import (
 // go test ./internal/onboard -update rewrites the committed example from the code.
 var update = flag.Bool("update", false, "rewrite examples/onboard from the code")
 
-// go test ./internal/onboard -record renders the example's charts with cub helm
-// and keeps what it printed in testdata, so the tests run offline.
-var record = flag.Bool("record", false, "render the example's charts with cub helm and record them")
+// go test ./internal/onboard -record renders the example's charts with helm
+// template and keeps what it printed in testdata, so the tests run offline.
+var record = flag.Bool("record", false, "render the example's charts with helm template and record them")
 
 const exampleDir = "../../examples/onboard"
 
 var exampleOpts = Options{StageLabel: "env", Stages: []string{"staging", "prod"}, IncludeHooks: []string{"ingress-nginx"}, Render: recorded}
 
-// recorded replays a rendering cub helm template printed for the same chart,
+// recorded replays a rendering helm template printed for the same chart,
 // recorded under testdata/renders.
 func recorded(c Chart) (Rendering, error) {
 	file := filepath.Join("testdata", "renders", c.Key()+".json.gz")
 	if *record {
-		r, err := CubHelm(c)
+		r, err := Helm(c)
 		if err != nil {
 			return r, err
 		}
@@ -344,8 +344,8 @@ func TestExamplePlan(t *testing.T) {
 			t.Errorf("the chart should render with the profile's values: the admission controller at 3 replicas")
 		}
 	}
-	if text, _ := kyverno[0].Text(); !strings.HasPrefix(string(text), "# Unit: ") {
-		t.Errorf("a chart's unit holds what cub helm template printed, as printed, so rendering the next version shows only what changed")
+	if text, _ := kyverno[0].Text(); !strings.HasPrefix(string(text), chartrender.NamespaceDoc("kyverno")+"---\n# Source: kyverno/") {
+		t.Errorf("a chart's unit holds what helm template printed, as printed, after the Namespace it lacks, so rendering the next version shows only what changed")
 	}
 	if !strings.Contains(RenderPlan(plan, true), "13 Spaces and 8 Links") {
 		t.Errorf("one Link per unit of each variant: %s", RenderPlan(plan, true))
@@ -640,6 +640,15 @@ func TestChartReferences(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("chart references:\n got %q\nwant %q", got, want)
+	}
+	got = []string{strings.Join(charts[0].HelmCommand("v.yaml"), " "), strings.Join(charts[1].HelmCommand(""), " "), strings.Join(charts[2].HelmCommand(""), " ")}
+	want = []string{
+		"helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --include-crds --no-hooks",
+		"helm template vault oci://registry-1.docker.io/bitnamicharts/vault --version 1.4.0 --namespace default --include-crds --no-hooks",
+		"helm template app oci://ghcr.io/org/charts/app --version 2.0.0 --namespace apps --no-hooks",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("helm template commands:\n got %q\nwant %q", got, want)
 	}
 }
 
@@ -1048,7 +1057,7 @@ func TestKeptHooks(t *testing.T) {
 	if len(plan.Problems) > 0 || string(text) != string(rendering.Stdout) {
 		t.Errorf("a chart whose hooks are kept is held exactly as cub helm template printed it, TTL and all:\n%s\n%v", text, plan.Problems)
 	}
-	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml | "+chartrender.Filter+"\n") {
+	if script := ApplyScript(plan); !strings.Contains(script, "--include-crds -f ingress/ingress.values.yaml\n") {
 		t.Errorf("apply.sh records the plain render, so the next version is rendered the same way:\n%s", script)
 	}
 	dp, _ := EncodeYAML(plan.Management.ByProfile[0].Profiles[0])
@@ -1235,9 +1244,10 @@ func TestProfilesSomethingElseApplies(t *testing.T) {
 	}
 }
 
-// cub helm template prints a stray line at the top of some documents, which
-// ConfigHub drops when a unit is created but keeps when it is updated. The
-// base must hold the render without it, and every object the render has.
+// cub helm template v0.1.1 printed a stray line at the top of some documents,
+// which ConfigHub drops when a unit is created but keeps when it is updated.
+// helm template prints none. Either way the base must hold the render without
+// it, and every object the render has.
 func TestStrayLinesAreDropped(t *testing.T) {
 	plan := mustPlan(t, exampleDocs(t), exampleOpts)
 	for _, p := range plan.Profiles {
@@ -1254,8 +1264,8 @@ func TestStrayLinesAreDropped(t *testing.T) {
 			if got := strings.Count(string(rendering.Stdout), "\n") - strings.Count(string(text), "\n"); got != want {
 				t.Errorf("%s: %d lines dropped, want the %d stray ones only", u.Slug, got, want)
 			}
-			if u.Slug == "kyverno" && (want == 0 || len(u.Objects) != 71) {
-				t.Errorf("kyverno's recorded render has stray lines (%d), and all 71 objects stay (%d)", want, len(u.Objects))
+			if u.Slug == "kyverno" && len(u.Objects) != 71 {
+				t.Errorf("kyverno renders 70 objects, and its Namespace goes in front: got %d", len(u.Objects))
 			}
 		}
 	}
@@ -1321,5 +1331,110 @@ func TestCompareLive(t *testing.T) {
 	r, err = CompareLive(world(true, "", ""), hub, check)
 	if err != nil || !strings.Contains(r.Skipped, "pull mode") {
 		t.Errorf("a cluster in pull mode cannot be read from the management cluster: %+v %v", r, err)
+	}
+}
+
+// ConfigHub #5794: a change order over freshly cloned variants counts them as
+// released, so a variant's first release cannot go through it. publish then
+// stops and says how to publish a baseline at head; FIRST_RELEASE=baseline
+// publishes it; PROPOSE_ONLY leaves it to a person and waits. It never does so
+// for a variant that has a release, for any other refusal, or when cub fails.
+// This runs apply.sh's own helpers, under its own shell options, against a
+// stand-in cub.
+func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("needs bash")
+	}
+	script := ApplyScript(mustPlan(t, exampleDocs(t), exampleOpts))
+	start := strings.Index(script, "released() {")
+	end := strings.Index(script, "\nbaseline() {")
+	if start < 0 || end < 0 || !strings.Contains(script, "\nrefused_first() {") {
+		t.Fatalf("apply.sh has no released(), refused_first() or baseline():\n%s", script)
+	}
+	rest := script[end+1:]
+	stop := strings.Index(rest, "\n}\n")
+	helpers := script[start:end+1] + rest[:stop+3]
+	fake := `cub() {
+  echo "cub $*" >> "$LOG"
+  case "$*" in
+    "release list --space v "*) [ -z "$LIST_FAILS" ] || return 1; echo "$RELEASES" ;;
+    "changeorder get --space base o -o jq=.ChangeOrder.State") echo "\"$STATE\"" ;;
+    "changeorder get"*) echo "BAD ARGS" >> "$LOG"; return 1 ;;
+    *"--revision ChangeOrder:base/o"*) echo "Failed: HTTP 422 for req x: $REFUSAL"; return 1 ;;
+  esac
+}
+holds() { return 0; }
+sleep() { :; }
+`
+	baseline := "cub release publish v --annotation sveltos.confighub.com/first-release=baseline --quiet"
+	noRevision := "requires approval, but no Revision was found to evaluate it on"
+	for _, c := range []struct {
+		name, env, releases, state, refusal string
+		fails                               bool
+		said                                []string
+		published                           bool
+	}{
+		{"by hand", "", "0", "Released", noRevision, true, []string{"refuses its first release through base/o (confighub#5794)", "no Revision was found", "FIRST_RELEASE=baseline"}, false},
+		{"by hand, baseline asked for", "FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"first release published at head as the onboarding baseline"}, true},
+		{"proposing", "PROPOSE_ONLY=1", "0", "Released", noRevision, false, []string{"refuses its first release through base/o", "no Revision was found", "run this script again"}, false},
+		{"proposing, baseline asked for", "PROPOSE_ONLY=1 FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"refuses its first release"}, false},
+		{"already released", "FIRST_RELEASE=baseline", "1", "Released", noRevision, true, []string{"no Revision was found"}, false},
+		{"an approval still to come", "FIRST_RELEASE=baseline", "0", "Resolved", "ApprovalRequired: the release needs an approval from another person", true, []string{"ApprovalRequired"}, false},
+		{"cub cannot list the releases", "FIRST_RELEASE=baseline LIST_FAILS=1", "", "Released", noRevision, true, []string{"no Revision was found"}, false},
+	} {
+		dir := t.TempDir()
+		log := filepath.Join(dir, "cub.log")
+		file := filepath.Join(dir, "run.sh")
+		if err := os.WriteFile(file, []byte("set -euo pipefail\n"+helpers+"\n"+fake+"publish v base/o 1 prod\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", file)
+		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "STATE="+c.state, "REFUSAL="+c.refusal, "PROPOSE_ONLY=", "FIRST_RELEASE=", "LIST_FAILS=")
+		cmd.Env = append(cmd.Env, strings.Fields(c.env)...)
+		out, err := cmd.CombinedOutput()
+		calls, _ := os.ReadFile(log)
+		if (err != nil) != c.fails {
+			t.Errorf("%s: publish should %s (err %v):\n%s", c.name, map[bool]string{true: "fail", false: "succeed"}[c.fails], err, out)
+		}
+		for _, said := range c.said {
+			if !strings.Contains(string(out), said) {
+				t.Errorf("%s: should say %q:\n%s", c.name, said, out)
+			}
+		}
+		if got := strings.Contains(string(calls), baseline); got != c.published {
+			t.Errorf("%s: baseline published %v, want %v:\n%s", c.name, got, c.published, calls)
+		}
+		if strings.Contains(string(calls), "BAD ARGS") {
+			t.Errorf("%s: changeorder get was not asked for base/o:\n%s", c.name, calls)
+		}
+	}
+}
+
+// The command apply.sh records above a chart must print what the unit holds,
+// Namespace included, so the next version renders the same way. This runs it
+// against a stand-in helm.
+func TestRecordedRenderCommandRuns(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("needs bash")
+	}
+	dir := t.TempDir()
+	printed := "---\n# Source: c/templates/cm.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n  namespace: my-apps\n"
+	helm := "#!/usr/bin/env bash\nprintf '%s' '" + printed + "'\n"
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(helm), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chart := &Chart{Release: "app", Namespace: "my-apps", Ref: "oci://example.com/c", Version: "1.0.0", Values: "a: 1"}
+	for name, raw := range map[string]string{
+		"with the Namespace helm leaves out": chartrender.NamespaceDoc("my-apps") + printed,
+		"as helm printed it":                 printed,
+	} {
+		cmd := renderCommand(Profile{Name: "p"}, Unit{Slug: "app", Chart: chart, raw: []byte(raw)})
+		run := exec.Command("bash", "-c", cmd)
+		run.Dir = dir
+		run.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := run.Output()
+		if err != nil || string(out) != raw {
+			t.Errorf("%s: %s\nprinted %q (err %v)\nwant    %q", name, cmd, out, err, raw)
+		}
 	}
 }

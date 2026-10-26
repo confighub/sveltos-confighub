@@ -89,10 +89,41 @@ publish() {
         if [ "$waitfor" = approval ]; then echo "$1 waits for approval"; else kind=${reason#*: }; kind=${kind#* }; echo "$1 waits for $waitfor: cub attestation create --space $1 --type ${kind%% *} --change-order $2"; fi
         return 0 ;;
       *"outstanding ValidationErrors"*) sleep "${RETRY_SECONDS:-15}" ;;
+      *"HTTP 422"*) refused_first "$1" "$2" || { echo "$out" >&2; return 1; }; baseline "$1" "$2" "$out"; return $? ;;
       *) echo "$out" >&2; return 1 ;;
     esac
   done
   echo "$1 is held by its policy checks, so it is not released: $out" >&2; return 1
+}
+# ConfigHub #5794: a change order over variants just cloned from their base
+# counts them as released, so a variant's first release cannot go through it;
+# the publish is refused (422) and an approval records nothing. Until ConfigHub
+# fixes that, a variant that has never been released can get its first
+# release at head instead, as the onboarding baseline: what its base holds,
+# which the handover compared with what each cluster runs. It skips the
+# workflow's release gates for that one release, so it is your call:
+# FIRST_RELEASE=baseline bash apply.sh publishes it; otherwise the script
+# stops and says so. With PROPOSE_ONLY it is never published by the script.
+# refused_first <variant> <base>/<order> is the state #5794 leaves, and only
+# that one: the order says Released, and the variant has no release. A cub
+# that fails, or any other refusal, such as an approval still to come, is not.
+refused_first() {
+  local n state
+  n=$(cub release list --space "$1" -o 'jq=[.[] | select(.Release.Published)] | length') || return 1
+  [ "$n" = 0 ] || return 1
+  state=$(cub changeorder get --space "${2%%/*}" "${2#*/}" -o 'jq=.ChangeOrder.State') || return 1
+  [ "$(printf '%s' "$state" | tr -d '"')" = Released ]
+}
+baseline() {
+  if [ -n "${PROPOSE_ONLY:-}" ] || [ "${FIRST_RELEASE:-}" != baseline ]; then
+    echo "$1 has never been released, and ConfigHub refuses its first release through $2 (confighub#5794): $3"
+    echo "  Once you have reviewed it, publish its first release at head as the onboarding baseline, then run this script again:"
+    echo "  cub release publish $1 --annotation sveltos.confighub.com/first-release=baseline"
+    [ -n "${PROPOSE_ONLY:-}" ] && return 0
+    echo "  (or run this script with FIRST_RELEASE=baseline, which does it for every such variant)"; return 1
+  fi
+  cub release publish "$1" --annotation sveltos.confighub.com/first-release=baseline --quiet || { echo "$3" >&2; return 1; }
+  echo "$1: first release published at head as the onboarding baseline (confighub#5794)"
 }
 # PROPOSE_ONLY=1 approves nothing. Each stage is promoted, and a release
 # waits in ConfigHub until a person approves it; run the script again to
@@ -163,19 +194,19 @@ cub target update staging-eu --space sveltos-targets --quiet "${grant[@]}"
 # on its Target, read through the kubeconfig Sveltos reaches it with. A cluster
 # only the management cluster reaches needs CLUSTER_KUBECONFIGS=<dir> holding
 # <cluster>.kubeconfig; without it, onboarding goes on and says so.
-cub sveltos facts ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} --targets sveltos-targets ${CLUSTER_KUBECONFIGS:+--kubeconfigs "$CLUSTER_KUBECONFIGS"} || echo "Some clusters' facts were not collected; run cub sveltos facts again once they can be reached"
+cub sveltos facts ${MGMT_CONTEXT:+--kube-context "$MGMT_CONTEXT"} --targets sveltos-targets ${CLUSTER_KUBECONFIGS:+--kubeconfigs "$CLUSTER_KUBECONFIGS"} || echo "Some clusters' facts were not collected; run cub sveltos facts again once they can be reached"
 
 step "2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow"
 cub component create sveltos-ingress-nginx --allow-exists --quiet
 cub space create sveltos-ingress-nginx-base --component sveltos-ingress-nginx --label Component=sveltos-ingress-nginx --label Role=base --allow-exists --quiet
-# ingress-nginx is rendered with: cub helm template ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version 4.15.1 --namespace ingress-nginx --create-namespace --include-hooks | grep -vxF '$comment$head$: ""'
+# ingress-nginx is rendered with: { printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' ingress-nginx; helm template ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx --version 4.15.1 --namespace ingress-nginx --include-crds; }
 cub unit create --space sveltos-ingress-nginx-base ingress-nginx ingress-nginx/ingress-nginx.yaml --change-desc 'Onboard ingress-nginx: chart ingress-nginx 4.15.1 from https://kubernetes.github.io/ingress-nginx' --allow-exists --quiet
 stored sveltos-ingress-nginx-base ingress-nginx ingress-nginx/ingress-nginx.yaml
 cub changeworkflow create --space sveltos-ingress-nginx-base rollout --filename ingress-nginx/change-workflow.yaml --allow-exists --quiet
 stages_are sveltos-ingress-nginx-base rollout prod || echo '{"Stages":[{"Name":"prod","WhereSpace":"Labels.Stage = '\''prod'\''","ReleasePrerequisites":["approval"]}]}' | cub changeworkflow update --patch --space sveltos-ingress-nginx-base rollout --from-stdin --quiet
 cub component create sveltos-kyverno --allow-exists --quiet
 cub space create sveltos-kyverno-base --component sveltos-kyverno --label Component=sveltos-kyverno --label Role=base --allow-exists --quiet
-# kyverno is rendered with: cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --create-namespace -f kyverno/kyverno.values.yaml | grep -vxF '$comment$head$: ""'
+# kyverno is rendered with: { printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n' kyverno; helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --include-crds --no-hooks -f kyverno/kyverno.values.yaml; }
 cub unit create --space sveltos-kyverno-base kyverno kyverno/kyverno.yaml --change-desc 'Onboard kyverno: chart kyverno 3.8.1 from https://kyverno.github.io/kyverno' --allow-exists --quiet
 stored sveltos-kyverno-base kyverno kyverno/kyverno.yaml
 cub changeworkflow create --space sveltos-kyverno-base rollout --filename kyverno/change-workflow.yaml --allow-exists --quiet

@@ -2,6 +2,8 @@ package chartrender
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -61,5 +63,76 @@ func TestCommand(t *testing.T) {
 	}
 	if k := c.Key(); !strings.HasPrefix(k, "kyverno-3-8-1-") {
 		t.Errorf("the key names the chart and version: %s", k)
+	}
+}
+
+// fakeHelm puts a helm on the PATH that prints a hook only without --no-hooks,
+// and a Namespace only when told to, as helm template does.
+func fakeHelm(t *testing.T, withNamespace bool) {
+	t.Helper()
+	dir := t.TempDir()
+	ns := ""
+	if withNamespace {
+		ns = "---\n# Source: c/templates/ns.yaml\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: apps\n"
+	}
+	script := "#!/usr/bin/env bash\n" +
+		"printf '%s' '" + ns + "---\n# Source: c/templates/cm.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n  namespace: apps\n'\n" +
+		"case \" $* \" in *' --no-hooks '*) ;; *) printf '%s' '---\n# Source: c/templates/job.yaml\napiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n  annotations:\n    helm.sh/hook: pre-install,pre-upgrade\n' ;; esac\n"
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestHelmLeavesHooksOutAndAddsTheNamespace(t *testing.T) {
+	fakeHelm(t, false)
+	c := Chart{Release: "app", Namespace: "apps", Ref: "oci://example.com/c", Version: "1.0.0"}
+	r, err := Render(Helm, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(r.Objects), NamespaceDoc("apps")+"---\n# Source: c/templates/cm.yaml") {
+		t.Errorf("the Namespace goes first, then helm template's output:\n%s", r.Objects)
+	}
+	if strings.Contains(string(r.Objects), "kind: Job") {
+		t.Errorf("the hook is left out:\n%s", r.Objects)
+	}
+	if len(r.Hooks) != 1 || r.Hooks[0].String() != "Job migrate" || !r.Hooks[0].AtInstall() {
+		t.Errorf("hooks left out: %+v", r.Hooks)
+	}
+}
+
+func TestHelmKeepsHooksWhenAskedAndTheChartsNamespace(t *testing.T) {
+	fakeHelm(t, true)
+	c := Chart{Release: "app", Namespace: "apps", Ref: "oci://example.com/c", Version: "1.0.0", IncludeHooks: true}
+	r, err := Render(Helm, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(string(r.Objects), NamespaceDoc("apps")) {
+		t.Errorf("a chart that renders its Namespace gets no second one:\n%s", r.Objects)
+	}
+	if !strings.Contains(string(r.Objects), "kind: Job") || len(r.Hooks) != 0 {
+		t.Errorf("kept hooks stay in the objects and are not reported as left out: %+v\n%s", r.Hooks, r.Objects)
+	}
+}
+
+func TestHelmNeedsHelm(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	if _, err := Helm(Chart{Release: "a", Namespace: "a", Ref: "a"}); err == nil || !strings.Contains(err.Error(), "needs Helm") {
+		t.Errorf("without helm on the PATH: %v", err)
+	}
+}
+
+func TestHelmShowsTheReasonHelmGives(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/usr/bin/env bash\necho 'Error: execution error at (c/templates/cm.yaml:3:9): host is required' >&2\necho 'Use --debug flag to render out invalid YAML' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err := Helm(Chart{Release: "app", Namespace: "apps", Ref: "oci://example.com/c", Version: "1.0.0", Values: "a: 1"})
+	if err == nil || !strings.Contains(err.Error(), "host is required") || strings.Contains(err.Error(), "--debug") {
+		t.Errorf("the error should carry Helm's reason, not its advice: %v", err)
 	}
 }

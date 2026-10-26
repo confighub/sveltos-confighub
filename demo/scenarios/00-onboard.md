@@ -95,7 +95,7 @@ bash $DEMO/setup/gates.sh            # rollouts required; the record gated
 bash $DEMO/setup/reporter.sh start   # live status into ConfigHub every 15 s
 ```
 
-Check: `cub sveltos status --context kind-chaos-mgmt` shows every Space
+Check: `cub sveltos status --kube-context kind-chaos-mgmt` shows every Space
 Synced and Healthy. In the web UI, Components shows the base, two class
 bases and four deployments for `chaos-shop` (the UI's name for a variant), each Live and Synced (see
 [PROOF.md](../PROOF.md)).
