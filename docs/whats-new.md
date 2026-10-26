@@ -15,6 +15,8 @@ v0.7.0's Targets, and asks ConfigHub through its SDK. Version 0.13 checks that
 prod runs what staging ran. Version 0.14 records live status on the Release,
 where ConfigHub v0.8.2 and newer read it, and 0.14.1 works with October's
 `cub`: Helm renders the charts, and the kubectl context is `--kube-context`.
+Version 0.15 has Sveltos pull as a service account, as ConfigHub removes
+workers.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -25,7 +27,7 @@ where ConfigHub v0.8.2 and newer read it, and 0.14.1 works with October's
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## 0.15.0, unreleased
+## 0.15.0, 2026-10-26
 
 **Sveltos pulls as a service account, not a worker.** ConfigHub is removing
 workers (confighubai/confighub#5980), and `cub` marks them deprecated.
