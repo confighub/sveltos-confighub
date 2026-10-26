@@ -215,9 +215,8 @@ case "$*" in
   "unit get "*) echo 3 ;;
   "unit list "*) echo 99 ;;
   "changeworkflow get "*) echo staging,prod ;;
-  "worker get "*UserID*) [ -n "$NO_BOT_USER" ] || echo bot-user ;;
-  "worker get "*) echo x ;;
-  "target create --help") if [ -n "$OLD_CUB" ]; then echo "      --provider string"; else echo "      --permission strings"; fi ;;
+  "serviceaccount token create --help") if [ -n "$OLD_CUB" ]; then echo 'unknown command "serviceaccount"'; else echo "      --expires-in duration"; fi ;;
+  "serviceaccount token create "*) if [ -n "$NO_TOKEN" ]; then echo null; else echo '"tok-123"'; fi ;;
   "release publish "*)
     for s in $WAITING; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
     for s in $NEEDS; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
@@ -235,7 +234,15 @@ exit 0
 echo "kubectl $*" >> "$LOG"
 case "$*" in
   *"get deployment addon-controller"*) echo ghcr.io/projectsveltos/addon-controller:v1.15.0 ;;
-  *"apply -f -"*) cat >/dev/null ;;
+  *"get secret"*"{.data.username}"*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "$HELD_USER" | base64 ;;
+  *"apply -f -"*) cat >> "$LOG.applied" ;;
+  *"create secret generic "*)
+    name="" user="" pw="" next=""
+    for a in "$@"; do
+      [ "$next" = 1 ] && { name=$a; next=""; }
+      case "$a" in generic) next=1 ;; --from-literal=username=*) user=${a#--from-literal=username=} ;; --from-file=password=*) pw=$(cat "${a#--from-file=password=}") ;; esac
+    done
+    printf 'kind: Secret\nmetadata:\n  name: %s\ndata:\n  username: %s\n  password: %s\n' "$name" "$(printf '%s' "$user" | base64)" "$(printf '%s' "$pw" | base64)" ;;
   *"apply -f management/"*" -l "*) echo "clusterprofile.config.projectsveltos.io/${@: -1} created" ;;
 esac
 exit 0
@@ -263,16 +270,19 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	bin := t.TempDir()
 	fakeTools(t, bin)
 	order := "sveltos-kyverno-base/" + plan.Profiles[0].ReleaseOrder
-	needs, held := "", ""
+	needs, held, heldUser := "", "", ""
+	var applied string
 	run := func(unreleased, waiting string, propose bool) (string, string, error) {
 		log := filepath.Join(t.TempDir(), "calls")
 		cmd := exec.Command("bash", filepath.Join(dir, "apply.sh"))
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "UNRELEASED="+unreleased, "WAITING="+waiting, "RETRY_SECONDS=0", "NEEDS="+needs, "HELD="+held)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "UNRELEASED="+unreleased, "WAITING="+waiting, "RETRY_SECONDS=0", "NEEDS="+needs, "HELD="+held, "HELD_USER="+heldUser)
 		if propose {
 			cmd.Env = append(cmd.Env, "PROPOSE_ONLY=1")
 		}
 		out, err := cmd.CombinedOutput()
 		calls, _ := os.ReadFile(log)
+		a, _ := os.ReadFile(log + ".applied")
+		applied = string(a)
 		return string(out), string(calls), err
 	}
 
@@ -280,10 +290,8 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a release waiting for approval is not a failure: %v\n%s", err, out)
 	}
-	// Targets take the reading identity as permissions, with no worker,
-	// provider or parameters.
-	// The user is the worker's UserID, not its BridgeWorkerID, and a Target
-	// that already exists gets the grant too.
+	// Targets grant the delivery service account View and ViewChildren, made
+	// with update so that a Target that already exists gets the grant too.
 	for _, target := range plan.Targets {
 		for _, verb := range []string{"create", "update"} {
 			if n := strings.Count(calls, "cub target "+verb+" "+target.Target+" --space sveltos-targets"); n != 1 {
@@ -291,9 +299,14 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(calls, "cub worker get --space sveltos-targets server-worker -o jq=.BridgeWorker.UserID") ||
-		strings.Count(calls, "--permission View:bot-user --permission ViewChildren:bot-user") != 2*len(plan.Targets) || strings.Contains(calls, "--provider") {
-		t.Errorf("each Target grants the worker's bot user View and ViewChildren:\n%s", calls)
+	if !strings.Contains(calls, "cub serviceaccount create sveltos-delivery --allow-exists --quiet") ||
+		strings.Count(calls, "--permission View:serviceaccount:sveltos-delivery --permission ViewChildren:serviceaccount:sveltos-delivery") != len(plan.Targets) ||
+		strings.Contains(calls, "cub worker") {
+		t.Errorf("each Target grants the service account sveltos-delivery View and ViewChildren, and no worker is used:\n%s", calls)
+	}
+	if !strings.Contains(calls, "cub serviceaccount token create sveltos-delivery ") ||
+		!strings.Contains(applied, "name: confighub-sveltos-targets") || !strings.Contains(applied, "username: dG9rZW4=") || !strings.Contains(applied, "password: dG9rLTEyMw==") {
+		t.Errorf("the gateway Secret holds username token and a token of the service account:\n%s\n%s", calls, applied)
 	}
 	if strings.Contains(calls, "cub variant approve") {
 		t.Errorf("PROPOSE_ONLY approves nothing")
@@ -328,16 +341,29 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	t.Setenv("OLD_CUB", "1")
 	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
 	if err == nil || !strings.Contains(out, "cub is older than "+MinimumCub) || strings.Contains(calls, "space create") {
-		t.Errorf("a cub whose Targets still take a worker stops the script before it changes anything: %v\n%s", err, out)
+		t.Errorf("a cub without service accounts stops the script before it changes anything: %v\n%s", err, out)
 	}
 	os.Unsetenv("OLD_CUB")
 
-	t.Setenv("NO_BOT_USER", "1")
-	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
-	if err == nil || !strings.Contains(out, "has no bot user") || strings.Contains(calls, "--allow-exists --quiet --permission") {
-		t.Errorf("a worker with no bot user stops the script before any Target is made: %v\n%s", err, out)
+	t.Setenv("NO_TOKEN", "1")
+	out, _, err = run("sveltos-kyverno-prod-us", "", true)
+	if err == nil || !strings.Contains(out, "could not issue a token for sveltos-delivery") || strings.Contains(applied, "kind: Secret") {
+		t.Errorf("no token, no Secret: %v\n%s", err, out)
 	}
-	os.Unsetenv("NO_BOT_USER")
+	os.Unsetenv("NO_TOKEN")
+
+	heldUser = "token"
+	_, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err != nil || strings.Contains(calls, "serviceaccount token create sveltos-delivery ") || strings.Contains(applied, "kind: Secret") {
+		t.Errorf("a re-run keeps the token the Secret holds: %v\n%s", err, calls)
+	}
+	heldUser = "6f1c9a40-worker-id"
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err != nil || !strings.Contains(calls, "serviceaccount token create sveltos-delivery ") ||
+		!strings.Contains(out, "delete the old worker: cub worker delete --space sveltos-targets server-worker") {
+		t.Errorf("a Secret holding a worker's credential is replaced, and the old worker named: %v\n%s", err, out)
+	}
+	heldUser = ""
 
 	out, calls, err = run("", "", true)
 	if err != nil || strings.Contains(calls, "changeorder create") || strings.Contains(calls, "release publish") || !strings.Contains(out, "every variant in this plan is released") {

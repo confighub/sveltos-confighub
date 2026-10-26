@@ -160,11 +160,11 @@ watch_health() {
 
 step "0/6 Check before changing anything"
 cub space list --quiet >/dev/null || { echo "cub is not logged in: run cub auth login"; exit 1; }
-# Since cub v0.7.0 a Target has no worker, provider or parameters, and takes
-# --permission. The help text is read into a variable first: a pipe into
-# grep -q would end cub early, which pipefail reports as a failure.
-case "$(cub target create --help 2>&1)" in *--provider*) old_cub=1 ;; *--permission*) old_cub= ;; *) old_cub=1 ;; esac
-[ -z "$old_cub" ] || { echo "cub is older than v0.7.0, which this script needs: run cub upgrade"; exit 1; }
+# Sveltos pulls with a service account's token, which cub v0.8.13 and later
+# issue. The help text is read into a variable first: a pipe into grep -q
+# would end cub early, which pipefail reports as a failure.
+case "$(cub serviceaccount token create --help 2>&1)" in *--expires-in*) ;; *) old_cub=1 ;; esac
+[ -z "${old_cub:-}" ] || { echo "cub is older than v0.8.13, which this script needs for service accounts: run cub upgrade"; exit 1; }
 image=$(k get deployment addon-controller -n projectsveltos -o jsonpath='{.spec.template.spec.containers[0].image}')
 version=${image##*:}
 if [ "$(printf '%s\n' v1.14.0 "$version" | sort -V | head -1)" != v1.14.0 ]; then
@@ -173,22 +173,20 @@ fi
 
 step "1/6 One named Target per cluster, in sveltos-targets"
 cub space create sveltos-targets --allow-exists --quiet
-# A server-hosted worker has no process behind it and no role in the
-# organization; it is the credential Sveltos reads with. Its bot user holds
-# View and ViewChildren on each Target, to find it and pull its Releases.
-cub worker create --space sveltos-targets server-worker --is-server-worker --org-role none --allow-exists --quiet
-bot_user="$(cub worker get --space sveltos-targets server-worker -o jq=.BridgeWorker.UserID | tr -d '"\n')"
-case "$bot_user" in ""|null) echo "the worker server-worker in sveltos-targets has no bot user to grant the Targets to"; exit 1 ;; esac
+# The service account Sveltos pulls with. It has no role in the organization,
+# and holds View and ViewChildren on each Target, to find it and pull its
+# Releases; it can write nothing.
+cub serviceaccount create sveltos-delivery --allow-exists --quiet
 # --allow-exists leaves a Target that already exists as it is, so the grant
-# is made again with update, which adds it to a Target from an earlier run.
-grant=(--permission "View:${bot_user}" --permission "ViewChildren:${bot_user}")
-cub target create mgmt --space sveltos-targets --allow-exists --quiet "${grant[@]}"
+# is made with update, which adds it to a Target from an earlier run too.
+grant=(--permission "View:serviceaccount:sveltos-delivery" --permission "ViewChildren:serviceaccount:sveltos-delivery")
+cub target create mgmt --space sveltos-targets --allow-exists --quiet
 cub target update mgmt --space sveltos-targets --quiet "${grant[@]}"
-cub target create prod-eu --space sveltos-targets --allow-exists --quiet "${grant[@]}"
+cub target create prod-eu --space sveltos-targets --allow-exists --quiet
 cub target update prod-eu --space sveltos-targets --quiet "${grant[@]}"
-cub target create prod-us --space sveltos-targets --allow-exists --quiet "${grant[@]}"
+cub target create prod-us --space sveltos-targets --allow-exists --quiet
 cub target update prod-us --space sveltos-targets --quiet "${grant[@]}"
-cub target create staging-eu --space sveltos-targets --allow-exists --quiet "${grant[@]}"
+cub target create staging-eu --space sveltos-targets --allow-exists --quiet
 cub target update staging-eu --space sveltos-targets --quiet "${grant[@]}"
 # Each cluster's facts (Kubernetes version, CRDs, storage and ingress classes)
 # on its Target, read through the kubeconfig Sveltos reaches it with. A cluster
@@ -296,15 +294,26 @@ else
 fi
 
 step "6/6 Point Sveltos at ConfigHub (your management cluster)"
-# Sveltos reads the gateway as the server-hosted worker the Targets grant
-# access to: a credential that does not expire and can pull only the
-# releases of those Targets. The ID and
-# secret go from cub into the Secret through file descriptors, never to disk,
-# the command line, or the terminal.
-k create secret generic confighub-sveltos-targets --namespace projectsveltos --type addons.projectsveltos.io/cluster-profile \
-  --from-file=username=<(cub worker get --space sveltos-targets server-worker -o jq=.BridgeWorker.BridgeWorkerID | tr -d '\n') \
-  --from-file=password=<(cub worker get --space sveltos-targets server-worker --include-secret -o jq=.BridgeWorker.Secret | tr -d '\n') \
-  --dry-run=client -o yaml | k apply -f -
+# Sveltos reads the gateway as the service account sveltos-delivery, with a token
+# of it: the username is the word token, the password the token. It pulls
+# only the releases of the Targets that grant the account access, and does
+# not expire until it is revoked. A re-run keeps the token the Secret holds.
+# To rotate it, revoke it (cub serviceaccount token list sveltos-delivery names
+# each token by the Secret it was issued for), delete the Secret, and run
+# this script again. The token goes from cub into the Secret through a
+# variable and a file descriptor, never to disk, the command line, or the
+# terminal.
+held=$(k get secret -n projectsveltos confighub-sveltos-targets -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)
+if [ "$held" != token ]; then
+  token=$(cub serviceaccount token create sveltos-delivery --description "Sveltos on ${MGMT_CONTEXT:-the management cluster}, Secret projectsveltos/confighub-sveltos-targets" -o jq=.Token | tr -d '"\n')
+  case "$token" in ""|null) echo "could not issue a token for sveltos-delivery"; exit 1 ;; esac
+  k create secret generic confighub-sveltos-targets --namespace projectsveltos --type addons.projectsveltos.io/cluster-profile \
+    --from-literal=username=token --from-file=password=<(printf '%s' "$token") \
+    --dry-run=client -o yaml | k apply -f -
+  unset token
+  # A Secret from before cub sveltos 0.15 held a worker's ID and secret.
+  [ -z "$held" ] || echo "The gateway Secret held a worker's credential; it now holds a token of sveltos-delivery. Once Sveltos has fetched with it, delete the old worker: cub worker delete --space sveltos-targets server-worker"
+fi
 deliver ingress-nginx sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-prod-us
 deliver kyverno sveltos-kyverno-staging-eu sveltos-kyverno-prod-eu sveltos-kyverno-prod-us
 deliver kyverno-policies sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-prod-eu sveltos-kyverno-policies-prod-us

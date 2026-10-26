@@ -209,9 +209,9 @@ what yours will do. It checks first that `cub` is logged in and is v0.7.0 or
 newer, and that your management cluster runs Sveltos v1.14.0 or newer (earlier
 releases cannot read the gzipped layers ConfigHub's gateway serves), then:
 
-1. Creates one Target per cluster, named for it, and a server-hosted worker
-   for Sveltos to read as. Each Target grants that worker's bot user (its
-   `UserID`) View and ViewChildren. It stores each cluster's facts on its Target with `cub sveltos facts`:
+1. Creates one Target per cluster, named for it, and a service account,
+   `<prefix>-delivery`, for Sveltos to read as. It has no role in the
+   organization, and each Target grants it View and ViewChildren. It stores each cluster's facts on its Target with `cub sveltos facts`:
    its Kubernetes version, CRDs, and storage and ingress classes. It reaches
    each cluster through the kubeconfig Sveltos uses, from its Secret on the
    management cluster; a cluster only the management cluster reaches needs
@@ -246,10 +246,28 @@ releases cannot read the gzipped layers ConfigHub's gateway serves), then:
 The whole script is safe to re-run. It picks up where ConfigHub says each
 step stands, and it never writes over a change made in ConfigHub since.
 
-Sveltos reads the gateway as a server-hosted worker, whose bot user each
-Target grants View and ViewChildren. That credential does not expire, it can
-pull only the releases of those Targets, and the script
-moves it from `cub` into the Secret without writing it to disk or showing it.
+Sveltos reads the gateway as the service account `<prefix>-delivery`, with a
+token of it: the Secret's username is the word `token`, its password the
+token. The token does not expire until it is revoked, it can pull only the
+releases of the Targets that grant the account access, and the account can
+write nothing. The script moves the token from `cub` into the Secret without
+writing it to disk or showing it, and a re-run keeps the token the Secret
+holds.
+- **To rotate it,** revoke it (`cub serviceaccount token list <prefix>-delivery`
+  names each token by the Secret it was issued for), delete the Secret, and
+  run `apply.sh` again.
+- **A fleet onboarded before 0.15** has a Secret holding a server-hosted
+  worker's ID and secret. ConfigHub is removing workers. Run the new
+  `apply.sh`: it replaces that Secret with a token, and names the old worker
+  to delete once Sveltos has fetched with the token.
+
+Measured on 2026-10-26 with Sveltos v1.15.0 and ConfigHub v0.9.5:
+- a release pulled with username `token` and a service account's token was
+  delivered;
+- one token served Targets in two Spaces;
+- a token of an account with no grant was refused with 403;
+- a revoked token was refused with 401 at the next fetch, within a minute,
+  and what was delivered stayed.
 
 ### Which registry Sveltos fetches from
 
@@ -636,18 +654,36 @@ that cannot be read or written is named in an error, and the others are still
 reported.
 
 **Who may write it.** `status` writes as the `cub` user it runs as. Your own
-user, as a member of the organization, can. A worker with no role in the
-organization needs `View` and `ViewChildren` on each variant Space to read
-its releases, and `EditChildren` on the Space, or on its Target, to record a
-reading; `Edit` on the Space is not enough. Removing the annotation an
-earlier version left takes `Edit` on the Space; without it the reading is
-still recorded, and `status` says once that the annotation is still there.
-Measured on 2026-10-09 against ConfigHub v0.8.10:
+user, as a member of the organization, can. An identity with no role in the
+organization needs `View` and `ViewChildren` to read the releases (on each
+variant Space, or on the Targets they release to), and `EditChildren` on the
+Space, or on its Target, to record a reading; `Edit` on the Space is not
+enough. Removing the annotation an earlier version left takes `Edit` on the
+Space; without it the reading is still recorded, and `status` says once that
+the annotation is still there.
+- Measured on 2026-10-09 for a worker's bot user, against ConfigHub v0.8.10.
+- Measured on 2026-10-26 for a service account signed in with a key
+  (`cub auth login --private-key=<file>`), against ConfigHub v0.9.5:
+  `EditChildren` on one Target let it record that Target's reading, and it
+  was refused for the other.
+
+Give `status` an account of its own rather than `<prefix>-delivery`, whose
+token sits in a Secret on the management cluster: that account should only
+pull.
 
 ```bash
-cub space update <variant Space> --permission "View:<bot user>" \
-  --permission "ViewChildren:<bot user>" --permission "EditChildren:<bot user>"
+cub serviceaccount create <prefix>-reporter
+cub target update <cluster> --space <prefix>-targets \
+  --permission "View:serviceaccount:<prefix>-reporter" \
+  --permission "ViewChildren:serviceaccount:<prefix>-reporter" \
+  --permission "EditChildren:serviceaccount:<prefix>-reporter"
 ```
+
+A key sign-in lasts a day. `status --watch` reads the context's saved
+sign-in again before each reading, but only `cub` renews it, from the key,
+when a `cub` command runs for that context. So if nothing else does within a
+day, run `cub --context <context> auth get-token >/dev/null` daily beside the
+watch, or restart the watch.
 
 **Health comes from Sveltos, when it deploys and after.** Each delivery
 profile carries `validateHealths` for the workloads its charts deliver, named

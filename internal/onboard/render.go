@@ -138,7 +138,7 @@ func RenderPlan(plan *Plan, next bool) string {
 		rollouts = append(rollouts, fmt.Sprintf("%s in %s%s", p.Name, count(len(p.Stages), "stage"), after))
 	}
 	out = append(out, "", "In ConfigHub",
-		fmt.Sprintf("  %s in %s, one per cluster, on a server-hosted worker", count(len(plan.Targets), "Target"), plan.TargetsSpace),
+		fmt.Sprintf("  %s in %s, one per cluster, which the service account %s may pull from", count(len(plan.Targets), "Target"), plan.TargetsSpace, deliveryAccount(plan.Prefix)),
 		fmt.Sprintf("  %s, each one base, %s%s, 1 management record", count(len(plan.Profiles), "component"), classCount(plan), count(variants, "variant")),
 		fmt.Sprintf("  %s and %s, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)", count(spaces, "Space"), count(plan.linkCount(), "Link")),
 		fmt.Sprintf("  first rollout: %s; one approval per stage, one release per variant", strings.Join(rollouts, ", ")))
@@ -406,11 +406,11 @@ func ApplyScript(plan *Plan) string {
 		"",
 		`step "0/6 Check before changing anything"`,
 		`cub space list --quiet >/dev/null || { echo "cub is not logged in: run cub auth login"; exit 1; }`,
-		"# Since cub "+MinimumCub+" a Target has no worker, provider or parameters, and takes",
-		"# --permission. The help text is read into a variable first: a pipe into",
-		"# grep -q would end cub early, which pipefail reports as a failure.",
-		`case "$(cub target create --help 2>&1)" in *--provider*) old_cub=1 ;; *--permission*) old_cub= ;; *) old_cub=1 ;; esac`,
-		fmt.Sprintf(`[ -z "$old_cub" ] || { echo "cub is older than %s, which this script needs: run cub upgrade"; exit 1; }`, MinimumCub),
+		"# Sveltos pulls with a service account's token, which cub "+MinimumCub+" and later",
+		"# issue. The help text is read into a variable first: a pipe into grep -q",
+		"# would end cub early, which pipefail reports as a failure.",
+		`case "$(cub serviceaccount token create --help 2>&1)" in *--expires-in*) ;; *) old_cub=1 ;; esac`,
+		fmt.Sprintf(`[ -z "${old_cub:-}" ] || { echo "cub is older than %s, which this script needs for service accounts: run cub upgrade"; exit 1; }`, MinimumCub),
 		`image=$(k get deployment addon-controller -n projectsveltos -o jsonpath='{.spec.template.spec.containers[0].image}')`,
 		`version=${image##*:}`,
 		fmt.Sprintf(`if [ "$(printf '%%s\n' %s "$version" | sort -V | head -1)" != %s ]; then`, MinimumSveltos, MinimumSveltos),
@@ -419,19 +419,17 @@ func ApplyScript(plan *Plan) string {
 		"",
 		fmt.Sprintf(`step "1/6 One named Target per cluster, in %s"`, plan.TargetsSpace),
 		line("cub", "space", "create", plan.TargetsSpace, "--allow-exists", "--quiet"),
-		"# A server-hosted worker has no process behind it and no role in the",
-		"# organization; it is the credential Sveltos reads with. Its bot user holds",
-		"# View and ViewChildren on each Target, to find it and pull its Releases.",
-		line("cub", "worker", "create", "--space", plan.TargetsSpace, workerSlug, "--is-server-worker", "--org-role", "none", "--allow-exists", "--quiet"),
-		fmt.Sprintf(`bot_user="$(%s | tr -d '"\n')"`, line("cub", "worker", "get", "--space", plan.TargetsSpace, workerSlug, "-o", "jq=.BridgeWorker.UserID")),
-		fmt.Sprintf(`case "$bot_user" in ""|null) echo "the worker %s in %s has no bot user to grant the Targets to"; exit 1 ;; esac`, workerSlug, plan.TargetsSpace),
+		"# The service account Sveltos pulls with. It has no role in the organization,",
+		"# and holds View and ViewChildren on each Target, to find it and pull its",
+		"# Releases; it can write nothing.",
+		line("cub", "serviceaccount", "create", deliveryAccount(plan.Prefix), "--allow-exists", "--quiet"),
 		"# --allow-exists leaves a Target that already exists as it is, so the grant",
-		"# is made again with update, which adds it to a Target from an earlier run.",
-		`grant=(--permission "View:${bot_user}" --permission "ViewChildren:${bot_user}")`,
+		"# is made with update, which adds it to a Target from an earlier run too.",
+		fmt.Sprintf(`grant=(--permission "View:serviceaccount:%[1]s" --permission "ViewChildren:serviceaccount:%[1]s")`, deliveryAccount(plan.Prefix)),
 	)
 	for _, t := range plan.Targets {
 		L = append(L,
-			line("cub", "target", "create", t.Target, "--space", plan.TargetsSpace, "--allow-exists", "--quiet")+` "${grant[@]}"`,
+			line("cub", "target", "create", t.Target, "--space", plan.TargetsSpace, "--allow-exists", "--quiet"),
 			line("cub", "target", "update", t.Target, "--space", plan.TargetsSpace, "--quiet")+` "${grant[@]}"`)
 	}
 	L = append(L,
@@ -577,17 +575,28 @@ func ApplyScript(plan *Plan) string {
 		L = append(L, "  "+line("awaits", p.Name, order), "fi")
 	}
 	if plan.Management != nil {
-		worker := fmt.Sprintf("cub worker get --space %s %s", plan.TargetsSpace, workerSlug)
+		account, secret := deliveryAccount(plan.Prefix), gatewaySecretName(plan.TargetsSpace)
 		L = append(L, "", `step "6/6 Point Sveltos at ConfigHub (your management cluster)"`,
-			"# Sveltos reads the gateway as the server-hosted worker the Targets grant",
-			"# access to: a credential that does not expire and can pull only the",
-			"# releases of those Targets. The ID and",
-			"# secret go from cub into the Secret through file descriptors, never to disk,",
-			"# the command line, or the terminal.",
-			fmt.Sprintf(`k create secret generic %s --namespace %s --type %s \`, gatewaySecretName(plan.TargetsSpace), secretNamespace, secretType),
-			fmt.Sprintf(`  --from-file=username=<(%s -o jq=.BridgeWorker.BridgeWorkerID | tr -d '\n') \`, worker),
-			fmt.Sprintf(`  --from-file=password=<(%s --include-secret -o jq=.BridgeWorker.Secret | tr -d '\n') \`, worker),
-			"  --dry-run=client -o yaml | k apply -f -")
+			"# Sveltos reads the gateway as the service account "+account+", with a token",
+			"# of it: the username is the word token, the password the token. It pulls",
+			"# only the releases of the Targets that grant the account access, and does",
+			"# not expire until it is revoked. A re-run keeps the token the Secret holds.",
+			"# To rotate it, revoke it (cub serviceaccount token list "+account+" names",
+			"# each token by the Secret it was issued for), delete the Secret, and run",
+			"# this script again. The token goes from cub into the Secret through a",
+			"# variable and a file descriptor, never to disk, the command line, or the",
+			"# terminal.",
+			fmt.Sprintf(`held=$(k get secret -n %s %s -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)`, secretNamespace, secret),
+			`if [ "$held" != token ]; then`,
+			fmt.Sprintf(`  token=$(cub serviceaccount token create %s --description "Sveltos on ${MGMT_CONTEXT:-the management cluster}, Secret %s/%s" -o jq=.Token | tr -d '"\n')`, account, secretNamespace, secret),
+			fmt.Sprintf(`  case "$token" in ""|null) echo "could not issue a token for %s"; exit 1 ;; esac`, account),
+			fmt.Sprintf(`  k create secret generic %s --namespace %s --type %s \`, secret, secretNamespace, secretType),
+			`    --from-literal=username=token --from-file=password=<(printf '%s' "$token") \`,
+			"    --dry-run=client -o yaml | k apply -f -",
+			"  unset token",
+			"  # A Secret from before cub sveltos 0.15 held a worker's ID and secret.",
+			fmt.Sprintf(`  [ -z "$held" ] || echo "The gateway Secret held a worker's credential; it now holds a token of %s. Once Sveltos has fetched with it, delete the old worker: cub worker delete --space %s %s"`, account, plan.TargetsSpace, oldWorkerSlug),
+			"fi")
 		var live []string
 		for _, p := range plan.Profiles {
 			if p.Live {

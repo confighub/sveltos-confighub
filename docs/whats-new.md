@@ -24,6 +24,31 @@ where ConfigHub v0.8.2 and newer read it.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## 0.15.0, unreleased
+
+**Sveltos pulls as a service account, not a worker.** ConfigHub is removing
+workers (confighubai/confighub#5980), and `cub` marks them deprecated.
+`apply.sh` no longer makes the server-hosted worker `server-worker`.
+
+- It makes a service account, `<prefix>-delivery`, with no role in the
+  organization, and grants it View and ViewChildren on each Target. It can
+  pull those Targets' releases and write nothing.
+- The gateway Secret holds the word `token` as username and a token of that
+  account as password. A token does not expire until it is revoked. A
+  re-run keeps the token the Secret holds; to rotate it, revoke it, delete
+  the Secret and run `apply.sh` again.
+- A fleet onboarded before 0.15 keeps working until workers go. Running the
+  new `apply.sh` replaces its Secret's worker credential with a token, and
+  names the old worker to delete afterwards.
+- `apply.sh` now needs `cub` v0.8.13 or later, the first whose service
+  account tokens need not expire and which the gateway takes as username
+  `token`.
+- Measured on 2026-10-26, with Sveltos v1.15.0 and ConfigHub v0.9.5:
+  - one token served Targets in two Spaces;
+  - an account with no grant was refused (403);
+  - a revoked token was refused at the next fetch (401), within a minute,
+    and what was delivered stayed.
+
 ## 0.14.1, unreleased
 
 **Works with today's `cub` and ConfigHub again.** Three things stopped working
