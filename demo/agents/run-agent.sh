@@ -39,7 +39,9 @@ never=("Bash(cub variant approve:*)" "Bash(cub attestation create:*)" "Bash(cub 
 # Gates are yours: no agent makes, changes or removes a trigger, or changes
 # which triggers a Space runs (the repave gate is a set of triggers).
 gates=("Bash(cub trigger create:*)" "Bash(cub trigger update:*)" "Bash(cub trigger delete:*)" "Bash(cub trigger edit:*)"
-       "Bash(cub space update *--where-trigger*)" "Bash(cub space update *--trigger-filter*)")
+       "Bash(cub space update *--where-trigger*)" "Bash(cub space update *--trigger-filter*)"
+       "Bash(cub space update *WhereTrigger*)" "Bash(cub space update *TriggerFilter*)"
+       "Bash(cub space update *--from-stdin*)" "Bash(cub space update *--filename*)")
 # Every agent: no cub command that names a context or prints credentials, and
 # no command that sets cub's context or configuration; no reading your cub
 # configuration, the keys, the agents' cub configurations or these guards.

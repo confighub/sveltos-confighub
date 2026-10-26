@@ -9,8 +9,10 @@
 #                              labelled repave-makes: secret.<name>. A Secret's
 #                              value is never in ConfigHub: a fresh cluster
 #                              makes its own.
-# A unit that fails one gets a ValidationError, and ConfigHub publishes no
-# release of it until the change, or the list, is fixed. Like a workflow, the
+# The class bases and variants run chaos-shop-base's triggers because ConfigHub
+# set their WhereTrigger to that Space when it cloned them. A unit that fails
+# one gets a ValidationError, and ConfigHub publishes no release of it until
+# the change, or the list, is fixed. Like a workflow, the
 # gate is yours: the agents may not touch triggers.
 #
 #   source demo/env.sh && bash $DEMO/setup/repave-gate.sh ConfigMap/shop-code Secret/shop-token
@@ -31,22 +33,38 @@ if [ "$1" != --off ]; then
     esac
   done
 fi
-for t in $(cub trigger list --space "$space" -o 'jq=[.[] | (.Trigger // .).Slug | select(. == "restores" or startswith("restores-"))] | join(" ")' | tr -d '"'); do
-  cub trigger delete --space "$space" "$t" --quiet
-done
-if [ "$1" = --off ]; then echo "$space: the repave gate is off"; exit 0; fi
+# slug <Kind/name>: the trigger that checks one item, restores-<kind>-<name>,
+# with a dot in the name written -dot-, so a.b and a-b do not collide.
+slug() { printf 'restores-%s-%s' "$(printf '%s' "${1%%/*}" | tr 'A-Z' 'a-z')" "$(printf '%s' "${1#*/}" | sed 's/\./-dot-/g')"; }
+gate=$(cub trigger list --space "$space" -o 'jq=[.[] | (.Trigger // .).Slug | select(. == "restores" or startswith("restores-"))] | join(" ")' | tr -d '"')
+if [ "$1" = --off ]; then
+  for t in $gate; do cub trigger delete --space "$space" "$t" --quiet; done
+  echo "$space: the repave gate is off"; exit 0
+fi
+# Each trigger is made again in turn, the new one right after the old one goes;
+# those no longer on the list go last. A failure stops the script, saying so:
+# run it again.
+make() { # make <slug> <function> <args...>
+  local t=$1; shift
+  case " $gate " in *" $t "*) cub trigger delete --space "$space" "$t" --quiet ;; esac
+  cub trigger create --space "$space" --quiet -- "$t" Mutation Kubernetes/YAML "$@" ||
+    { echo "$space: could not make the trigger $t; run this again" >&2; exit 1; }
+}
 list=$(IFS=,; echo "$*")
-cub trigger create --space "$space" --quiet -- restores Mutation Kubernetes/YAML vet-starlark \
-  "$(cat "$DEMO/setup/restores.star")" "--param=restores=$list"
+make restores vet-starlark "$(cat "$DEMO/setup/restores.star")" "--param=restores=$list"
+keep=" restores "
 for item in "$@"; do
-  kind=${item%%/*} name=${item#*/}
-  slug="restores-$(printf '%s-%s' "$kind" "$name" | tr 'A-Z.' 'a-z-')"
+  kind=${item%%/*} name=${item#*/} t=$(slug "$item")
+  keep="$keep$t "
   if [ "$kind" = ConfigMap ]; then
-    cub trigger create --space "$space" --quiet -- "$slug" Mutation Kubernetes/YAML where-filter v1/ConfigMap "metadata.name = '$name'"
+    make "$t" where-filter v1/ConfigMap "metadata.name = '$name'"
     echo "$space: $item is restored by the release, which must hold it"
   else
-    cub trigger create --space "$space" --quiet -- "$slug" Mutation Kubernetes/YAML where-filter batch/v1/Job "metadata.labels.repave-makes = 'secret.$name'"
+    make "$t" where-filter batch/v1/Job "metadata.labels.repave-makes = 'secret.$name'"
     echo "$space: $item is restored by a Job in the release, labelled repave-makes: secret.$name"
   fi
+done
+for t in $gate; do
+  case $keep in *" $t "*) ;; *) cub trigger delete --space "$space" "$t" --quiet && echo "$space: $t removed, no longer on the list" ;; esac
 done
 echo "$space: the repave gate is on, for it and every Space that runs its triggers"

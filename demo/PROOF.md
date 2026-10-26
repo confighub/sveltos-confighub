@@ -64,7 +64,7 @@ baseline, and the record's first, which the handover publishes.
 | Claim | How to check |
 | --- | --- |
 | The repave left prod empty, and ConfigHub said Healthy | `kubectl get ns --context kind-chaos-prod-eu`: system namespaces only. `cub sveltos status --kube-context kind-chaos-mgmt --dry-run`: Synced and Healthy, with Sveltos's last delivery before the repave |
-| The shop came back without its token | `kubectl get pods -n shop --context kind-chaos-prod-eu`: `web` CreateContainerConfigError, `secret "shop-token" not found`, before Angel's fix |
+| The shop came back without its token | If Sveltos delivered before the token Job did, `kubectl get pods -n shop --context kind-chaos-prod-eu` showed `web` CreateContainerConfigError, `secret "shop-token" not found`. Either way, `cub unit data --space chaos-shop-prod-eu shop` held no Secret before Angel's fix |
 | ConfigHub sees what the shop needs | `cub function get --space chaos-shop-base --unit shop get-references`: `shop-token`, used by `web` and `api` |
 | The fix went through the gates | Rollouts: Angel's orders, each approved by you or `milton` before its release. The release holds the Job that makes the token, never the token |
 | The gate is ConfigHub's own | `evidence.sh`, Gates: the repave gate's triggers in `chaos-shop-base`, with the restore list. `cub trigger list --space chaos-shop-base` |

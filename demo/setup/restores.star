@@ -9,46 +9,52 @@ def pod_spec(r):
         return spec
     if kind == "CronJob":
         return ((spec.get("jobTemplate") or {}).get("spec") or {}).get("template", {}).get("spec") or {}
-    if kind in ("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job"):
+    if kind in ("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "ReplicationController", "Job"):
         return (spec.get("template") or {}).get("spec") or {}
     return None
+
+def named(kind, ref):
+    name = (ref or {}).get("name") or (ref or {}).get("secretName") or ""
+    return [kind + "/" + name] if name else []
 
 def uses(ps):
     found = []
     for c in (ps.get("containers") or []) + (ps.get("initContainers") or []) + (ps.get("ephemeralContainers") or []):
         for e in c.get("env") or []:
             v = e.get("valueFrom") or {}
-            if v.get("secretKeyRef"):
-                found.append("Secret/" + v["secretKeyRef"].get("name", ""))
-            if v.get("configMapKeyRef"):
-                found.append("ConfigMap/" + v["configMapKeyRef"].get("name", ""))
+            found += named("Secret", v.get("secretKeyRef")) + named("ConfigMap", v.get("configMapKeyRef"))
         for e in c.get("envFrom") or []:
-            if e.get("secretRef"):
-                found.append("Secret/" + e["secretRef"].get("name", ""))
-            if e.get("configMapRef"):
-                found.append("ConfigMap/" + e["configMapRef"].get("name", ""))
+            found += named("Secret", e.get("secretRef")) + named("ConfigMap", e.get("configMapRef"))
     for v in ps.get("volumes") or []:
-        if v.get("secret"):
-            found.append("Secret/" + v["secret"].get("secretName", ""))
-        if v.get("configMap"):
-            found.append("ConfigMap/" + v["configMap"].get("name", ""))
+        found += named("Secret", v.get("secret")) + named("ConfigMap", v.get("configMap"))
+        found += named("Secret", (v.get("csi") or {}).get("nodePublishSecretRef"))
         for s in (v.get("projected") or {}).get("sources") or []:
-            if s.get("secret"):
-                found.append("Secret/" + s["secret"].get("name", ""))
-            if s.get("configMap"):
-                found.append("ConfigMap/" + s["configMap"].get("name", ""))
+            found += named("Secret", s.get("secret")) + named("ConfigMap", s.get("configMap"))
     for s in ps.get("imagePullSecrets") or []:
-        found.append("Secret/" + s.get("name", ""))
+        found += named("Secret", s)
+    return found
+
+# What a resource other than a workload uses.
+def other_uses(r):
+    kind = r.get("kind", "")
+    found = []
+    if kind == "Ingress":
+        for t in (r.get("spec") or {}).get("tls") or []:
+            found += named("Secret", t)
+    if kind == "ServiceAccount":
+        for s in (r.get("imagePullSecrets") or []) + (r.get("secrets") or []):
+            found += named("Secret", s)
     return found
 
 def validate(r):
     ps = pod_spec(r)
-    if ps == None:
+    found = (uses(ps) if ps != None else []) + other_uses(r)
+    if not found:
         return {"passed": True}
     allowed = [x.strip() for x in params.get("restores", "").split(",") if x.strip()]
-    name = r.get("kind", "") + " " + (r.get("metadata") or {}).get("name", "")
+    name = r.get("kind", "") + " " + ((r.get("metadata") or {}).get("name") or "")
     missing = []
-    for u in uses(ps):
+    for u in found:
         if u not in allowed and u not in missing:
             missing.append(u)
     if missing:

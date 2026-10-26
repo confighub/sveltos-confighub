@@ -79,13 +79,12 @@ ConfigHub's record of both runs.
 | **Attestation** | A recorded verdict on a change: an Approval by you or Milton |
 | **Trigger** | A function ConfigHub runs on every change to a unit. A validating one that fails blocks the unit's release |
 | **The record** | The management cluster's Space, `chaos-management`. Its releases deliver every Sveltos delivery profile, so profiles come from ConfigHub, not by hand |
-| **Guard** | A note on a field of a unit. A guard `departure=<why>` declares that prod may differ from staging there |
 | **Live status** | What each cluster reports, written into ConfigHub every 15 seconds: Synced or not, Healthy or Degraded. The web UI shows Healthy as Live |
 
 ## Versions
 
 Tested together on 2026-10-03. On 2026-10-04 the server moved to v0.8.3; stand-up,
-onboarding, the gates and the parity gate were rechecked on it
+onboarding, the gates and that time's outage 3 gate were rechecked on it
 ([the check](recording/check-2026-10-04.md)). On 2026-10-26, with the agents
 as service accounts, stand-up, onboarding, the handover, the gates and live
 status were rechecked on ConfigHub v0.9.5, `cub` v0.9.0 and Sveltos v1.16.0.
@@ -232,8 +231,8 @@ Each run:
   - Devil changes things with kubectl and cub;
   - Angel reads the clusters and works through ConfigHub;
   - Milton reads, tests in the sandbox, and approves.
-  - None of them may delete a Space or namespace, change a workflow, or
-    manage identities, keys or logins.
+  - None of them may delete a Space or namespace, change a workflow or a
+    trigger, or manage identities, keys or logins.
   - Only Milton may approve.
 - **Output:** written to `$CHAOS_RUNS/<run-name>/`: the full event stream
   (`.jsonl`), a readable transcript (`.md`), and the prompt in `runs.log`.
