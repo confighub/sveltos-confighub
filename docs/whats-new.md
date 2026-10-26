@@ -56,8 +56,9 @@ in October, and #119 left a few loose ends.
   variants counts them as released, so their first governed release is
   refused (confighubai/confighub#5794: v0.8.10 and v0.8.11 passed, v0.8.17
   failed; still open).
-  - `apply.sh` recognises exactly that state: the order says Released and the
-    variant has no release. It then stops and says so, with the reason
+  - `apply.sh` stops in that state only: a publish through the order refused
+    with HTTP 422, an order that says Released, and a variant with no
+    release. It then says so, with the reason
     ConfigHub gave and the command to publish the variant's first release at
     head as the onboarding baseline: what its base holds, which the handover
     compared with what the cluster runs.
@@ -66,7 +67,10 @@ in October, and #119 left a few loose ends.
     `sveltos.confighub.com/first-release=baseline`, for every such variant.
     Every change after it goes through the workflow.
   - With `PROPOSE_ONLY=1`, as `cub sveltos watch` runs it for a cluster that
-    joins, it never publishes one: it says what to run, and waits.
+    joins, it never publishes one: it says what to run. Once you have
+    published the baseline, run `PROPOSE_ONLY=1 bash apply.sh` again, so the
+    variant's delivery profile is applied; `watch` does not do that for a
+    variant released by hand.
 - **The registry Sveltos fetches from** (#119's follow-ups):
   - asking ConfigHub for its registry gives up after 20 seconds;
   - a broken login, a `CUB_CONTEXT` that does not exist, or another
