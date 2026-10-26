@@ -89,7 +89,7 @@ status were rechecked on ConfigHub v0.9.5, `cub` v0.9.0 and Sveltos v1.16.0.
 | --- | --- |
 | ConfigHub (hub.confighub.com) | server v0.8.1, rechecked on v0.8.3 and v0.9.5. The hosted server moves on: you get the version it runs |
 | `cub` | v0.8.13 or newer, for service accounts; v0.9.0 on 2026-10-26. The recorded runs used v0.8.1 |
-| `cub sveltos` (this repository) | v0.14.1 or newer: the live-status reporter needs v0.14.0 since ConfigHub v0.8.2, and `--kube-context` came in v0.14.1. The recorded runs used v0.13.0 |
+| `cub sveltos` (this repository) | v0.15.0 or newer: the delivery account and its token need v0.15.0; the live-status reporter needs v0.14.0 since ConfigHub v0.8.2, and `--kube-context` came in v0.14.1. The recorded runs used v0.13.0 |
 | Helm (renders the charts) | v4.1.4 |
 | Sveltos | v1.16.0 (installed by the fleet script); runs 1 and 2 used v1.15.0 |
 | kind | v0.31.0, Kubernetes v1.35.0 nodes |
@@ -135,7 +135,7 @@ which ConfigHub is removing.
   curl -fsSL https://hub.confighub.com/cub/install.sh | VERSION=v0.9.0 bash
   export PATH=$HOME/.confighub/bin:$PATH
   cub auth login
-  cub plugin install confighub/sveltos-confighub@v0.14.1
+  cub plugin install confighub/sveltos-confighub@v0.15.0
   ```
 
 ## Stand it up

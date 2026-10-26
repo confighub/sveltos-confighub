@@ -77,7 +77,7 @@ plugin installation stays CLI-only.
 | `cub sveltos watch` | Proposes variants for each cluster that joins, and releases them once a person approves in ConfigHub. |
 | `cub sveltos check` | Runs a policy check, such as Kyverno, on a change in one stage, and records the verdict in ConfigHub. Each stage's release can require a Pass. |
 | `cub sveltos impact` | Previews what a policy change, or a change's next promotion, would do to each cluster, before anything ships. |
-| `cub sveltos version` | Prints the version. The current release is **v0.14.1**; see [what's new](docs/whats-new.md). |
+| `cub sveltos version` | Prints the version. The current release is **v0.15.0**; see [what's new](docs/whats-new.md). |
 
 After onboarding you don't need the plugin day to day: changes are made with
 ConfigHub's own `cub` commands, shown below.
@@ -543,13 +543,13 @@ implemented, then update the image and these capability descriptions together.
 The UI installer requires **Sveltos plugin v0.11.0 or newer**. For a new installation:
 
 ```sh
-cub plugin install confighub/sveltos-confighub@v0.14.1
+cub plugin install confighub/sveltos-confighub@v0.15.0
 ```
 
 If the plugin is already installed, upgrade instead:
 
 ```sh
-cub plugin upgrade sveltos-confighub@v0.14.1
+cub plugin upgrade sveltos-confighub@v0.15.0
 ```
 
 Then install the published UI bundle and start it:

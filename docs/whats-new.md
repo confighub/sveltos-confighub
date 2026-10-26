@@ -25,7 +25,7 @@ where ConfigHub v0.8.2 and newer read it, and 0.14.1 works with October's
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
-## 0.15.0, unreleased
+## 0.15.0, 2026-10-26
 
 **Sveltos pulls as a service account, not a worker.** ConfigHub is removing
 workers (confighubai/confighub#5980), and `cub` marks them deprecated.
