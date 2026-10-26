@@ -239,7 +239,8 @@ case "$*" in
   *"get secret"*'index .data "username"'*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "$HELD_USER" ;;
   *"get secret"*"index .metadata.annotations"*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "${HELD_JTI:-<no value>}" ;;
   *"annotate --local -f -"*) j=""; for a in "$@"; do case "$a" in *token-jti=*) j=${a#*=} ;; esac; done; cat; echo "# token-jti: $j" ;;
-  *"apply -f -"*) [ -z "$APPLY_FAILS" ] || exit 1; cat >> "$LOG.applied" ;;
+  *"get secret -n "*) [ -n "$HELD_USER" ] || exit 1 ;;
+  *"apply -f -"*|*"replace -f -"*|*"create -f -"*) [ -z "$APPLY_FAILS" ] || exit 1; cat >> "$LOG.applied" ;;
   *"create secret generic "*)
     name="" user="" pw="" next=""
     for a in "$@"; do
@@ -370,6 +371,11 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		!strings.Contains(out, "cub serviceaccount token revoke sveltos-delivery jti-old") {
 		t.Errorf("a revoked or expired token is replaced, and the old one named: %v\n%s\n%s", err, out, calls)
 	}
+	// kubectl apply would copy the token into the Secret's last-applied-configuration
+	// annotation: an existing Secret is replaced, a new one created.
+	if !strings.Contains(calls, "replace -f -") || strings.Contains(calls, "apply -f -") {
+		t.Errorf("an existing Secret is replaced, never applied: %v\n%s", err, calls)
+	}
 	live = "1"
 	t.Setenv("ROTATE_TOKEN", "1")
 	_, calls, err = run("sveltos-kyverno-prod-us", "", true)
@@ -392,7 +398,8 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	heldUser, live = "", ""
 	t.Setenv("APPLY_FAILS", "1")
 	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
-	if err == nil || !strings.Contains(calls, "cub serviceaccount token revoke sveltos-delivery jti-new") || !strings.Contains(out, "the token issued for it is revoked") {
+	if err == nil || !strings.Contains(calls, "create -f -") || strings.Contains(calls, "apply -f -") ||
+		!strings.Contains(calls, "cub serviceaccount token revoke sveltos-delivery jti-new") || !strings.Contains(out, "the token issued for it is revoked") {
 		t.Errorf("a token issued for a Secret that could not be written is revoked: %v\n%s\n%s", err, out, calls)
 	}
 	os.Unsetenv("APPLY_FAILS")
