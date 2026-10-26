@@ -44,6 +44,11 @@ workers (confighubai/confighub#5980), and `cub` marks them deprecated.
     goes in the Secret, and the script names the old one to revoke once the
     new one is in use.
   - A token issued for a Secret that then could not be written is revoked.
+  - The Secret is written with `kubectl create`, or `kubectl replace` when it
+    exists, never `kubectl apply`, which keeps a copy of what it applied,
+    token included, in the Secret's `last-applied-configuration`
+    annotation. `replace` also drops the copy an earlier `apply.sh` left
+    there, which held the worker's secret.
   - If ConfigHub cannot be asked whether the held token is live, the Secret
     keeps it.
   - Both shapes of `cub serviceaccount token list` are read: cub v0.9.0 and
@@ -59,6 +64,18 @@ workers (confighubai/confighub#5980), and `cub` marks them deprecated.
   - an account with no grant was refused (403);
   - a revoked token was refused at the next fetch (401), within a minute,
     and what was delivered stayed.
+- The same day, the demo's fleet on Sveltos v1.16.0: an editor-role service
+  account ran `apply.sh`, made the delivery account and issued its token, and
+  Sveltos pulled nine delivery profiles' releases with that one token.
+
+**Running `apply.sh` again after a baseline release works.** Once a variant
+has its first release at head, the onboarding baseline
+(confighubai/confighub#5794), the change order made before it marks none of
+its units, and ConfigHub refuses to publish the order there ("the tag marks
+no revision of a unit that has been released"). `apply.sh` stopped on that,
+though it says to run it again after the baseline. It now counts such a
+variant as released when its newest release is the baseline, and stops as
+before for any other cause.
 
 ## 0.14.1, 2026-10-26
 

@@ -234,8 +234,10 @@ releases cannot read the gzipped layers ConfigHub's gateway serves), then:
    so, with ConfigHub's reason. You then choose: publish that variant's first
    release at head as the onboarding baseline, which skips the workflow's
    release gates for that one release, with `FIRST_RELEASE=baseline bash
-   apply.sh`; or wait for ConfigHub's fix. Every change after the baseline goes
-   through the workflow.
+   apply.sh`; or wait for ConfigHub's fix. With `PROPOSE_ONLY`, the script
+   prints the command for each such variant instead. Once a variant has its
+   baseline, running the script again counts it as released. Every change
+   after the baseline goes through the workflow.
 6. On your management cluster, adds the gateway Secret and the delivery
    profiles. From then on Sveltos delivers each variant's latest release to
    its cluster, within a minute of it being published, and puts back
@@ -251,7 +253,10 @@ token of it: the Secret's username is the word `token`, its password the
 token. A token issued this way does not expire, unless your server's policy
 sets an expiry. It can pull only the releases of the Targets that grant the
 account access, and the account can write nothing. The script moves the token
-from `cub` into the Secret without writing it to disk or showing it.
+from `cub` into the Secret without writing it to disk or showing it, and
+writes the Secret with `kubectl create` or `replace`: `kubectl apply` would
+keep a copy of the token in the Secret's `last-applied-configuration`
+annotation.
 - **Re-runs.** The Secret records which token it holds, in the annotation
   `sveltos.confighub.com/token-jti`. A re-run keeps that token while ConfigHub
   says it is live. One that was revoked or has expired, or that belongs to an
@@ -262,7 +267,8 @@ from `cub` into the Secret without writing it to disk or showing it.
   names each token by the Secret it was issued for), revoke the old one with
   `cub serviceaccount token revoke <prefix>-delivery <jti>`.
 - **Issuing a token takes Impersonate** on the service account; Manage does
-  not include it. In our test an organization admin could issue them.
+  not include it. In our tests an organization admin could issue them, and
+  so could an editor-role service account that had made the account.
 - **If ConfigHub cannot be asked** whether the held token is live, the Secret
   keeps it, and the script says so.
 - **A fleet onboarded before 0.15** has a Secret holding a server-hosted
