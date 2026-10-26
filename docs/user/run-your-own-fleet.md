@@ -279,7 +279,8 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    gate once the approval is recorded, and is what the next stage's
    `Released` gate reads. A plain `cub release publish <space>` bundles each
    unit at its head and is not gated by the workflow. The gateway serves the
-   release at `oci://oci.hub.confighub.com/space/<space>:latest`, and
+   release at `oci://<registry>/space/<space>:latest` (`oci.hub.confighub.com`
+   for hub.confighub.com; another server names its own in `GET /api/info`), and
    publishing is what moves the tag the fleet follows.
 10. **Let Sveltos fetch**: the management cluster carries a Secret of type
     `addons.projectsveltos.io/cluster-profile` holding the Targets' server
