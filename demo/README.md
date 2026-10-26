@@ -72,22 +72,20 @@ transcripts, and ConfigHub's record of both runs.
 ## How the pieces fit
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph CH["ConfigHub"]
-    base["chaos-shop-base"] --> classes["class bases: staging, prod"] --> variants["one variant per cluster"]
-    record["chaos-management: the record"]
+    direction LR
+    base["base"] --> classes["class bases<br/>staging, prod"] --> variants["one variant<br/>per cluster"]
   end
-  variants -- "releases" --> gateway[("OCI gateway")]
-  record -- "releases" --> gateway
-  subgraph MGMT["chaos-mgmt: Sveltos"]
+  subgraph MGMT["chaos-mgmt, running Sveltos"]
     profiles["one delivery profile per cluster"]
   end
-  gateway -- "fetched every minute" --> profiles
+  CH -- "each variant's release, from the OCI gateway" --> profiles
   profiles --> staging["chaos-staging"]
   profiles --> eu["chaos-prod-eu"]
   profiles --> us1["chaos-prod-us-1"]
   profiles --> us2["chaos-prod-us-2"]
-  MGMT -- "live status, by the reporter" --> CH
+  profiles -. "live status, written by the reporter" .-> CH
 ```
 
 - **ConfigHub** holds each cluster's configuration as a variant, cloned from a
