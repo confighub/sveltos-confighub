@@ -1341,6 +1341,8 @@ func TestCompareLive(t *testing.T) {
 // stops and says how to publish a baseline at head; FIRST_RELEASE=baseline
 // publishes it; PROPOSE_ONLY leaves it to a person and waits. It never does so
 // for a variant that has a release, for any other refusal, or when cub fails.
+// Once a variant has its baseline, the order made before it marks none of its
+// units, and publish says there is nothing in the order for it.
 // This runs apply.sh's own helpers, under its own shell options, against a
 // stand-in cub.
 func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
@@ -1359,6 +1361,7 @@ func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
 	fake := `cub() {
   echo "cub $*" >> "$LOG"
   case "$*" in
+    "release list --space v "*"first-release"*) [ -z "$LIST_FAILS" ] || return 1; echo "\"$LATEST\"" ;;
     "release list --space v "*) [ -z "$LIST_FAILS" ] || return 1; echo "$RELEASES" ;;
     "changeorder get --space base o -o jq=.ChangeOrder.State") echo "\"$STATE\"" ;;
     "changeorder get"*) echo "BAD ARGS" >> "$LOG"; return 1 ;;
@@ -1370,19 +1373,24 @@ sleep() { :; }
 `
 	baseline := "cub release publish v --annotation sveltos.confighub.com/first-release=baseline --quiet"
 	noRevision := "requires approval, but no Revision was found to evaluate it on"
+	noTag := "the tag marks no revision of a unit that has been released; leaving the unit out of the release would delete it from the target"
 	for _, c := range []struct {
 		name, env, releases, state, refusal string
 		fails                               bool
 		said                                []string
 		published                           bool
+		latest                              string
 	}{
-		{"by hand", "", "0", "Released", noRevision, true, []string{"refuses its first release through base/o (confighub#5794)", "no Revision was found", "FIRST_RELEASE=baseline"}, false},
-		{"by hand, baseline asked for", "FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"first release published at head as the onboarding baseline"}, true},
-		{"proposing", "PROPOSE_ONLY=1", "0", "Released", noRevision, false, []string{"refuses its first release through base/o", "no Revision was found", "run this script again"}, false},
-		{"proposing, baseline asked for", "PROPOSE_ONLY=1 FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"refuses its first release"}, false},
-		{"already released", "FIRST_RELEASE=baseline", "1", "Released", noRevision, true, []string{"no Revision was found"}, false},
-		{"an approval still to come", "FIRST_RELEASE=baseline", "0", "Resolved", "ApprovalRequired: the release needs an approval from another person", true, []string{"ApprovalRequired"}, false},
-		{"cub cannot list the releases", "FIRST_RELEASE=baseline LIST_FAILS=1", "", "Released", noRevision, true, []string{"no Revision was found"}, false},
+		{"by hand", "", "0", "Released", noRevision, true, []string{"refuses its first release through base/o (confighub#5794)", "no Revision was found", "FIRST_RELEASE=baseline"}, false, ""},
+		{"by hand, baseline asked for", "FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"first release published at head as the onboarding baseline"}, true, ""},
+		{"proposing", "PROPOSE_ONLY=1", "0", "Released", noRevision, false, []string{"refuses its first release through base/o", "no Revision was found", "run this script again"}, false, ""},
+		{"proposing, baseline asked for", "PROPOSE_ONLY=1 FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"refuses its first release"}, false, ""},
+		{"already released", "FIRST_RELEASE=baseline", "1", "Released", noRevision, true, []string{"no Revision was found"}, false, ""},
+		{"an approval still to come", "FIRST_RELEASE=baseline", "0", "Resolved", "ApprovalRequired: the release needs an approval from another person", true, []string{"ApprovalRequired"}, false, ""},
+		{"cub cannot list the releases", "FIRST_RELEASE=baseline LIST_FAILS=1", "", "Released", noRevision, true, []string{"no Revision was found"}, false, ""},
+		{"baselined before the order", "PROPOSE_ONLY=1", "1", "Released", noTag, false, []string{"v already released, by its onboarding baseline; base/o marks nothing in it to release"}, false, "baseline"},
+		{"released since its baseline", "PROPOSE_ONLY=1", "2", "Released", noTag, true, []string{"the tag marks no revision"}, false, ""},
+		{"baselined, but cub cannot list the releases", "PROPOSE_ONLY=1 LIST_FAILS=1", "1", "Released", noTag, true, []string{"the tag marks no revision"}, false, "baseline"},
 	} {
 		dir := t.TempDir()
 		log := filepath.Join(dir, "cub.log")
@@ -1391,7 +1399,7 @@ sleep() { :; }
 			t.Fatal(err)
 		}
 		cmd := exec.Command("bash", file)
-		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "STATE="+c.state, "REFUSAL="+c.refusal, "PROPOSE_ONLY=", "FIRST_RELEASE=", "LIST_FAILS=")
+		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "STATE="+c.state, "REFUSAL="+c.refusal, "LATEST="+c.latest, "PROPOSE_ONLY=", "FIRST_RELEASE=", "LIST_FAILS=")
 		cmd.Env = append(cmd.Env, strings.Fields(c.env)...)
 		out, err := cmd.CombinedOutput()
 		calls, _ := os.ReadFile(log)

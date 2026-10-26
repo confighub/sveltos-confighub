@@ -89,6 +89,9 @@ publish() {
         if [ "$waitfor" = approval ]; then echo "$1 waits for approval"; else kind=${reason#*: }; kind=${kind#* }; echo "$1 waits for $waitfor: cub attestation create --space $1 --type ${kind%% *} --change-order $2"; fi
         return 0 ;;
       *"outstanding ValidationErrors"*) sleep "${RETRY_SECONDS:-15}" ;;
+      *"the tag marks no revision of a unit that has been released"*)
+        baselined "$1" || { echo "$out" >&2; return 1; }
+        echo "$1 already released, by its onboarding baseline; $2 marks nothing in it to release"; return 0 ;;
       *"HTTP 422"*) refused_first "$1" "$2" || { echo "$out" >&2; return 1; }; baseline "$1" "$2" "$out"; return $? ;;
       *) echo "$out" >&2; return 1 ;;
     esac
@@ -113,6 +116,15 @@ refused_first() {
   [ "$n" = 0 ] || return 1
   state=$(cub changeorder get --space "${2%%/*}" "${2#*/}" -o 'jq=.ChangeOrder.State') || return 1
   [ "$(printf '%s' "$state" | tr -d '"')" = Released ]
+}
+# baselined <variant>: its newest release is the onboarding baseline. A change
+# order made before that release marks none of the variant's units, so
+# ConfigHub refuses to publish it there, as it would delete them; there is
+# nothing in it for that variant.
+baselined() {
+  local first
+  first=$(cub release list --space "$1" -o 'jq=[.[] | select(.Release.Published)] | max_by(.Release.ReleaseNum) | (.Release.Annotations // {})["sveltos.confighub.com/first-release"] // ""') || return 1
+  [ "$(printf '%s' "$first" | tr -d '"')" = baseline ]
 }
 baseline() {
   if [ -n "${PROPOSE_ONLY:-}" ] || [ "${FIRST_RELEASE:-}" != baseline ]; then
