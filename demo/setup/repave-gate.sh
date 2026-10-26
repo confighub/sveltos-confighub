@@ -28,10 +28,12 @@ if [ "${1:-}" = --space ]; then space=${2:?--space needs a Space}; shift 2; fi
 if [ "$1" != --off ]; then
   for item in "$@"; do
     case $item in
+      ConfigMap/*/*|Secret/*/*) echo "$item: a name has no /" >&2; exit 2 ;;
       ConfigMap/?*|Secret/?*) ;;
       *) echo "$item: name each item as ConfigMap/<name> or Secret/<name>" >&2; exit 2 ;;
     esac
   done
+  set -- $(printf '%s\n' "$@" | awk '!seen[$0]++')    # each item once
 fi
 # slug <Kind/name>: the trigger that checks one item, restores-<kind>-<name>,
 # with a dot in the name written -dot-, so a.b and a-b do not collide.
@@ -46,7 +48,8 @@ fi
 # run it again.
 make() { # make <slug> <function> <args...>
   local t=$1; shift
-  case " $gate " in *" $t "*) cub trigger delete --space "$space" "$t" --quiet ;; esac
+  case " $gate " in *" $t "*) cub trigger delete --space "$space" "$t" --quiet ||
+    { echo "$space: could not remove the old trigger $t; run this again" >&2; exit 1; } ;; esac
   cub trigger create --space "$space" --quiet -- "$t" Mutation Kubernetes/YAML "$@" ||
     { echo "$space: could not make the trigger $t; run this again" >&2; exit 1; }
 }
@@ -65,6 +68,9 @@ for item in "$@"; do
   fi
 done
 for t in $gate; do
-  case $keep in *" $t "*) ;; *) cub trigger delete --space "$space" "$t" --quiet && echo "$space: $t removed, no longer on the list" ;; esac
+  case $keep in *" $t "*) ;; *)
+    cub trigger delete --space "$space" "$t" --quiet ||
+      { echo "$space: could not remove $t, which is no longer on the list; run this again" >&2; exit 1; }
+    echo "$space: $t removed, no longer on the list" ;; esac
 done
 echo "$space: the repave gate is on, for it and every Space that runs its triggers"

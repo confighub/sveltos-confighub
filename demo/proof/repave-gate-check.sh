@@ -31,7 +31,7 @@ verdict() {
 import json, sys
 u = json.load(sys.stdin); u = u.get("Unit", u)
 gates = u.get("ApplyGates") or {}
-if any("await" in str(g).lower() or "await" in str(v).lower() for g, v in gates.items()):
+if "await" in json.dumps(gates).lower():
     print("awaiting"); sys.exit()
 errors = sorted((u.get("ValidationErrors") or {}).keys())
 print("errors: " + (", ".join(e.split("/")[1] for e in errors) or "none"))
@@ -57,16 +57,18 @@ echo "== 2. the shop as stand-up made it, its token made by hand"
 cub unit data --space chaos-shop-staging shop | python3 -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
-makers = {d["spec"]["template"]["spec"].get("serviceAccountName") for d in docs
-          if d.get("kind") == "Job" and "repave-makes" in ((d.get("metadata") or {}).get("labels") or {})}
+def labelled(d):
+    return d.get("kind") == "Job" and "repave-makes" in ((d.get("metadata") or {}).get("labels") or {})
+makers = {(((d.get("spec") or {}).get("template") or {}).get("spec") or {}).get("serviceAccountName")
+          for d in docs if labelled(d)} - {None}
 def maker(d):
-    if d.get("kind") == "Job" and "repave-makes" in ((d.get("metadata") or {}).get("labels") or {}):
+    if labelled(d):
         return True
     name = (d.get("metadata") or {}).get("name")
     if d.get("kind") == "ServiceAccount" and name in makers:
         return True
     subject = [s.get("name") for s in d.get("subjects") or []]
-    return d.get("kind") in ("Role", "RoleBinding") and (name in makers or any(s in makers for s in subject))
+    return d.get("kind") in ("Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding") and (name in makers or any(s in makers for s in subject))
 yaml.safe_dump_all([d for d in docs if not maker(d)], sys.stdout, sort_keys=False)' > "$work/shop.yaml"
 if cub unit get --space "$space" shop >/dev/null 2>&1; then
   update "$work/shop.yaml" "repave gate check: the shop as stand-up made it"

@@ -93,7 +93,11 @@ if (repave) {
       // gone, so the job waits until it has marked the cluster's deliveries
       // failed, which takes it up to a minute or so.
       log(`repaving ${n}: registering it as a new cluster`);
-      k(MGMT, ["-n", "projectsveltos", "delete", "sveltoscluster", n, "--ignore-not-found", "--wait=true", "--timeout=120s"]);
+      try {
+        k(MGMT, ["-n", "projectsveltos", "delete", "sveltoscluster", n, "--ignore-not-found", "--wait=true", "--timeout=120s"]);
+      } catch (e) {
+        log(`repaving ${n}: its SveltosCluster is still going after two minutes; registering it anyway`);
+      }
       const delivered = () => JSON.parse(k(MGMT, ["get", "clustersummaries", "-A", "-o", "json"])).items
         .filter((c) => c.spec?.clusterName === n)
         .some((c) => (c.status?.featureSummaries ?? []).some((f) => f.status === "Provisioned"));

@@ -8,7 +8,7 @@ def pod_spec(r):
     if kind == "Pod":
         return spec
     if kind == "CronJob":
-        return ((spec.get("jobTemplate") or {}).get("spec") or {}).get("template", {}).get("spec") or {}
+        return ((((spec.get("jobTemplate") or {}).get("spec") or {}).get("template") or {}).get("spec")) or {}
     if kind in ("Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "ReplicationController", "Job"):
         return (spec.get("template") or {}).get("spec") or {}
     return None
