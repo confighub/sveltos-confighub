@@ -38,7 +38,7 @@ was tested with, and every step to run it yourself. Standing it up and tearing
 it down are one command each:
 
 ```bash
-bash demo/standup.sh                  # checks what it needs, then builds the fleet, the sandbox, the shop and the agents' identities
+bash demo/standup.sh                  # checks what it needs, then builds the fleet, the policy sandbox, the shop and the agents' identities
 bash demo/teardown.sh --confighub     # removes all of it: the kind clusters, then the ConfigHub Spaces, once you confirm
 ```
 
@@ -54,5 +54,5 @@ words, and what the run left to do.
   README, with Milton approving or refusing everything.
 
 The first run's transcripts, ConfigHub's record of both runs, and a
-[check of the setup and the parity gate on ConfigHub's newer server](../recording/check-2026-10-04.md)
+[check of the setup and the parity gate (since retired) on ConfigHub's newer server](../recording/check-2026-10-04.md)
 are in [recording/](../recording/README.md).

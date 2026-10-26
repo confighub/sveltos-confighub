@@ -53,7 +53,7 @@ report names each order and the stage it waits in, and so do
 | Step | Command |
 | --- | --- |
 | 1. Tonight's repave of the three prod clusters, standing in for the platform's job | `bash $DEMO/setup/repave.sh prod` |
-| Check: the prod clusters are empty, and ConfigHub still says Synced and Healthy | `kubectl get ns --context kind-chaos-prod-eu` and `cub sveltos status --kube-context kind-chaos-mgmt --dry-run` (`--dry-run` reads and writes nothing; the reporter keeps writing) |
+| Check: the prod clusters are empty, and ConfigHub still says Synced and Healthy | `kubectl get ns --context kind-chaos-prod-eu` and `cub sveltos status --kube-context kind-chaos-mgmt --dry-run` (`--dry-run` writes nothing; the reporter keeps writing) |
 | 2. Customers report the shop down; Angel finds why and proposes the fixes | `$R angel 03-repave $P/1-angel-find.txt` |
 | 3. Approve what Angel asks for: each order it names, in the stage it waits in | `$A me <order> <stage> "<why>"` or `$A milton <order> <stage> 03-repave` |
 | 4. Angel releases what you approved, and watches prod come back | `APPROVED="<each order and stage you approved>" $R angel 03-repave $P/2-angel-release.txt` |

@@ -7,7 +7,7 @@ the same runs as a story.
 | --- | --- | --- |
 | `runs/` | 3 October | The first run, with a person approving every release: each agent's transcript and ConfigHub's record of each outage |
 | [verification-2026-10-03.md](verification-2026-10-03.md) | 3 October, evening | The verification run, made from the README with Milton approving: what it found, and ConfigHub's record of it |
-| [check-2026-10-04.md](check-2026-10-04.md) | 4 October | The setup and the parity gate rechecked on the server ConfigHub moved to that day |
+| [check-2026-10-04.md](check-2026-10-04.md) | 4 October | The setup and the parity gate (since retired) rechecked on the server ConfigHub moved to that day |
 
 The rest of this page is about `runs/`, the first run. The agents' text is AI
 generated.
