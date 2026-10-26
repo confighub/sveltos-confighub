@@ -22,6 +22,8 @@ It does not:
   store. No release holds it, so no repave brings it back, and `web` and `api`
   wait for a Secret that is not there.
 
+Angel repairs it, and proposes what stops it happening again:
+
 - **The fix:** Sveltos delivers to each rebuilt cluster again, and the shop's
   release holds a Job that makes the token on a fresh cluster. The release
   holds what makes the Secret, never its value.
@@ -30,6 +32,12 @@ It does not:
   must hold it or what makes it. ConfigHub checks every change against that, and
   refuses to release one that would leave a repaved cluster without something.
   And the repave job asks Sveltos to deliver as soon as a cluster is rebuilt.
+
+It needs the fleet onboarded (scenario 00), and stands alone: it does not
+depend on outages 1 and 2. Rebuilding three clusters takes about two minutes;
+the outage, about an hour with the agents and the approvals. The way Sveltos
+treats a rebuilt cluster is with the Sveltos maintainers, as a question: if
+their answer changes it, this page will say so.
 
 ```bash
 source demo/env.sh
@@ -45,11 +53,11 @@ report names each order and the stage it waits in, and so do
 | Step | Command |
 | --- | --- |
 | 1. Tonight's repave of the three prod clusters, standing in for the platform's job | `bash $DEMO/setup/repave.sh prod` |
-| Check: the prod clusters are empty, and ConfigHub still says Synced and Healthy | `kubectl get ns --context kind-chaos-prod-eu` and `cub sveltos status --kube-context kind-chaos-mgmt --dry-run` |
+| Check: the prod clusters are empty, and ConfigHub still says Synced and Healthy | `kubectl get ns --context kind-chaos-prod-eu` and `cub sveltos status --kube-context kind-chaos-mgmt --dry-run` (`--dry-run` reads and writes nothing; the reporter keeps writing) |
 | 2. Customers report the shop down; Angel finds why and proposes the fixes | `$R angel 03-repave $P/1-angel-find.txt` |
 | 3. Approve what Angel asks for: each order it names, in the stage it waits in | `$A me <order> <stage> "<why>"` or `$A milton <order> <stage> 03-repave` |
 | 4. Angel releases what you approved, and watches prod come back | `APPROVED="<each order and stage you approved>" $R angel 03-repave $P/2-angel-release.txt` |
-| Repeat 3 and 4 while an order waits for approval (the shop's goes staging, then prod) | |
+| Repeat 3 and 4 while an order waits for approval (the shop's goes staging, then prod) | as in steps 3 and 4 |
 | 5. Angel proposes the repave gate and the repave job's last step | `$R angel 03-repave $P/3-angel-prevent.txt` |
 | 6. Turn the repave gate on, as yourself, with Angel's restore list | `bash $DEMO/setup/repave-gate.sh ConfigMap/shop-code Secret/shop-token` |
 | 7. Devil, as a developer, adds feature flags by hand, and makes `web` read them | `$R devil 03-repave $P/4-devil-feature-flags.txt` |

@@ -24,7 +24,14 @@ Three agents work in the fleet, each with its own ConfigHub identity:
 | --- | --- | --- |
 | 1. A rotation nobody picked up | A Secret rotated outside ConfigHub; `web` keeps the old token on every cluster | An admission policy: a workload that takes a Secret from its environment must say how it picks up a rotation |
 | 2. Half the fleet at once | A ClusterProfile applied by hand on the management cluster blocks the shop on the two `region=us` clusters | An admission policy on the management cluster: profiles come only from ConfigHub's record |
-| 3. Staging said yes, prod said no | A prod-only memory limit, then a cache that passes staging, so prod is OOMKilled | Prod's release requires a parity check against staging; differences must be declared |
+| 3. Staging said yes, prod said no (since retired) | A prod-only memory limit, then a cache that passes staging, so prod is OOMKilled | Prod's release requires a parity check against staging; differences must be declared |
+
+Outage 3 of these runs has since been retired. On ConfigHub v0.9.5 a change
+made only in a prod Space is no longer released by the rollout on its own, so
+it could not be staged as written. The demo's outage 3 is now
+[the nightly repave](../scenarios/03-repave.md), which the agents have not run
+yet. These runs also predate the agents' service accounts and Claude Code's
+command sandbox: the agents here were ConfigHub workers.
 
 [The demo's README](../README.md) has the full description, the versions it
 was tested with, and every step to run it yourself. Standing it up and tearing

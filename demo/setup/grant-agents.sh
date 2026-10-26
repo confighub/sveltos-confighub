@@ -18,7 +18,7 @@ set -euo pipefail
 reporter=serviceaccount:chaos-reporter
 devil=serviceaccount:chaos-devil
 milton=serviceaccount:chaos-milton
-for s in $(cub space list --where "Slug LIKE 'chaos-%' AND Slug != 'chaos-agents'" -o 'jq=.[].Space.Slug' | tr -d '"'); do
+for s in $(cub space list --where "Slug LIKE 'chaos-%'" -o 'jq=.[].Space.Slug' | tr -d '"'); do
   cub space update "$s" --quiet \
     --permission "View:$reporter" --permission "ViewChildren:$reporter" --permission "Edit:$reporter" --permission "EditChildren:$reporter" \
     --permission "View:$devil" --permission "ViewChildren:$devil" --permission "Edit:$devil" --permission "EditChildren:$devil" \

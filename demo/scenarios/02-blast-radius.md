@@ -25,6 +25,11 @@ Space, as Angel's report gives them, or `cub changeorder list --space
 chaos-management`. In our verification run they were `withdraw-shop-lockdown`,
 `guardrails-profiles-deliver-confighub-releases` and `remove-shop-lockdown`.
 
+Angel may propose the clean-up as a third order to open once the fix is
+applied. Then set `CLEANUP_ORDER` in step 4 to the words "the clean-up order
+you will open after the fix". Angel opens it and stops at its approval, and
+step 4b releases it.
+
 | Step | Command |
 | --- | --- |
 | 1. Devil applies the lockdown by hand | `$R devil 02-blast-radius $P/1-devil-lockdown.txt` |
@@ -33,8 +38,8 @@ chaos-management`. In our verification run they were `withdraw-shop-lockdown`,
 | 3. Review, then approve each order | `$A me chaos-management/<order> record "<why>"`, or `$A milton chaos-management/<order> record 02-blast-radius` |
 | 3b. Only if the review finds a problem: Angel aborts the orders sent back and proposes them again; then step 3 for the new ones | `SENT_BACK="<the orders>" FINDING="<what you found>" $R angel 02-blast-radius $P/2b-angel-revise.txt` |
 | 4. Angel releases them in order | `FIX_ORDER=... POLICY_ORDER=... CLEANUP_ORDER=... $R angel 02-blast-radius $P/3-angel-release.txt` |
-| 4a. Only if step 4 stops with HTTP 500 "no Revision found ... TagID": Angel publishes the policy's order, which carries both (below), and stops at the clean-up's approval; then step 4b | `FIX_ORDER=... POLICY_ORDER=... $R angel 02-blast-radius $P/3c-angel-publish-together.txt` |
-| 4b. Only if Angel opened the clean-up after the fix: approve it as in step 3, then Angel publishes it | `CLEANUP_ORDER=<order> $R angel 02-blast-radius $P/3b-angel-release-cleanup.txt` |
+| 4a. Only if step 4 stops with HTTP 500 (see "If the fix will not publish on its own", below) | `FIX_ORDER=... POLICY_ORDER=... $R angel 02-blast-radius $P/3c-angel-publish-together.txt` |
+| 4b. Only if Angel opened the clean-up after the fix: approve it as in step 3, then this | `CLEANUP_ORDER=<order> $R angel 02-blast-radius $P/3b-angel-release-cleanup.txt` |
 | 5. Devil tries again | `$R devil 02-blast-radius $P/4-devil-again.txt` |
 
 **Review before approving.** Angel writes the policy, and it takes one of two
@@ -54,7 +59,10 @@ cub unit data --space chaos-management delivery-platform | $S apply --dry-run=se
 $S apply --dry-run=server -f $DEMO/proof/shop-lockdown.yaml                                 # refused
 ```
 
-**If it judges by who sends the request**, as in our first run (only Sveltos,
+<details>
+<summary><b>If it judges by who sends the request</b>, as in our first run</summary>
+
+Only Sveltos,
 writing for the record, may write profiles), the preview can only answer
 "unknown", because a configuration does not say who will send it. Check two
 things:
@@ -85,7 +93,9 @@ things:
    $S delete clusterprofile shop-lockdown --as=system:serviceaccount:projectsveltos:projectsveltos     # allowed
    ```
 
-Either way, empty the sandbox afterwards: `bash $DEMO/setup/sandbox.sh --reset`.
+</details>
+
+Either way, empty the policy sandbox afterwards: `bash $DEMO/setup/sandbox.sh --reset`.
 Milton is told to check the same things. If a check fails, do not approve:
 send the order back with step 3b.
 
@@ -96,12 +106,8 @@ for Unit ... with the specified TagID"), although `cub release publish --help`
 says such a unit falls back to its head revision. In our verification run,
 the policy's unit came after the fix's tag. Angel then published the policy's
 order instead, which carries both units, and both were already approved: that
-is step 4a. Angel aborts the fix's order with the reason.
-
-Angel may propose the clean-up as a third order to open once the fix is applied.
-Step 4 allows for that: set `CLEANUP_ORDER` to the words "the clean-up order
-you will open after the fix". Angel then opens it and stops at its approval,
-and step 4b releases it.
+is step 4a: Angel publishes the policy's order, stops at the clean-up's
+approval, and aborts the fix's order with the reason. Then step 4b.
 
 What you should see:
 - **After step 2:** two or three change orders wait at `record`: the fix, the
