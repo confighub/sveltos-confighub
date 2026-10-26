@@ -115,6 +115,11 @@ which ConfigHub is removing.
 - **A machine** with Docker and room for six kind clusters. We used 18 cores
   and 48 GB. On Linux, raise the inotify limits first, as kind's docs say for
   many clusters.
+- **A Mac, for the agents' runs.** `agents/run-agent.sh` holds each agent in
+  Claude Code's sandbox as it works on macOS, and stops if that sandbox is not
+  there. On Linux and WSL2 the sandbox gives a command a localhost of its own,
+  so an agent's `kubectl` could not reach the kind clusters. The fleet, setup
+  and the proof scripts do not need the sandbox.
 - **A ConfigHub organization** with 20 free Spaces, and a user with the admin
   role there. Setup creates Spaces, service accounts with org roles and components; it
   sets permissions on Spaces and edits workflows. The scripts act through your current
