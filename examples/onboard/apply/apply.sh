@@ -89,6 +89,9 @@ publish() {
         if [ "$waitfor" = approval ]; then echo "$1 waits for approval"; else kind=${reason#*: }; kind=${kind#* }; echo "$1 waits for $waitfor: cub attestation create --space $1 --type ${kind%% *} --change-order $2"; fi
         return 0 ;;
       *"outstanding ValidationErrors"*) sleep "${RETRY_SECONDS:-15}" ;;
+      *"the tag marks no revision of a unit that has been released"*)
+        order_released "$1" "$2" || { echo "$out" >&2; return 1; }
+        echo "$1 already released; $2 has nothing more for it"; return 0 ;;
       *"HTTP 422"*) refused_first "$1" "$2" || { echo "$out" >&2; return 1; }; baseline "$1" "$2" "$out"; return $? ;;
       *) echo "$out" >&2; return 1 ;;
     esac
@@ -113,6 +116,18 @@ refused_first() {
   [ "$n" = 0 ] || return 1
   state=$(cub changeorder get --space "${2%%/*}" "${2#*/}" -o 'jq=.ChangeOrder.State') || return 1
   [ "$(printf '%s' "$state" | tr -d '"')" = Released ]
+}
+# order_released <variant> <base>/<order>: the variant has a release, and the
+# order lists it among the Spaces it has released, so it has nothing for it.
+# ConfigHub then refuses to publish the order there, as the release would
+# leave out the variant's units: after its onboarding baseline, for one.
+order_released() {
+  local n id ids
+  n=$(cub release list --space "$1" -o 'jq=[.[] | select(.Release.Published)] | length') || return 1
+  case "$n" in ""|0) return 1 ;; esac
+  id=$(cub space get "$1" -o jq=.Space.SpaceID | tr -d '"') || return 1
+  ids=$(cub changeorder get --space "${2%%/*}" "${2#*/}" -o 'jq=(.ChangeOrder.ReleasedSpaceIDs // []) | join(" ")' | tr -d '"') || return 1
+  [ -n "$id" ] && case " $ids " in *" $id "*) true ;; *) false ;; esac
 }
 baseline() {
   if [ -n "${PROPOSE_ONLY:-}" ] || [ "${FIRST_RELEASE:-}" != baseline ]; then
@@ -322,17 +337,26 @@ elif [ "$live" != 1 ]; then
   issued=$(cub serviceaccount token create sveltos-delivery --description "Sveltos on ${MGMT_CONTEXT:-the management cluster}, Secret projectsveltos/confighub-sveltos-targets" -o 'jq=((.UserToken // .).Jti // "") + " " + (.Token // "")' | tr -d '"') || issued=
   new_jti=${issued%% *}; token=${issued#* }
   if [ -z "$new_jti" ] || [ -z "$token" ] || [ "$token" = null ] || [ "$token" = "$issued" ]; then echo "could not issue a token for sveltos-delivery: issuing one takes Impersonate on the service account (Manage does not include it)"; exit 1; fi
-  if ! k create secret generic confighub-sveltos-targets --namespace projectsveltos --type addons.projectsveltos.io/cluster-profile \
+  # Not kubectl apply, which keeps a copy of what it applies, token and all, in
+  # the Secret's last-applied-configuration annotation. create and replace write
+  # the Secret alone, and replace drops that copy from a Secret an earlier
+  # version applied.
+  secret_yaml=$(k create secret generic confighub-sveltos-targets --namespace projectsveltos --type addons.projectsveltos.io/cluster-profile \
       --from-literal=username=token --from-file=password=<(printf '%s' "$token") \
-      --dry-run=client -o yaml | k annotate --local -f - sveltos.confighub.com/token-jti="$new_jti" -o yaml | k apply -f -; then
+      --dry-run=client -o yaml | k annotate --local -f - sveltos.confighub.com/token-jti="$new_jti" -o yaml) || secret_yaml=
+  if k get secret -n projectsveltos confighub-sveltos-targets >/dev/null 2>&1; then write=replace; else write=create; fi
+  if [ -z "$secret_yaml" ] || ! printf '%s\n' "$secret_yaml" | k "$write" -f -; then
     cub serviceaccount token revoke sveltos-delivery "$new_jti" --quiet || true
     echo "could not write the gateway Secret; the token issued for it is revoked"; exit 1
   fi
-  unset token issued
+  unset token issued secret_yaml
   # A Secret from before cub sveltos 0.15 held a worker's ID and secret.
   [ -z "$held" ] || [ "$held" = token ] || echo "The gateway Secret held a worker's credential; it now holds a token of sveltos-delivery. The old worker keeps working until you delete it, once Sveltos has fetched with the token: cub worker delete --space sveltos-targets server-worker"
   [ -z "$jti" ] || [ "$jti" = "$new_jti" ] || echo "The gateway Secret had token $jti. If it is still live, revoke it once the new token's LAST-USED moves: cub serviceaccount token revoke sveltos-delivery $jti"
 fi
+# A Secret an earlier apply.sh wrote with kubectl apply keeps a copy of its
+# credential in this annotation, even when its token is kept: drop it.
+k annotate secret -n projectsveltos confighub-sveltos-targets kubectl.kubernetes.io/last-applied-configuration- >/dev/null 2>&1 || true
 deliver ingress-nginx sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-prod-us
 deliver kyverno sveltos-kyverno-staging-eu sveltos-kyverno-prod-eu sveltos-kyverno-prod-us
 deliver kyverno-policies sveltos-kyverno-policies-staging-eu sveltos-kyverno-policies-prod-eu sveltos-kyverno-policies-prod-us

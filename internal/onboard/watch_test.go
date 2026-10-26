@@ -239,8 +239,10 @@ case "$*" in
   *"get secret"*'index .data "username"'*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "$HELD_USER" ;;
   *"get secret"*"index .metadata.annotations"*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "${HELD_JTI:-<no value>}" ;;
   *"annotate --local -f -"*) j=""; for a in "$@"; do case "$a" in *token-jti=*) j=${a#*=} ;; esac; done; cat; echo "# token-jti: $j" ;;
-  *"apply -f -"*) [ -z "$APPLY_FAILS" ] || exit 1; cat >> "$LOG.applied" ;;
+  *"get secret -n "*) [ -n "$HELD_USER" ] || exit 1 ;;
+  *"apply -f -"*|*"replace -f -"*|*"create -f -"*) [ -z "$APPLY_FAILS" ] || exit 1; cat >> "$LOG.applied" ;;
   *"create secret generic "*)
+    [ -z "$CREATE_FAILS" ] || exit 1
     name="" user="" pw="" next=""
     for a in "$@"; do
       [ "$next" = 1 ] && { name=$a; next=""; }
@@ -364,12 +366,37 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		!strings.Contains(calls, `select(.Jti == "jti-old"`) {
 		t.Errorf("a re-run keeps a token ConfigHub says is live: %v\n%s", err, calls)
 	}
+	// An earlier apply.sh wrote the Secret with kubectl apply, which kept a copy
+	// of it in this annotation; it goes even when the token is kept.
+	if !strings.Contains(calls, "annotate secret -n projectsveltos confighub-sveltos-targets kubectl.kubernetes.io/last-applied-configuration-") {
+		t.Errorf("a re-run that keeps the token drops the copy kubectl apply left: %v\n%s", err, calls)
+	}
 	live = "0"
 	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
 	if err != nil || !strings.Contains(calls, "serviceaccount token create sveltos-delivery ") || !strings.Contains(applied, "# token-jti: jti-new") ||
 		!strings.Contains(out, "cub serviceaccount token revoke sveltos-delivery jti-old") {
 		t.Errorf("a revoked or expired token is replaced, and the old one named: %v\n%s\n%s", err, out, calls)
 	}
+	// kubectl apply would copy the token into the Secret's last-applied-configuration
+	// annotation: an existing Secret is replaced, a new one created.
+	if !strings.Contains(calls, "replace -f -") || strings.Contains(calls, "apply -f -") {
+		t.Errorf("an existing Secret is replaced, never applied: %v\n%s", err, calls)
+	}
+	if strings.Contains(calls, "tok-123") {
+		t.Errorf("the token reaches kubectl only on stdin, never in its arguments:\n%s", calls)
+	}
+	t.Setenv("APPLY_FAILS", "1")
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err == nil || !strings.Contains(calls, "replace -f -") || !strings.Contains(calls, "cub serviceaccount token revoke sveltos-delivery jti-new") {
+		t.Errorf("a token issued for a Secret that could not be replaced is revoked: %v\n%s\n%s", err, out, calls)
+	}
+	os.Unsetenv("APPLY_FAILS")
+	t.Setenv("CREATE_FAILS", "1")
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err == nil || strings.Contains(calls, "replace -f -") || !strings.Contains(calls, "cub serviceaccount token revoke sveltos-delivery jti-new") {
+		t.Errorf("a token issued for a Secret that could not be made is revoked: %v\n%s\n%s", err, out, calls)
+	}
+	os.Unsetenv("CREATE_FAILS")
 	live = "1"
 	t.Setenv("ROTATE_TOKEN", "1")
 	_, calls, err = run("sveltos-kyverno-prod-us", "", true)
@@ -392,7 +419,8 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	heldUser, live = "", ""
 	t.Setenv("APPLY_FAILS", "1")
 	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
-	if err == nil || !strings.Contains(calls, "cub serviceaccount token revoke sveltos-delivery jti-new") || !strings.Contains(out, "the token issued for it is revoked") {
+	if err == nil || !strings.Contains(calls, "create -f -") || strings.Contains(calls, "apply -f -") ||
+		!strings.Contains(calls, "cub serviceaccount token revoke sveltos-delivery jti-new") || !strings.Contains(out, "the token issued for it is revoked") {
 		t.Errorf("a token issued for a Secret that could not be written is revoked: %v\n%s\n%s", err, out, calls)
 	}
 	os.Unsetenv("APPLY_FAILS")
@@ -423,6 +451,43 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 // apply.sh asks cub's jq whether the token a Secret holds is still live, and
 // reads a new token's jti. cub v0.9.0 and later wrap each token as
 // {UserToken: ...}; earlier ones do not. Both shapes must work, with jq.
+// order_released reads ConfigHub's answers with jq; this runs its expressions
+// under a real jq.
+func TestOrderReleasedExpressions(t *testing.T) {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("needs jq")
+	}
+	script := ApplyScript(mustPlan(t, exampleDocs(t), exampleOpts))
+	start := strings.Index(script, "order_released() {")
+	if start < 0 {
+		t.Fatalf("apply.sh has no order_released()")
+	}
+	body := script[start : start+strings.Index(script[start:], "\n}\n")]
+	var filters [][]string
+	for _, m := range regexp.MustCompile(`-o (?:'jq=([^']*)'|jq=(\S+))`).FindAllStringSubmatch(body, -1) {
+		filters = append(filters, []string{m[0], m[1] + m[2]})
+	}
+	if len(filters) != 3 {
+		t.Fatalf("want 3 jq expressions in order_released, got %d:\n%s", len(filters), body)
+	}
+	for _, c := range []struct{ filter, input, want string }{
+		{filters[0][1], `[]`, "0"},
+		{filters[0][1], `[{"Release":{"Published":true}},{"Release":{"Published":false}}]`, "1"},
+		{filters[1][1], `{"Space":{"SpaceID":"id-v"}}`, "id-v"},
+		{filters[2][1], `{"ChangeOrder":{"ReleasedSpaceIDs":["id-x","id-v"]}}`, "id-x id-v"},
+		{filters[2][1], `{"ChangeOrder":{"ReleasedSpaceIDs":null}}`, ""},
+		{filters[2][1], `{"ChangeOrder":{}}`, ""},
+	} {
+		cmd := exec.Command(jq, "-r", c.filter)
+		cmd.Stdin = strings.NewReader(c.input)
+		out, err := cmd.Output()
+		if err != nil || strings.TrimSpace(string(out)) != c.want {
+			t.Errorf("jq %s on %s gives %q (%v), want %q", c.filter, c.input, out, err, c.want)
+		}
+	}
+}
+
 func TestTokenExpressionsReadBothShapes(t *testing.T) {
 	jq, err := exec.LookPath("jq")
 	if err != nil {
