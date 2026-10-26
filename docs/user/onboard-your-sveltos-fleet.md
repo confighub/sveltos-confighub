@@ -261,8 +261,10 @@ from `cub` into the Secret without writing it to disk or showing it.
   LAST-USED moves (`cub serviceaccount token list <prefix>-delivery`, which
   names each token by the Secret it was issued for), revoke the old one with
   `cub serviceaccount token revoke <prefix>-delivery <jti>`.
-- **Issuing a token takes Impersonate** on the service account, which an
-  organization admin has; Manage does not include it.
+- **Issuing a token takes Impersonate** on the service account; Manage does
+  not include it. In our test an organization admin could issue them.
+- **If ConfigHub cannot be asked** whether the held token is live, the Secret
+  keeps it, and the script says so.
 - **A fleet onboarded before 0.15** has a Secret holding a server-hosted
   worker's ID and secret. ConfigHub is removing workers. Run the new
   `apply.sh`: it replaces that Secret with a token, and names the old worker
@@ -276,7 +278,9 @@ Measured on 2026-10-26 with Sveltos v1.15.0 and ConfigHub v0.9.5:
 - one token served Targets in two Spaces;
 - a token of an account with no grant was refused with 403;
 - a revoked token was refused with 401 at the next fetch, within a minute,
-  and what was delivered stayed.
+  and what was delivered stayed;
+- the token's LAST-USED moved when Sveltos pulled with it, which is what
+  makes the old token safe to revoke after a rotation.
 
 ### Which registry Sveltos fetches from
 

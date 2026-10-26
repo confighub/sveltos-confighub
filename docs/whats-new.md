@@ -43,6 +43,10 @@ workers (confighubai/confighub#5980), and `cub` marks them deprecated.
     goes in the Secret, and the script names the old one to revoke once the
     new one is in use.
   - A token issued for a Secret that then could not be written is revoked.
+  - If ConfigHub cannot be asked whether the held token is live, the Secret
+    keeps it.
+  - Both shapes of `cub serviceaccount token list` are read: cub v0.9.0 and
+    later wrap each token in `UserToken`, earlier ones do not.
 - A fleet onboarded before 0.15 keeps working until workers go. Running the
   new `apply.sh` replaces its Secret's worker credential with a token, and
   names the old worker to delete afterwards.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -217,7 +218,7 @@ case "$*" in
   "changeworkflow get "*) echo staging,prod ;;
   "serviceaccount token create --help") if [ -n "$OLD_CUB" ]; then echo 'unknown command "serviceaccount"'; else echo "      --expires-in duration"; fi ;;
   "serviceaccount token create "*) if [ -n "$NO_TOKEN" ]; then echo null; else echo '"jti-new tok-123"'; fi ;;
-  "serviceaccount token list "*) echo "${LIVE:-0}" ;;
+  "serviceaccount token list "*) [ -z "$LIST_FAILS" ] || exit 1; echo "${LIVE:-0}" ;;
   "release publish "*)
     for s in $WAITING; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
     for s in $NEEDS; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
@@ -376,6 +377,12 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		t.Errorf("ROTATE_TOKEN issues a new token even while the old one is live: %v\n%s", err, calls)
 	}
 	os.Unsetenv("ROTATE_TOKEN")
+	t.Setenv("LIST_FAILS", "1")
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err != nil || strings.Contains(calls, "serviceaccount token create sveltos-delivery ") || !strings.Contains(out, "the Secret keeps it") {
+		t.Errorf("when ConfigHub cannot be asked, the Secret keeps its token: %v\n%s", err, out)
+	}
+	os.Unsetenv("LIST_FAILS")
 	heldUser, heldJTI = "6f1c9a40-worker-id", ""
 	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
 	if err != nil || !strings.Contains(calls, "serviceaccount token create sveltos-delivery ") ||
@@ -410,5 +417,55 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
 	if err == nil || strings.Count(calls, "release publish sveltos-kyverno-prod-us") != 3 || !strings.Contains(out, "is held by its policy checks, so it is not released") {
 		t.Errorf("a release held by a policy stops the script after three tries: %v\n%s", err, out)
+	}
+}
+
+// apply.sh asks cub's jq whether the token a Secret holds is still live, and
+// reads a new token's jti. cub v0.9.0 and later wrap each token as
+// {UserToken: ...}; earlier ones do not. Both shapes must work, with jq.
+func TestTokenExpressionsReadBothShapes(t *testing.T) {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("needs jq")
+	}
+	run := func(filter, input string) string {
+		cmd := exec.Command(jq, "-r", filter)
+		cmd.Stdin = strings.NewReader(input)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("jq %s: %v", filter, err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	live := strings.ReplaceAll(liveTokenJQ, `\"$jti\"`, `"j-1"`)
+	for name, c := range map[string]struct{ list, want string }{
+		"v0.9 shape, live":          {`[{"UserToken":{"Jti":"j-1","RevokedAt":null,"ExpiresAt":null}}]`, "1"},
+		"v0.8 shape, live":          {`[{"Jti":"j-1","RevokedAt":null}]`, "1"},
+		"revoked":                   {`[{"UserToken":{"Jti":"j-1","RevokedAt":"2026-10-26T08:18:25Z"}}]`, "0"},
+		"expired":                   {`[{"Jti":"j-1","ExpiresAt":"2020-01-01T00:00:00Z"}]`, "0"},
+		"expires later":             {`[{"UserToken":{"Jti":"j-1","ExpiresAt":"2999-01-01T00:00:00.123456Z"}}]`, "1"},
+		"another token":             {`[{"UserToken":{"Jti":"j-2"}}]`, "0"},
+		"an account with no tokens": {`[]`, "0"},
+	} {
+		if got := run(live, c.list); got != c.want {
+			t.Errorf("%s: %s gives %s, want %s", name, c.list, got, c.want)
+		}
+	}
+	script := ApplyScript(mustPlan(t, exampleDocs(t), exampleOpts))
+	m := regexp.MustCompile(`token create [^\n]*-o 'jq=([^']*)'`).FindStringSubmatch(script)
+	if m == nil {
+		t.Fatalf("no token create -o jq in apply.sh")
+	}
+	for issued, want := range map[string]string{
+		`{"UserToken":{"Jti":"j-9"},"Token":"tok"}`: "j-9 tok",
+		`{"Jti":"j-9","Token":"tok"}`:               "j-9 tok",
+		`{"Token":"tok"}`:                           " tok",
+	} {
+		cmd := exec.Command(jq, "-r", m[1])
+		cmd.Stdin = strings.NewReader(issued)
+		out, err := cmd.Output()
+		if got := strings.TrimSuffix(string(out), "\n"); err != nil || got != want {
+			t.Errorf("issued %s reads as %q, want %q", issued, got, want)
+		}
 	}
 }

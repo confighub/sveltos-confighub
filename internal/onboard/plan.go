@@ -34,9 +34,13 @@ const (
 	// tokenJTIAnnotation on the gateway Secret records which token it holds, so a
 	// re-run can tell whether ConfigHub still takes it.
 	tokenJTIAnnotation = "sveltos.confighub.com/token-jti"
-	secretNamespace    = "projectsveltos"
-	secretType         = "addons.projectsveltos.io/cluster-profile"
-	profileAPIVersion  = "config.projectsveltos.io/v1beta1"
+	// liveTokenJQ counts the tokens in cub serviceaccount token list whose jti
+	// is $jti (a shell variable) and that are neither revoked nor expired.
+	// cub v0.9.0 and later list each as {UserToken: ...}, earlier ones bare.
+	liveTokenJQ       = `[.[] | (.UserToken // .) | select(.Jti == \"$jti\" and .RevokedAt == null and (.ExpiresAt == null or .ExpiresAt > (now | todate)))] | length`
+	secretNamespace   = "projectsveltos"
+	secretType        = "addons.projectsveltos.io/cluster-profile"
+	profileAPIVersion = "config.projectsveltos.io/v1beta1"
 )
 
 var clusterRefAPI = map[string]string{

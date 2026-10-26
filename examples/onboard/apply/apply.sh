@@ -309,14 +309,19 @@ step "6/6 Point Sveltos at ConfigHub (your management cluster)"
 held=$(k get secret -n projectsveltos confighub-sveltos-targets -o go-template='{{ index .data "username" | base64decode }}' 2>/dev/null || true)
 jti=$(k get secret -n projectsveltos confighub-sveltos-targets -o go-template='{{ index .metadata.annotations "sveltos.confighub.com/token-jti" }}' 2>/dev/null || true)
 case "$jti" in "<no value>") jti= ;; esac
+# cub v0.9.0 and later list each token as {UserToken: ...}; earlier ones list
+# the token itself. (.UserToken // .) reads both. If ConfigHub cannot be asked,
+# the Secret keeps its token rather than gaining another.
 live=0
 if [ "$held" = token ] && [ -n "$jti" ] && [ -z "${ROTATE_TOKEN:-}" ]; then
-  live=$(cub serviceaccount token list sveltos-delivery -o "jq=[.[] | .UserToken | select(.Jti == \"$jti\" and .RevokedAt == null and (.ExpiresAt == null or .ExpiresAt > (now | todate)))] | length") || live=0
+  live=$(cub serviceaccount token list sveltos-delivery -o "jq=[.[] | (.UserToken // .) | select(.Jti == \"$jti\" and .RevokedAt == null and (.ExpiresAt == null or .ExpiresAt > (now | todate)))] | length") || live=unknown
 fi
-if [ "$live" != 1 ]; then
-  issued=$(cub serviceaccount token create sveltos-delivery --description "Sveltos on ${MGMT_CONTEXT:-the management cluster}, Secret projectsveltos/confighub-sveltos-targets" -o 'jq=.UserToken.Jti + " " + .Token' | tr -d '"') || issued=
+if [ "$live" = unknown ]; then
+  echo "Could not ask ConfigHub whether the gateway Secret's token $jti is still live; the Secret keeps it. Run this script again to check."
+elif [ "$live" != 1 ]; then
+  issued=$(cub serviceaccount token create sveltos-delivery --description "Sveltos on ${MGMT_CONTEXT:-the management cluster}, Secret projectsveltos/confighub-sveltos-targets" -o 'jq=((.UserToken // .).Jti // "") + " " + (.Token // "")' | tr -d '"') || issued=
   new_jti=${issued%% *}; token=${issued#* }
-  case "$token" in ""|null|"$issued") echo "could not issue a token for sveltos-delivery: issuing one takes Impersonate on the service account, which an organization admin has"; exit 1 ;; esac
+  if [ -z "$new_jti" ] || [ -z "$token" ] || [ "$token" = null ] || [ "$token" = "$issued" ]; then echo "could not issue a token for sveltos-delivery: issuing one takes Impersonate on the service account (Manage does not include it)"; exit 1; fi
   if ! k create secret generic confighub-sveltos-targets --namespace projectsveltos --type addons.projectsveltos.io/cluster-profile \
       --from-literal=username=token --from-file=password=<(printf '%s' "$token") \
       --dry-run=client -o yaml | k annotate --local -f - sveltos.confighub.com/token-jti="$new_jti" -o yaml | k apply -f -; then
