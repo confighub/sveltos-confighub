@@ -23,8 +23,8 @@ failed=0 added=0
 expect() { # expect <what> <text> <pattern>: report whether the text shows it
   if printf '%s' "$2" | grep -Eq "$3"; then echo "  ok      $1"; else echo "  NOT MET $1"; failed=1; fi
 }
-devil() { CUB_CONTEXT=chaos-devil "$@"; }
-angel() { CUB_CONTEXT=chaos-angel "$@"; }
+devil() { CUB_CONFIG="$AI_CHAOS_DIR/cub/devil" CUB_CONTEXT=chaos-devil "$@"; }
+angel() { CUB_CONFIG="$AI_CHAOS_DIR/cub/angel" CUB_CONTEXT=chaos-angel "$@"; }
 
 echo "== 1. the check passes where prod matches staging"
 onboard=$(cub changeorder list --space chaos-shop-base -o jq='.[].ChangeOrder.Slug' | tr -d '"' | grep '^onboard-' | head -1)
@@ -35,7 +35,7 @@ echo "== 2. the parity gate"
 if cub changeworkflow get rollout --space chaos-shop-base -o yaml | grep -q "Type: ParityCheck"; then
   echo "  already there"
 else
-  angel_id=$(cub worker get --space chaos-agents angel -o jq=.BridgeWorker.UserID | tr -d '"')
+  angel_id=$(cub serviceaccount get chaos-angel -o jq=.ServiceAccount.UserID | tr -d '"')
   cub changeworkflow update rollout --space chaos-shop-base \
     --attestation-prerequisite approval --attestation-prerequisite parity \
     --attestation-prerequisite-type parity=ParityCheck --attestation-prerequisite-count parity=1 \

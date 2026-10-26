@@ -28,26 +28,47 @@ out="$CHAOS_RUNS/$run"; mkdir -p "$out"
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 log="$out/$agent-$stamp.jsonl"
 
-# One kubeconfig with a context per cluster, made fresh for every run.
-fleet="$AI_CHAOS_DIR/fleet.kubeconfig"
-KUBECONFIG=$(find "$AI_CHAOS_DIR" -maxdepth 1 -name 'chaos-*.kubeconfig' | sort | paste -sd: -) kubectl config view --flatten > "$fleet"
 
 # What each agent may run. Anything not allowed is refused, and the agent is
 # told so; it cannot ask. No agent sees MCP servers or connectors.
 never=("Bash(cub variant approve:*)" "Bash(cub attestation create:*)" "Bash(cub attestation revoke:*)"
        "Bash(cub space delete:*)" "Bash(cub changeworkflow create:*)" "Bash(cub changeworkflow update:*)"
        "Bash(cub changeworkflow edit:*)" "Bash(cub changeworkflow delete:*)" "Bash(cub component update:*)"
-       "Bash(cub worker:*)" "Bash(cub auth:*)" "Bash(cub context:*)"
+       "Bash(cub worker:*)" "Bash(cub auth:*)" "Bash(cub context:*)" "Bash(cub serviceaccount:*)"
        "Bash(kubectl delete namespace:*)" "Bash(kubectl delete ns:*)")
+# Every agent: no cub command that names a context or prints credentials, and
+# no command that sets cub's context or configuration; no reading your cub
+# configuration, the keys, the agents' cub configurations or these guards.
+# The Read rules also refuse Edit and Write there, and cat, head and the like.
+# Paths as the sandbox sees them, symlinks resolved.
+chaos=$(cd "$AI_CHAOS_DIR" && pwd -P)
+cubconfig=$(cd "${CUB_CONFIG:-$HOME/.confighub}" && pwd -P)
+home=$(cd "$HOME" && pwd -P)
+guard=("Bash(cub *--context*)" "Bash(cub *--debug*)" "Bash(*CUB_CONTEXT*)" "Bash(*CUB_CONFIG*)"
+       "Read(/$cubconfig/**)" "Read(/$chaos/keys/**)" "Read(/$chaos/cub/**)" "Read(/$chaos/guards/**)"
+       "Read(./.cub/**)" "Read(./.kubeconfig)" "Edit(./.claude/**)")
+# kubectl naming Secrets as a resource, in any case: get secret, secrets/x,
+# pods,secrets. A name that merely contains "secret" is not refused.
+secrets=()
+for w in secret secrets Secret Secrets SECRET SECRETS; do
+  secrets+=("Bash(kubectl * $w)" "Bash(kubectl * $w *)" "Bash(kubectl * $w/*)" "Bash(kubectl *,$w*)" "Bash(kubectl * $w,*)")
+done
 case $agent in
   devil)
     tools=Bash
     allowed=("Bash(kubectl:*)" "Bash(cub:*)" "Bash(date:*)" "Bash(openssl rand:*)")
-    denied=("${never[@]}") ;;
+    # It rotates shop-token on the workload clusters; the management cluster's
+    # Secrets hold the delivery account's token.
+    # Every kubectl command names its cluster, and it may not change its
+    # kubeconfig to make one the default.
+    denied=("${never[@]}" "Bash(kubectl config:*)" "Bash(kubectl * config)" "Bash(kubectl * config *)"
+            "Bash(kubectl *kind-chaos-mgmt*secret*)" "Bash(kubectl *secret*kind-chaos-mgmt*)"
+            "Bash(kubectl *kind-chaos-mgmt*Secret*)" "Bash(kubectl *Secret*kind-chaos-mgmt*)"
+            "Bash(kubectl *kind-chaos-mgmt*SECRET*)" "Bash(kubectl *SECRET*kind-chaos-mgmt*)") ;;
   angel)
     tools=Bash,Read,Write,Edit
-    allowed=("Bash(kubectl get:*)" "Bash(kubectl describe:*)" "Bash(kubectl logs:*)" "Bash(cub:*)" "Bash(date:*)" "Read" "Write" "Edit")
-    denied=("${never[@]}") ;;
+    allowed=("Bash(kubectl get:*)" "Bash(kubectl describe:*)" "Bash(kubectl logs:*)" "Bash(cub:*)" "Bash(date:*)" "Read(./**)" "Edit(./**)")
+    denied=("${never[@]}" "${secrets[@]}" "Bash(kubectl * -f*)" "Bash(kubectl *--filename*)" "Bash(kubectl * -k*)" "Bash(kubectl *--kustomize*)") ;;
   milton)
     # Milton reads and approves; it changes nothing else. In the sandbox it may
     # apply a policy and impersonate identities, to test what it approves.
@@ -62,24 +83,80 @@ case $agent in
              "Bash(kubectl --kubeconfig $AI_CHAOS_DIR/sandbox.kubeconfig:*)"
              "Bash(bash $DEMO/proof/token-subject.sh:*)" "Bash(date:*)")
     denied=("Bash(cub attestation create:*)" "Bash(cub attestation revoke:*)" "Bash(cub worker:*)"
-            "Bash(cub auth:*)" "Bash(cub context:*)") ;;
+            "Bash(cub auth:*)" "Bash(cub context:*)" "Bash(cub serviceaccount:*)"
+            "${secrets[@]}" "Bash(kubectl get -f*)" "Bash(kubectl get * -f*)" "Bash(kubectl describe -f*)" "Bash(kubectl describe * -f*)"
+            "Bash(kubectl get*--filename*)" "Bash(kubectl describe*--filename*)" "Bash(kubectl get* -k*)" "Bash(kubectl describe* -k*)"
+            "Bash(kubectl *--kubeconfig*--kubeconfig*)") ;;
   *) echo "agent is devil, angel or milton" >&2; exit 2 ;;
 esac
 
 echo "$(date -u +%FT%TZ) $agent ($prompt_file): $task" >> "$out/runs.log"
 # The agent starts in an empty directory outside any repository, so it has no
 # settings, memory or instructions from wherever this script is run, and it
-# reads nothing on stdin.
-work=$(mktemp -d "${TMPDIR:-/tmp}/ai-chaos-$agent-XXXXXX")
+# reads nothing on stdin. The directory goes when the run ends.
+work=$(mktemp -d "${TMPDIR:-/tmp}/ai-chaos-$agent-XXXXXX"); work=$(cd "$work" && pwd -P)
+trap 'rm -rf "$work"' EXIT
 cd "$work"
+
+# A cub configuration made for this run, in its directory: one context,
+# signed in afresh with the agent's key, and the one plugin it uses. Only this
+# run reads it, so nothing the agent writes there reaches any other script.
+server=${CONFIGHUB_URL:-https://hub.confighub.com}
+cfg="$work/.cub"
+# cub passes over a plugin that is a symbolic link, so the plugin is copied.
+mkdir -p "$cfg/plugins"
+cp -R "$cubconfig/plugins/sveltos-confighub" "$cfg/plugins/"
+CUB_CONFIG="$cfg" CUB_CONTEXT= cub context create "chaos-$agent" --server="$server" >/dev/null
+CUB_CONFIG="$cfg" CUB_CONTEXT="chaos-$agent" cub auth login --private-key="$chaos/keys/chaos-$agent.jwk" >/dev/null 2>&1 ||
+  { echo "could not sign in as chaos-$agent: run setup/identities.sh" >&2; exit 1; }
+
+# A kubeconfig with a context per cluster and no current one, so every
+# command names its cluster.
+kubeconfig="$work/.kubeconfig"
+clusters=$(find "$chaos" -maxdepth 1 -name 'chaos-*.kubeconfig' | sort | paste -sd: -)
+[ -n "$clusters" ] || { echo "no chaos-*.kubeconfig in $chaos: stand the fleet up first" >&2; exit 1; }
+(umask 077; KUBECONFIG=$clusters kubectl config view --flatten > "$kubeconfig")
+KUBECONFIG="$kubeconfig" kubectl config unset current-context >/dev/null
+
+# The sandbox every command the agent runs is held in (macOS Seatbelt). It
+# reads nothing in your home folder but what the agent's tools need: cub, the
+# policy sandbox's kubeconfig, Python's packages, and the two files of this
+# kit the prompts name, agents/no-policies.yaml and proof/token-subject.sh. So not your cub configuration, the keys,
+# the other agents' configurations, your notes or other credentials, whichever
+# program asks (kubectl --from-file included). It writes only its own
+# directory, never its .claude settings. It reaches ConfigHub, and local ports
+# (the kind clusters). Commands cannot leave the sandbox. Go programs such as
+# cub check TLS through macOS's trust service, which the sandbox reaches only
+# with enableWeakerNetworkIsolation.
+host=${server#*://}; host=${host%%/*}; host=${host%%:*}
+mkdir -p "$chaos/guards"
+settings="$chaos/guards/$agent.json"
+demo=$(cd "$DEMO" && pwd -P)
+cubbin=$(python3 -c 'import os, shutil; print(os.path.dirname(os.path.realpath(shutil.which("cub"))))')
+python3 - "$settings" "$work" "$host" "$home" "$chaos" "$cubconfig" "$cubbin" \
+  "$chaos/sandbox.kubeconfig" "$home/Library/Python" \
+  "$demo/agents/no-policies.yaml" "$demo/proof/token-subject.sh" <<'PY'
+import json, sys
+out, work, host, home, chaos, cubconfig, *readable = sys.argv[1:]
+json.dump({"sandbox": {
+    "enabled": True, "failIfUnavailable": True,
+    "allowUnsandboxedCommands": False, "autoAllowBashIfSandboxed": False,
+    "enableWeakerNetworkIsolation": True,
+    "filesystem": {"denyRead": [home, chaos, cubconfig], "allowRead": readable,
+                   "allowWrite": [work], "denyWrite": [work + "/.claude"]},
+    "network": {"allowedDomains": [host, "*." + host], "allowLocalBinding": True}}},
+    open(out, "w"), indent=2)
+PY
+
 model=()
 [ -n "${MODEL:-}" ] && model=(--model "$MODEL")
-CUB_CONTEXT="chaos-$agent" KUBECONFIG="$fleet" AI_CHAOS_DIR="$AI_CHAOS_DIR" \
-  claude -p "$task" ${model[@]+"${model[@]}"} --setting-sources project \
+env -u CUB_TOKEN -u CUB_SERVER -u CONFIGHUB_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
+  CUB_CONFIG="$cfg" CUB_CONTEXT="chaos-$agent" KUBECONFIG="$kubeconfig" KUBECACHEDIR="$work/.kube-cache" AI_CHAOS_DIR="$AI_CHAOS_DIR" \
+  claude -p "$task" ${model[@]+"${model[@]}"} --setting-sources project --settings "$settings" --permission-mode dontAsk \
     --append-system-prompt "$(sed -e "s|\$AI_CHAOS_DIR|$AI_CHAOS_DIR|g" -e "s|\$DEMO|$DEMO|g" "$here/$agent.md")" \
     --tools "$tools" --strict-mcp-config \
     --output-format stream-json --verbose \
-    --allowedTools "${allowed[@]}" --disallowedTools "${denied[@]}" \
+    --allowedTools "${allowed[@]}" --disallowedTools "${denied[@]}" "${guard[@]}" \
     --no-session-persistence \
   < /dev/null > "$log"
 python3 "$here/render.py" "$log" > "${log%.jsonl}.md"

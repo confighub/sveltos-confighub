@@ -80,13 +80,15 @@ ConfigHub's record of both runs.
 
 Tested together on 2026-10-03. On 2026-10-04 the server moved to v0.8.3; stand-up,
 onboarding, the gates and the parity gate were rechecked on it
-([the check](recording/check-2026-10-04.md)).
+([the check](recording/check-2026-10-04.md)). On 2026-10-26, with the agents
+as service accounts, stand-up, onboarding, the handover, the gates and live
+status were rechecked on ConfigHub v0.9.5 and `cub` v0.9.0.
 
 
 | Product | Version |
 | --- | --- |
 | ConfigHub (hub.confighub.com) | server v0.8.1, and rechecked on v0.8.3. The hosted server moves on: you get the version it runs |
-| `cub` | v0.8.1 |
+| `cub` | v0.8.13 or newer, for service accounts; v0.9.0 on 2026-10-26. The recorded runs used v0.8.1 |
 | `cub sveltos` (this repository) | v0.14.1 or newer: the live-status reporter needs v0.14.0 since ConfigHub v0.8.2, and `--kube-context` came in v0.14.1. The recorded runs used v0.13.0 |
 | Helm (renders the charts) | v4.1.4 |
 | Sveltos | v1.15.0 (installed by the fleet script) |
@@ -98,9 +100,15 @@ onboarding, the gates and the parity gate were rechecked on it
 kind before v0.31 does not enforce NetworkPolicy by default, and outage 2
 needs it.
 
-Each agent signs in to ConfigHub as a worker (`setup/identities.sh`).
-ConfigHub plans to replace that with service accounts, so later versions of
-`cub` may need a different setup.
+Each agent signs in to ConfigHub as its own service account, with a key, in
+a `cub` configuration of its own, `$AI_CHAOS_DIR/cub/<agent>`
+(`setup/identities.sh`), and each run gets one made for it. So an agent has no
+other identity to switch to, yours included. Each run is held in Claude
+Code's sandbox, which keeps every command it runs from reading your home
+folder, beyond what its tools need: not the keys, your `cub` configuration or
+the other agents' (`agents/run-agent.sh`). `teardown.sh --confighub` deletes the keys
+with the accounts. The recorded runs, on 3 and 4 October 2026, used workers,
+which ConfigHub is removing.
 
 ## What you need
 
@@ -108,7 +116,7 @@ ConfigHub plans to replace that with service accounts, so later versions of
   and 48 GB. On Linux, raise the inotify limits first, as kind's docs say for
   many clusters.
 - **A ConfigHub organization** with 20 free Spaces, and a user with the admin
-  role there. Setup creates Spaces, workers with org roles and components; it
+  role there. Setup creates Spaces, service accounts with org roles and components; it
   sets permissions on Spaces and edits workflows. The scripts act through your current
   `cub` context. If it points at another organization, run
   `export CUB_CONTEXT=<your context>` in each terminal, setup and teardown
@@ -119,7 +127,7 @@ ConfigHub plans to replace that with service accounts, so later versions of
   takes a version, and puts `cub` in `~/.confighub/bin`:
 
   ```bash
-  curl -fsSL https://hub.confighub.com/cub/install.sh | VERSION=v0.8.1 bash
+  curl -fsSL https://hub.confighub.com/cub/install.sh | VERSION=v0.9.0 bash
   export PATH=$HOME/.confighub/bin:$PATH
   cub auth login
   cub plugin install confighub/sveltos-confighub@v0.14.1
@@ -200,15 +208,21 @@ Set them on the command line, without the order's Space, for example
 its change orders, and so does `cub changeorder list --space <base space>`.
 
 Each run:
-- **Identity:** acts as that agent's ConfigHub identity.
+- **Identity:** acts as that agent's ConfigHub identity, from a `cub`
+  configuration made for the run and signed in afresh with its key.
 - **Isolation:** starts in an empty directory, outside any repository, with
-  nothing on stdin and no MCP servers or connectors.
+  nothing on stdin and no MCP servers or connectors. Every command it runs is
+  held in Claude Code's sandbox: it reads nothing in your home folder but what
+  its tools need (so not the keys, your `cub` configuration or your notes), it
+  writes only its directory, which goes when the run ends, and it reaches
+  ConfigHub and local ports (the kind clusters). Its own kubeconfig has no
+  current context, so every command names its cluster.
 - **Tools:** may use only the tools its role allows (`agents/run-agent.sh`):
   - Devil changes things with kubectl and cub;
   - Angel reads the clusters and works through ConfigHub;
   - Milton reads, tests in the sandbox, and approves.
   - None of them may delete a Space or namespace, change a workflow, or
-    manage workers or logins.
+    manage identities, keys or logins.
   - Only Milton may approve.
 - **Output:** written to `$CHAOS_RUNS/<run-name>/`: the full event stream
   (`.jsonl`), a readable transcript (`.md`), and the prompt in `runs.log`.
@@ -239,8 +253,8 @@ repository root.
 ## Tear it down
 
 ```bash
-bash $DEMO/teardown.sh               # the kind clusters, the reporter, and the files in $AI_CHAOS_DIR other than your runs
-bash $DEMO/teardown.sh --confighub   # and every chaos-* Space, the components and the agents' contexts, after listing them and asking
+bash $DEMO/teardown.sh               # the kind clusters, the reporter, and the files in $AI_CHAOS_DIR other than your runs and the agents' identities
+bash $DEMO/teardown.sh --confighub   # and every chaos-* Space, the components and the agents' identities, after listing them and asking
 ```
 
 Run `bash $DEMO/proof/evidence.sh > evidence.txt` first, to keep ConfigHub's
@@ -252,7 +266,14 @@ record. Deleting the Spaces deletes it.
   repository, and the agent read private notes. Runs now start from an empty
   directory, with no connectors.
 - **An agent reads whatever a command prints.** One `--debug` printed a
-  worker's token into a transcript. The agents' instructions now forbid it.
+  worker's token into a transcript. The agents may no longer run `--debug`,
+  and each now runs in a sandbox that cannot read the keys or another
+  identity's sign-in.
+- **An agent can reach whatever its user can.** Until 26 October the agents
+  ran with your own `cub` configuration, where `cub --context <yours>` would
+  have acted as you, a named approver. Nothing in the runs tried it. Each
+  agent now has a configuration of its own, and the sandbox keeps it out of
+  yours.
 - **Name the sandbox every time.** One preview, run without a sandbox, put its
   policy on the management cluster, and Sveltos was refused its own writes.
   `cub sveltos impact` and `check` now refuse a cluster that runs workloads,

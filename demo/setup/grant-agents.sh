@@ -14,10 +14,10 @@
 #   bash $DEMO/setup/grant-agents.sh
 set -euo pipefail
 [ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
-bot() { cub worker get --space chaos-agents "$1" -o jq=.BridgeWorker.UserID | tr -d '"\n'; }
-reporter=$(bot reporter)
-devil=$(bot devil)
-milton=$(bot milton)
+# The agents are service accounts, granted by name.
+reporter=serviceaccount:chaos-reporter
+devil=serviceaccount:chaos-devil
+milton=serviceaccount:chaos-milton
 for s in $(cub space list --where "Slug LIKE 'chaos-%' AND Slug != 'chaos-agents'" -o 'jq=.[].Space.Slug' | tr -d '"'); do
   cub space update "$s" --quiet \
     --permission "View:$reporter" --permission "ViewChildren:$reporter" --permission "Edit:$reporter" --permission "EditChildren:$reporter" \

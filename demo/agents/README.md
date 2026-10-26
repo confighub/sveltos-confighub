@@ -14,41 +14,82 @@ page is that contract.
 | --- | --- |
 | **The task** | The prompt file, with each `${VARIABLE}` filled from the environment. A missing one stops the run before it starts. The scenarios say what to set |
 | **Standing instructions** | `devil.md`, `angel.md` or `milton.md`, with `$AI_CHAOS_DIR` and `$DEMO` filled in, added to the runtime's own system prompt |
-| **Its ConfigHub identity** | `CUB_CONTEXT=chaos-<agent>`, the `cub` context `setup/identities.sh` signed in as that agent's worker. Never switch the current context: set it per process |
-| **The clusters** | `KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`, with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2` |
+| **Its ConfigHub identity** | A `cub` configuration made for the run in its directory (`CUB_CONFIG`), with one context, `chaos-<agent>`, signed in afresh as that agent's service account with its key, and a copy of the `cub sveltos` plugin. It goes when the run ends. Your own `cub` configuration, and the agents' in `$AI_CHAOS_DIR/cub`, which the scripts use, are not in reach |
+| **The clusters** | A kubeconfig made for the run (`KUBECONFIG`), with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2`, and no current context, so every command names its cluster |
 | **The policy sandbox** | `$AI_CHAOS_DIR/sandbox.kubeconfig`, named in the prompts that need it |
-| **Isolation** | It starts in a new empty directory outside any repository. It gets nothing on stdin, no MCP servers or connectors, and no memory of earlier runs |
+| **Isolation** | It starts in a new empty directory outside any repository. It gets nothing on stdin, no MCP servers or connectors, and no memory of earlier runs. Every command it runs is held in Claude Code's sandbox (below) |
 
 ## What each agent may run
 
 | Agent | May run | Never |
 | --- | --- | --- |
-| Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below |
-| Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files. It works in its empty directory, but nothing confines it there | the shared list below |
-| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub auth`, `cub context` |
+| Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below; `kubectl config`, wherever it stands on the line; `kubectl` on Secrets of the management cluster, where the delivery account's token is |
+| Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files, in its own directory only, but not the run's `cub` configuration or kubeconfig | the shared list below; `kubectl` on Secrets, or on objects read from a file (`-f`) |
+| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`; `kubectl` on Secrets, or `get` and `describe` of objects read from a file; a second `--kubeconfig` |
 
 The shared list Devil and Angel may never run:
 - `cub variant approve`, and `cub attestation create` or `revoke`;
 - `cub space delete`;
 - `cub changeworkflow create`, `update`, `edit` or `delete`;
 - `cub component update`;
-- `cub worker`, `cub auth` and `cub context`;
+- `cub worker`, `cub serviceaccount`, `cub auth` and `cub context`;
 - `kubectl delete namespace`.
 
+And no agent, Milton included, may:
+- run a `cub` command that names a context (`--context` anywhere on the
+  line), or `--debug`, which prints the bearer token;
+- run a command that sets `CUB_CONTEXT` or `CUB_CONFIG`;
+- read, with its Read tool or with `cat` and the like, your `cub`
+  configuration, `$AI_CHAOS_DIR/keys`, `$AI_CHAOS_DIR/cub` or
+  `$AI_CHAOS_DIR/guards`. These rules also refuse Edit and Write there;
+- write its own `.claude` settings.
+
+Each run has its own kubeconfig, with no current context, so every `kubectl`
+command names its cluster.
+
 A refused command is refused, and the agent is told so. It cannot ask for
-permission. `run-agent.sh` holds the exact lists.
+permission (`--permission-mode dontAsk`). `run-agent.sh` holds the exact lists.
 
-Claude Code matches these lists by command prefix. So the instructions ask each
-agent for one plain command at a time, verb first and `--context` last, with no
-loops or chained commands. Milton may pipe one command into another. Another runtime may not need that, but the
-instructions still ask for it. The rule came after our first run, whose
-transcripts still show loops and chained commands.
+Claude Code matches these lists against the command's text. So the
+instructions ask each agent for one plain command at a time, verb first and
+`--context` last, with no loops or chained commands. Milton may pipe one
+command into another. The rule came after our first run, whose transcripts
+still show loops and chained commands.
 
-These limits are a second line, not the only one. ConfigHub refuses an
-approval from anyone the workflow does not name. `setup/gates.sh` and
-`setup/onboard.sh` name only you and Milton, and never a change's author. So an
-agent runtime that cannot restrict commands still cannot approve as Devil or
-Angel. It could still break more than the scenario asks for.
+Matching text is not a boundary on its own: a program can still open any file
+its user can. So there are two more lines:
+- **The sandbox.** Every command an agent runs is held in Claude Code's
+  sandbox (macOS Seatbelt), set per run in `$AI_CHAOS_DIR/guards/<agent>.json`.
+  It reads nothing in your home folder but what the agent's tools need:
+  `cub`, the policy sandbox's kubeconfig, Python's packages, and the two files
+  of this kit the prompts name, `agents/no-policies.yaml` and
+  `proof/token-subject.sh`. So not your `cub` configuration, the keys, the
+  other agents' configurations, your notes or other credentials, whichever
+  program asks (`kubectl --from-file` included). It writes only its own
+  directory, which holds a `cub` configuration made for the run and goes when
+  the run ends. It reaches ConfigHub and local ports (the kind clusters), and
+  a command cannot leave the sandbox. One opening is needed: `cub`, a Go
+  program, checks TLS through macOS's trust service, which the sandbox
+  reaches only with `enableWeakerNetworkIsolation`.
+- **ConfigHub.** It refuses an approval from anyone the workflow does not
+  name. `setup/gates.sh` and the rollouts name only you and Milton, and never
+  a change's author. With no other identity in reach, Devil and Angel cannot
+  approve.
+
+What is left:
+- an agent can read its own sign-in, which lasts a day, and a command can
+  print it;
+- Devil can read the workload clusters' Secrets, and a pod it starts can
+  reach anywhere;
+- the rules on Secrets match the command's text (`get secret`,
+  `secrets/<name>`, `pods,secrets`, in any case), so a command that reaches
+  Secrets another way could still print the delivery account's token. That
+  account can only read the Targets' releases. Rotate its token after a run:
+  `ROTATE_TOKEN=1` with the onboarding's `apply.sh`.
+
+Before you publish the transcripts,
+`bash $DEMO/proof/scan-runs.sh` names every line that looks like a
+credential.
 
 ## How long a run takes
 
@@ -104,9 +145,9 @@ agent fails, and on each run's file being named `<agent>-<UTC time>.jsonl` in
    need more turns, and may miss what Milton caught.
 
 You can also be any agent yourself. Read the prompt and the agent's `.md`, and
-run the commands in a shell with `CUB_CONTEXT=chaos-<agent>` and
-`KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`. Approvals by hand are
-`approve.sh me`.
+run the commands in a shell with `CUB_CONFIG=$AI_CHAOS_DIR/cub/<agent>`,
+`CUB_CONTEXT=chaos-<agent>` and `KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`.
+Approvals by hand are `approve.sh me`.
 
 ## The files here
 

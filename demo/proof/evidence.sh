@@ -22,7 +22,7 @@ users = {}
 for u in cub("user", "list"):
     u = ent(u, "User")
     name = u.get("Username") or u.get("DisplayName")
-    if str(u.get("ExternalID", "")).startswith("confighub:worker"):
+    if str(u.get("ExternalID", "")).startswith(("confighub:worker", "confighub:serviceaccount")):
         name = (u.get("DisplayName") or name)
     users[u.get("UserID")] = name
 who = lambda i: users.get(i, i or "-")

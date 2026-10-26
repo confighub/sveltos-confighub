@@ -12,7 +12,7 @@ own record in one go:
 
 | Page | What it shows |
 | --- | --- |
-| Workers (`/bridge-workers`) | `devil`, `angel`, `reporter` and `milton`, each its own identity |
+| Service accounts | `chaos-devil`, `chaos-angel`, `chaos-reporter` and `chaos-milton`, each its own identity |
 | Components (`/components?app=chaos-shop`, `chaos-platform`, `chaos-management`) | The base, the class bases and one deployment per cluster. Each shows Live and Synced, its release number, and Degraded while an outage lasts |
 | Rollouts (`/rollouts`) | Every change order: its stages, what it waits for, Complete, and Aborted with the reason. `/rollouts/<order>` shows one order's path |
 | Units (`/units`) | Each unit's revisions, with their change descriptions and diffs |
@@ -33,8 +33,8 @@ baseline, and the record's first, which the handover publishes.
 
 | Claim | How to check |
 | --- | --- |
-| Each agent has its own identity, and none can approve | Workers page. `cub space get chaos-shop-prod-eu -o yaml`: under Permissions, ApproveChildren names only `milton`. Approving also needs Use on the change order (UseChildren on its base Space) |
-| Only you or Milton may approve, never a change's author | `evidence.sh`, Gates: `approval = 1 Approval from you, milton (Worker); authors counted: False` |
+| Each agent has its own identity, and none can approve | Service accounts page, or `cub serviceaccount list`. `cub space get chaos-shop-prod-eu -o yaml`: under Permissions, ApproveChildren names only `chaos-milton`. Approving also needs Use on the change order (UseChildren on its base Space) |
+| Only you or Milton may approve, never a change's author | `evidence.sh`, Gates: `approval = 1 Approval from you, chaos-milton (Service Account); authors counted: False` |
 | A component takes changes only through its workflow | `cub component get chaos-shop -o yaml`: `ChangeWorkflowRequired: true` |
 | The management record can't be published directly | `cub release publish chaos-management` is refused: "requires a ChangeWorkflow" |
 | Live status reaches ConfigHub | Components: each deployment Live and Synced. `cub sveltos status --kube-context kind-chaos-mgmt` |
@@ -66,7 +66,7 @@ baseline, and the record's first, which the handover publishes.
 | A change order can carry an edit its own summary doesn't show | `cub changeorder get --space chaos-shop-base <the cut>` against `cub unit diff --space chaos-shop-prod-eu shop` before its release |
 | Staging ran the cache; prod was OOMKilled | Devil's staging transcript (about 46 MiB under 128Mi). `kubectl get pods -n shop --context kind-chaos-prod-eu`: restarts, last state OOMKilled |
 | The fix makes prod match staging | `evidence.sh`: a ParityCheck Pass by `angel` in each prod Space, "parity with chaos-shop-staging/shop@N passed" |
-| Prod's release now needs the check | `evidence.sh`, Gates: `stage prod releases need approval, parity` and `parity = 1 ParityCheck from angel (Worker); authors counted: True` |
+| Prod's release now needs the check | `evidence.sh`, Gates: `stage prod releases need approval, parity` and `parity = 1 ParityCheck from chaos-angel (Service Account); authors counted: True` |
 | The repeat is refused before release | Devil's transcript: "requires approval ... requires parity". `evidence.sh`: a ParityCheck Fail in each prod Space, naming `limits.memory "96Mi" here and "128Mi" in chaos-shop-staging` |
 
 **Without the agents.** `bash $DEMO/proof/parity-gate-check.sh`, after

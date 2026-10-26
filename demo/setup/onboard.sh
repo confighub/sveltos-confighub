@@ -27,14 +27,14 @@ for a in ${APPROVERS:-$YOU_ID $MILTON_ID}; do approvers+=(--approver "$a"); done
 cd "$out/onboard"
 export KUBECONFIG=$AI_CHAOS_DIR/chaos-mgmt.kubeconfig MGMT_CONTEXT=kind-chaos-mgmt CLUSTER_KUBECONFIGS=$AI_CHAOS_DIR/by-name
 if [ "${1:-}" = --handover ]; then
-  CUB_CONTEXT=chaos-angel bash handover.sh
+  CUB_CONFIG="$AI_CHAOS_DIR/cub/angel" CUB_CONTEXT=chaos-angel bash handover.sh
 else
   log=$AI_CHAOS_DIR/onboard.log run=$out/last-run.log
   # propose: run apply.sh, proposing only. Its whole output goes to the log;
   # the terminal shows its steps, and what waits or failed, as they come.
   propose() {
     : > "$run"
-    if ! CUB_CONTEXT=chaos-angel PROPOSE_ONLY=1 bash apply.sh 2>&1 | tee -a "$log" "$run" |
+    if ! CUB_CONFIG="$AI_CHAOS_DIR/cub/angel" CUB_CONTEXT=chaos-angel PROPOSE_ONLY=1 bash apply.sh 2>&1 | tee -a "$log" "$run" |
       { grep --line-buffered -v "confighub#5794" | grep --line-buffered -E "^== |waits|approve|released|Released|Failed|error|could not" || true; }; then
       tail -n 5 "$run" >&2; echo "apply.sh stopped; its whole output is in $log" >&2; exit 1
     fi
@@ -51,7 +51,7 @@ else
   if [ -n "$baselines" ]; then
     { echo "== baselines (confighub#5794)"
       for s in $baselines; do
-        CUB_CONTEXT=chaos-angel cub release publish "$s" --annotation sveltos.confighub.com/first-release=baseline --quiet ||
+        CUB_CONFIG="$AI_CHAOS_DIR/cub/angel" CUB_CONTEXT=chaos-angel cub release publish "$s" --annotation sveltos.confighub.com/first-release=baseline --quiet ||
           { echo "$s: its baseline was not published; run onboard.sh again (the log is $log)"; exit 1; }
         echo "$s: first release published at head, as the onboarding baseline"
       done; } 2>&1 | tee -a "$log"

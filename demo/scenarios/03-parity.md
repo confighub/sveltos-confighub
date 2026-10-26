@@ -64,7 +64,7 @@ versioned, so you make this one, never an agent. Only Angel's ParityCheck
 counts, so nobody can record a pass by hand:
 
 ```bash
-ANGEL_ID=$(cub worker get --space chaos-agents angel -o jq=.BridgeWorker.UserID | tr -d '"')
+ANGEL_ID=$(cub serviceaccount get chaos-angel -o jq=.ServiceAccount.UserID | tr -d '"')
 cub changeworkflow update rollout --space chaos-shop-base \
   --attestation-prerequisite approval --attestation-prerequisite parity \
   --attestation-prerequisite-type parity=ParityCheck --attestation-prerequisite-count parity=1 \
