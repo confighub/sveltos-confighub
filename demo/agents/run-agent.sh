@@ -61,14 +61,14 @@ case $agent in
     # Secrets hold the delivery account's token.
     # Every kubectl command names its cluster, and it may not change its
     # kubeconfig to make one the default.
-    denied=("${never[@]}" "Bash(kubectl config:*)"
+    denied=("${never[@]}" "Bash(kubectl config:*)" "Bash(kubectl * config)" "Bash(kubectl * config *)"
             "Bash(kubectl *kind-chaos-mgmt*secret*)" "Bash(kubectl *secret*kind-chaos-mgmt*)"
             "Bash(kubectl *kind-chaos-mgmt*Secret*)" "Bash(kubectl *Secret*kind-chaos-mgmt*)"
             "Bash(kubectl *kind-chaos-mgmt*SECRET*)" "Bash(kubectl *SECRET*kind-chaos-mgmt*)") ;;
   angel)
     tools=Bash,Read,Write,Edit
     allowed=("Bash(kubectl get:*)" "Bash(kubectl describe:*)" "Bash(kubectl logs:*)" "Bash(cub:*)" "Bash(date:*)" "Read(./**)" "Edit(./**)")
-    denied=("${never[@]}" "${secrets[@]}" "Bash(kubectl * -f *)" "Bash(kubectl * -f=*)" "Bash(kubectl *--filename*)") ;;
+    denied=("${never[@]}" "${secrets[@]}" "Bash(kubectl * -f*)" "Bash(kubectl *--filename*)" "Bash(kubectl * -k*)" "Bash(kubectl *--kustomize*)") ;;
   milton)
     # Milton reads and approves; it changes nothing else. In the sandbox it may
     # apply a policy and impersonate identities, to test what it approves.
@@ -84,7 +84,8 @@ case $agent in
              "Bash(bash $DEMO/proof/token-subject.sh:*)" "Bash(date:*)")
     denied=("Bash(cub attestation create:*)" "Bash(cub attestation revoke:*)" "Bash(cub worker:*)"
             "Bash(cub auth:*)" "Bash(cub context:*)" "Bash(cub serviceaccount:*)"
-            "${secrets[@]}" "Bash(kubectl get * -f *)" "Bash(kubectl describe * -f *)"
+            "${secrets[@]}" "Bash(kubectl get -f*)" "Bash(kubectl get * -f*)" "Bash(kubectl describe -f*)" "Bash(kubectl describe * -f*)"
+            "Bash(kubectl get*--filename*)" "Bash(kubectl describe*--filename*)" "Bash(kubectl get* -k*)" "Bash(kubectl describe* -k*)"
             "Bash(kubectl *--kubeconfig*--kubeconfig*)") ;;
   *) echo "agent is devil, angel or milton" >&2; exit 2 ;;
 esac
