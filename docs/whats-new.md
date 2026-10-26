@@ -47,8 +47,8 @@ workers (confighubai/confighub#5980), and `cub` marks them deprecated.
   - The Secret is written with `kubectl create`, or `kubectl replace` when it
     exists, never `kubectl apply`, which keeps a copy of what it applied,
     token included, in the Secret's `last-applied-configuration`
-    annotation. `replace` also drops the copy an earlier `apply.sh` left
-    there, which held the worker's secret.
+    annotation. Every run also drops the copy an earlier `apply.sh` left
+    there, whether it keeps the token or replaces it.
   - If ConfigHub cannot be asked whether the held token is live, the Secret
     keeps it.
   - Both shapes of `cub serviceaccount token list` are read: cub v0.9.0 and
@@ -73,9 +73,11 @@ has its first release at head, the onboarding baseline
 (confighubai/confighub#5794), the change order made before it marks none of
 its units, and ConfigHub refuses to publish the order there ("the tag marks
 no revision of a unit that has been released"). `apply.sh` stopped on that,
-though it says to run it again after the baseline. It now counts such a
-variant as released when its newest release is the baseline, and stops as
-before for any other cause.
+though it says to run it again after the baseline. It now counts a variant
+as released when it has a release and the order lists it among the Spaces it
+has released, which is ConfigHub's own record that the order has nothing for
+it. That also covers a released variant that a later order leaves unchanged.
+It stops as before for any other cause.
 
 ## 0.14.1, 2026-10-26
 
