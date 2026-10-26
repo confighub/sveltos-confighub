@@ -27,7 +27,7 @@ change orders the agents open. Expect the same shape: every approval by you or
 Milton and none by Devil or Angel, every release by an agent with its approval
 recorded, and each outage's fix and prevention released. The releases
 without an approval are onboarding's, before the gates go on: each variant's
-first, its baseline, and the record's first, which the handover publishes.
+baseline, and the record's first, which the handover publishes.
 
 ## Setup
 

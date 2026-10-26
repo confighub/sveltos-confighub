@@ -41,8 +41,8 @@ shop: every variant in this plan is released
 ```
 
 A baseline skips the approval for that one release. What it releases is what
-the cluster already runs, and the handover checks that before it changes
-anything. See it with `cub release list --space chaos-shop-staging`.
+the cluster already runs: what the profiles you applied hold. See it with
+`cub release list --space chaos-shop-staging`.
 
 Then hand delivery over from the profiles you applied to ConfigHub's releases.
 Nothing is reinstalled; the pods keep running.
@@ -51,9 +51,10 @@ Nothing is reinstalled; the pods keep running.
 bash $DEMO/setup/onboard.sh --handover
 ```
 
-It compares what ConfigHub releases with what each cluster runs, steps your
-profiles aside, and applies the delivery profiles. Each reports Provisioned
-within a minute: `kubectl get clustersummaries -A`.
+It checks that your profiles still hold what was onboarded, and that for each
+chart ConfigHub releases what Helm installed on the cluster. Then it steps your
+profiles aside and applies the delivery profiles. Each reports Provisioned
+within a minute: `kubectl --context kind-chaos-mgmt get clustersummaries -A`.
 
 Then the agents' permissions, the gates and live status:
 

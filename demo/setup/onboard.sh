@@ -29,23 +29,33 @@ export KUBECONFIG=$AI_CHAOS_DIR/chaos-mgmt.kubeconfig MGMT_CONTEXT=kind-chaos-mg
 if [ "${1:-}" = --handover ]; then
   CUB_CONTEXT=chaos-angel bash handover.sh
 else
+  log=$AI_CHAOS_DIR/onboard.log run=$out/last-run.log
+  # propose: run apply.sh, proposing only. Its whole output goes to the log;
+  # the terminal shows its steps, and what waits or failed, as they come.
   propose() {
-    CUB_CONTEXT=chaos-angel PROPOSE_ONLY=1 bash apply.sh 2>&1 | tee -a "$AI_CHAOS_DIR/onboard.log" > "$out/last-run.log" || true
-    grep -v "confighub#5794" "$out/last-run.log" | grep -E "^== |waits|approve|released|Released|Failed|error" || true
+    : > "$run"
+    if ! CUB_CONTEXT=chaos-angel PROPOSE_ONLY=1 bash apply.sh 2>&1 | tee -a "$log" "$run" |
+      { grep --line-buffered -v "confighub#5794" | grep --line-buffered -E "^== |waits|approve|released|Released|Failed|error|could not" || true; }; then
+      echo "apply.sh stopped; its whole output is in $log" >&2; exit 1
+    fi
   }
+  # The variants apply.sh says ConfigHub refused a first release.
+  refused() { sed -n 's|^  cub release publish \([^ ]*\) --annotation sveltos.confighub.com/first-release=baseline$|\1|p' "$run"; }
   propose
   # Until ConfigHub fixes confighub#5794, it refuses each variant's first release
   # through the onboarding change order. That first release is then published at
-  # head, as the onboarding baseline: what the clusters run today, which the
-  # handover checks before it changes anything. The annotation records it.
-  # Every release after it goes through a change order and an approval.
-  baselines=$(sed -n 's|^  cub release publish \([^ ]*\) --annotation sveltos.confighub.com/first-release=baseline$|\1|p' "$out/last-run.log")
+  # head, as the onboarding baseline: what the cluster runs today, from the
+  # profiles you applied. The annotation records it. Every release after it
+  # goes through a change order and an approval.
+  baselines=$(refused)
   if [ -n "$baselines" ]; then
-    echo "== baselines (confighub#5794)"
-    for s in $baselines; do
-      CUB_CONTEXT=chaos-angel cub release publish "$s" --annotation sveltos.confighub.com/first-release=baseline --quiet
-      echo "$s: first release published at head, as the onboarding baseline"
-    done
+    { echo "== baselines (confighub#5794)"
+      for s in $baselines; do
+        CUB_CONTEXT=chaos-angel cub release publish "$s" --annotation sveltos.confighub.com/first-release=baseline --quiet
+        echo "$s: first release published at head, as the onboarding baseline"
+      done; } 2>&1 | tee -a "$log"
     propose
+    left=$(refused)
+    [ -z "$left" ] || { echo "Still without a release: $(echo $left). Run onboard.sh again; the whole output is in $log" >&2; exit 1; }
   fi
 fi

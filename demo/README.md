@@ -159,8 +159,8 @@ workflows, and starting live status.
 ## Approvals: by hand or by Milton
 
 Every release waits for one approval, from you or Milton, and never from the
-change's author. The exceptions are onboarding's, before the gates go on: each
-variant's first release, its baseline (until ConfigHub fixes
+change's author. The exceptions are onboarding's first releases, before the
+gates go on: each variant's baseline (until ConfigHub fixes
 confighubai/confighub#5794), and the record's first, which the handover
 publishes. Each approval step offers both:
 
