@@ -8,8 +8,8 @@
 #   bash demo/standup.sh            stand it up
 #   bash demo/standup.sh --check    only check what it needs
 #
-# Onboarding comes next and is not done here, because it waits for approvals:
-# scenarios/00-onboard.md. demo/teardown.sh takes everything down again.
+# Onboarding comes next, as a step of its own: scenarios/00-onboard.md.
+# demo/teardown.sh takes everything down again.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 case "${1:-}" in
