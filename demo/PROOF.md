@@ -25,9 +25,9 @@ is `evidence.sh`'s output from our verification run, made from the demo's
 README with Milton approving. Yours will differ in names, IDs, times and how many
 change orders the agents open. Expect the same shape: every approval by you or
 Milton and none by Devil or Angel, every release by an agent with its approval
-recorded, and each outage's fix and prevention released. The one release
-without an approval is the record's first, which onboarding's handover
-publishes before the gates go on.
+recorded, and each outage's fix and prevention released. The releases
+without an approval are onboarding's, before the gates go on: each variant's
+baseline, and the record's first, which the handover publishes.
 
 ## Setup
 

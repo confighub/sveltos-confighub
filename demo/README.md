@@ -152,15 +152,17 @@ bash $DEMO/setup/identities.sh              # devil, angel, reporter, milton; wr
 ```
 
 Then onboard the fleet into ConfigHub, with a script signed in as Angel doing
-the work and you or Milton approving: [scenarios/00-onboard.md](scenarios/00-onboard.md).
+the work: [scenarios/00-onboard.md](scenarios/00-onboard.md).
 Onboarding ends by granting the agents their permissions, gating the
 workflows, and starting live status.
 
 ## Approvals: by hand or by Milton
 
 Every release waits for one approval, from you or Milton, and never from the
-change's author. The one exception is onboarding's handover: it publishes the
-record's first release before the gates go on. Each approval step offers both:
+change's author. The exceptions are onboarding's first releases, before the
+gates go on: each variant's baseline (until ConfigHub fixes
+confighubai/confighub#5794), and the record's first, which the handover
+publishes. Each approval step offers both:
 
 ```bash
 bash $DEMO/approve.sh me     chaos-shop-base/<order> staging "<why, in your words>"

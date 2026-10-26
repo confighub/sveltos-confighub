@@ -3,8 +3,7 @@
 [The demo](../README.md) · Onboarding · next: [Outage 1](01-rotation.md)
 
 `setup/onboard.sh` onboards the running fleet with `cub sveltos`, signed in as
-Angel. It is a script, not the AI agent. The only agent here is Milton, if it
-approves for you.
+Angel. It is a script, not the AI agent.
 It creates:
 - **The shop and the platform:** one variant per cluster each, cloned from a
   class base (staging or prod), cloned from a base.
@@ -12,82 +11,52 @@ It creates:
   ConfigHub.
 - **Health:** continuous health checks on every cluster.
 
-Every release waits for an approval from you or Milton, except the record's
-first: the handover publishes it, before the gates go on.
+The first releases are what the clusters already run: each variant's first
+release is its onboarding baseline, and the handover publishes the record's
+first release. Every release after those waits for an approval from you or
+Milton.
 
 ```bash
 source demo/env.sh
 bash $DEMO/setup/onboard.sh
 ```
 
-It runs `cub sveltos apply`, which writes `apply.sh`, then runs `apply.sh`, and
-stops at the first approval.
+It runs `cub sveltos apply`, which writes `apply.sh`, then runs `apply.sh`.
 `apply.sh`'s first step reports that facts could not be collected from the management cluster
 (`mgmt/mgmt: not collected`). That is expected on kind, where the cluster's
 in-cluster address isn't reachable from your machine, and nothing depends on
 it.
 
-It stops at staging. Give Devil, the reporter and Milton their permissions on
-the Spaces Angel just created; Milton cannot review what it cannot read:
+**Why a baseline.** ConfigHub refuses a variant's first release through the
+onboarding change order: the order counts a variant just cloned from its base
+as released already ([confighubai/confighub#5794](https://github.com/confighubai/confighub/issues/5794),
+open). `apply.sh` names each variant it refused. `onboard.sh` then publishes
+each one's first release at head, annotated
+`sveltos.confighub.com/first-release=baseline`, and runs `apply.sh` once more,
+which ends with:
 
-```bash
-bash $DEMO/setup/grant-agents.sh
+```
+platform: every variant in this plan is released
+shop: every variant in this plan is released
 ```
 
-`onboard.sh` names two change orders, one per component: `chaos-shop-base/onboard-<id>` and
-`chaos-platform-base/onboard-<id>`. See them with:
+A baseline skips the approval for that one release. What it releases is what
+the cluster already runs: what the profiles you applied hold. See it with
+`cub release list --space chaos-shop-staging`.
 
-```bash
-cub changeorder list --space chaos-shop-base
-cub changeorder list --space chaos-platform-base
-```
-
-Approve staging for both, by hand or by Milton. There is no agent request in
-onboarding, so Milton is given one in `REQUEST`:
-
-```bash
-bash $DEMO/approve.sh me chaos-shop-base/onboard-<id> staging "first release of the shop to staging"
-bash $DEMO/approve.sh me chaos-platform-base/onboard-<id> staging "first release of the platform to staging"
-# or
-export REQUEST="Onboarding: the first release of this component to staging, made from the Sveltos profiles the fleet runs today. Nothing should change on the clusters."
-bash $DEMO/approve.sh milton chaos-shop-base/onboard-<id> staging 00-onboard
-bash $DEMO/approve.sh milton chaos-platform-base/onboard-<id> staging 00-onboard
-```
-
-Each Milton review takes two to four minutes and ends with "Approved", or
-"Not approved" and why. Then run `onboard.sh` again: it releases staging and
-stops at prod.
-
-```bash
-bash $DEMO/setup/onboard.sh
-```
-
-Approve prod for both:
-
-```bash
-bash $DEMO/approve.sh me chaos-shop-base/onboard-<id> prod "first release of the shop to prod; staging ran it"
-bash $DEMO/approve.sh me chaos-platform-base/onboard-<id> prod "first release of the platform to prod; staging ran it"
-# or
-export REQUEST="Onboarding: the first release of this component to prod, made from the Sveltos profiles the fleet runs today; staging has run it. Nothing should change on the clusters."
-bash $DEMO/approve.sh milton chaos-shop-base/onboard-<id> prod 00-onboard
-bash $DEMO/approve.sh milton chaos-platform-base/onboard-<id> prod 00-onboard
-unset REQUEST
-```
-
-Run `onboard.sh` once more: it releases prod. Then hand delivery over from the
-profiles you applied to ConfigHub's releases. Nothing is reinstalled; the pods
-keep running.
-
-```bash
-bash $DEMO/setup/onboard.sh
-```
+Then hand delivery over from the profiles you applied to ConfigHub's releases.
+Nothing is reinstalled; the pods keep running.
 
 ```bash
 bash $DEMO/setup/onboard.sh --handover
 ```
 
-Then the permissions again (the handover adds Spaces), the gates and live
-status:
+It checks that your profiles still hold what was onboarded, and that for each
+chart ConfigHub releases what Helm installed on the cluster. Then it steps your
+profiles aside and applies the delivery profiles. Each reports Provisioned
+within a minute: `kubectl --context kind-chaos-mgmt get clustersummaries -A`.
+
+Then the agents' permissions, the gates and live status:
 
 ```bash
 bash $DEMO/setup/grant-agents.sh     # Devil, the reporter and Milton on every chaos-* Space
