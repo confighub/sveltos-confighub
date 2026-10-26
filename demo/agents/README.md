@@ -23,9 +23,9 @@ page is that contract.
 
 | Agent | May run | Never |
 | --- | --- | --- |
-| Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below |
-| Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files. It works in its empty directory, but nothing confines it there | the shared list below |
-| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`, `cub --context`, `cub --debug` |
+| Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below; `kubectl` on Secrets of the management cluster, where the delivery account's token is |
+| Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files, in its own directory only | the shared list below; `kubectl` on Secrets |
+| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`; `kubectl` on Secrets; a second `--kubeconfig` |
 
 The shared list Devil and Angel may never run:
 - `cub variant approve`, and `cub attestation create` or `revoke`;
@@ -41,7 +41,11 @@ And no agent, Milton included, may:
 - run a command that sets `CUB_CONTEXT` or `CUB_CONFIG`;
 - read, with its Read tool or with `cat` and the like, your `cub`
   configuration, `$AI_CHAOS_DIR/keys`, `$AI_CHAOS_DIR/cub` or
-  `$AI_CHAOS_DIR/guards`. These rules also refuse Edit and Write there.
+  `$AI_CHAOS_DIR/guards`. These rules also refuse Edit and Write there;
+- write its own `.claude` settings.
+
+Each run has its own kubeconfig, with no current context, so every `kubectl`
+command names its cluster.
 
 A refused command is refused, and the agent is told so. It cannot ask for
 permission (`--permission-mode dontAsk`). `run-agent.sh` holds the exact lists.
@@ -56,20 +60,32 @@ Matching text is not a boundary on its own: a program can still open any file
 its user can. So there are two more lines:
 - **The sandbox.** Every command an agent runs is held in Claude Code's
   sandbox (macOS Seatbelt), set per run in `$AI_CHAOS_DIR/guards/<agent>.json`.
-  It cannot read your `cub` configuration, the keys or the other agents'
-  `cub` configurations, whichever program asks (`kubectl --from-file`
-  included). It writes only its own directory and its own `cub`
-  configuration. It reaches only ConfigHub and the kind clusters on this
-  machine, and a command cannot leave the sandbox. One opening is needed:
-  `cub`, a Go program, checks TLS through macOS's trust service, which the
-  sandbox reaches only with `enableWeakerNetworkIsolation`.
+  It reads nothing in your home folder but what the agent's tools need:
+  `cub`, the policy sandbox's kubeconfig, Python's packages and, for Milton,
+  `proof/token-subject.sh`. So not your `cub` configuration, the keys, the
+  other agents' configurations, your notes or other credentials, whichever
+  program asks (`kubectl --from-file` included). It writes only its own
+  directory, which holds a `cub` configuration made for the run and goes when
+  the run ends. It reaches ConfigHub and local ports (the kind clusters), and
+  a command cannot leave the sandbox. One opening is needed: `cub`, a Go
+  program, checks TLS through macOS's trust service, which the sandbox
+  reaches only with `enableWeakerNetworkIsolation`.
 - **ConfigHub.** It refuses an approval from anyone the workflow does not
   name. `setup/gates.sh` and the rollouts name only you and Milton, and never
   a change's author. With no other identity in reach, Devil and Angel cannot
   approve.
 
-What is left: an agent can read its own sign-in, which lasts a day, and a
-command can print it. Before you publish the transcripts,
+What is left:
+- an agent can read its own sign-in, which lasts a day, and a command can
+  print it;
+- Devil can read the workload clusters' Secrets, and a pod it starts can
+  reach anywhere;
+- the rules on Secrets match command text, so a command that lists Secrets
+  without saying so could still print the delivery account's token. That
+  account can only read the Targets' releases. Rotate its token after a run:
+  `ROTATE_TOKEN=1` with the onboarding's `apply.sh`.
+
+Before you publish the transcripts,
 `bash $DEMO/proof/scan-runs.sh` names every line that looks like a
 credential.
 
@@ -127,9 +143,9 @@ agent fails, and on each run's file being named `<agent>-<UTC time>.jsonl` in
    need more turns, and may miss what Milton caught.
 
 You can also be any agent yourself. Read the prompt and the agent's `.md`, and
-run the commands in a shell with `CUB_CONTEXT=chaos-<agent>` and
-`KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`. Approvals by hand are
-`approve.sh me`.
+run the commands in a shell with `CUB_CONFIG=$AI_CHAOS_DIR/cub/<agent>`,
+`CUB_CONTEXT=chaos-<agent>` and `KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`.
+Approvals by hand are `approve.sh me`.
 
 ## The files here
 

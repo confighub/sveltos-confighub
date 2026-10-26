@@ -16,6 +16,10 @@ patterns = {
     "a private JWK": re.compile(r'\\?"d\\?"\s*:\s*\\?"[A-Za-z0-9_-]{40,}'),
     "a PEM private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     "a kubeconfig client key": re.compile(r"client-key-data\\?\"?\s*:\s*\\?\"?[A-Za-z0-9+/=]{40,}"),
+    # The same, base64-encoded, as a Secret's data prints them.
+    "a bearer token, base64 (a Secret's data)": re.compile(r"ZXlK[A-Za-z0-9+/]{40,}"),
+    "a PEM private key, base64": re.compile(r"LS0tLS1CRUdJTi[A-Za-z0-9+/]{0,12}(?:UFJJVkFURS|BSSVZBVEU|QUklWQVRF)"),
+    "a Secret's password field": re.compile(r'\bpassword\\?"?\s*:\s*\\?"?[A-Za-z0-9+/=]{20,}'),
 }
 found = 0
 for root, _, files in os.walk(sys.argv[1]):

@@ -13,10 +13,11 @@
 #
 # Each agent's cub configuration is the directory $AI_CHAOS_DIR/cub/<agent>
 # (CUB_CONFIG), holding one context, chaos-<agent>, and a link to your cub
-# plugins. Your own cub configuration is not touched, and an agent's has no
-# other identity in it to switch to. ConfigHub keeps only the public half of
-# each key; the private half is in $AI_CHAOS_DIR/keys, and agents/run-agent.sh
-# keeps every agent from reading it. teardown.sh --confighub deletes both with
+# plugins. The scripts that act as an agent use it (setup/onboard.sh,
+# setup/reporter.sh, proof/parity-gate-check.sh); an agent's own run gets a
+# new one each time (agents/run-agent.sh), and cannot read these. Your own cub
+# configuration is not touched. ConfigHub keeps only the public half of each
+# key; the private half is in $AI_CHAOS_DIR/keys, which no agent can read. teardown.sh --confighub deletes both with
 # the service accounts. A service account's role cannot be above yours; the
 # demo needs you to be an admin. Safe to run again: a key that no longer signs
 # in is replaced.
@@ -33,11 +34,14 @@ for a in devil angel reporter milton; do
   cub serviceaccount create "chaos-$a" --org-role "$role" --label Purpose=ai-chaos --allow-exists --quiet
   cfg="$AI_CHAOS_DIR/cub/$a"
   mkdir -p "$cfg"
+  if [ -d "$cfg/plugins" ] && [ ! -L "$cfg/plugins" ]; then echo "$cfg/plugins should link to your plugins, but is a directory" >&2; exit 1; fi
   ln -sfn "$plugins" "$cfg/plugins"
   # CUB_CONTEXT is set as well as CUB_CONFIG: cub refuses a CUB_CONTEXT, set
   # in your shell, that its configuration does not have.
   as() { CUB_CONFIG="$cfg" CUB_CONTEXT="chaos-$a" cub "$@"; }
-  CUB_CONFIG="$cfg" CUB_CONTEXT= cub context create "chaos-$a" --server="$server" >/dev/null 2>&1 || true
+  if ! CUB_CONFIG="$cfg" CUB_CONTEXT= cub context list -o name 2>/dev/null | grep -qx "chaos-$a"; then
+    CUB_CONFIG="$cfg" CUB_CONTEXT= cub context create "chaos-$a" --server="$server" >/dev/null
+  fi
   key="$keys/chaos-$a.jwk"
   if ! { [ -s "$key" ] && as auth login --private-key="$key" >/dev/null 2>&1; }; then
     mv -f "$key" "$key.old" 2>/dev/null || true
@@ -46,10 +50,17 @@ for a in devil angel reporter milton; do
     rm -f "$key.old"
     # Any key it replaces is still registered: delete every other key of this
     # account, matched by its public half, so only the one in $key signs in.
-    x=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["x"])' "$key")
-    for kid in $(cub serviceaccount key list "chaos-$a" -o "jq=[.[] | (.UserKey // .) | select(.PublicJWK.x != \"$x\") | .Kid] | join(\" \")" | tr -d '"'); do
-      cub serviceaccount key delete "chaos-$a" "$kid" >/dev/null && echo "chaos-$a: deleted the key it replaced, $kid"
-    done
+    # (A second machine running the demo with these accounts loses its key.)
+    x=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("x", ""))' "$key")
+    mine=$(cub serviceaccount key list "chaos-$a" -o "jq=[.[] | (.UserKey // .) | select(.PublicJWK.x == \"$x\")] | length")
+    if [ -z "$x" ] || [ "$mine" != 1 ]; then
+      echo "chaos-$a: the new key is not listed once, so no other key was deleted; see cub serviceaccount key list chaos-$a" >&2
+    else
+      for kid in $(cub serviceaccount key list "chaos-$a" -o "jq=[.[] | (.UserKey // .) | select(.PublicJWK.x != \"$x\") | .Kid] | join(\" \")" | tr -d '"'); do
+        if cub serviceaccount key delete "chaos-$a" "$kid" >/dev/null; then echo "chaos-$a: deleted the key it replaced, $kid"
+        else echo "chaos-$a: could not delete the key it replaced, $kid" >&2; fi
+      done
+    fi
   fi
   echo "chaos-$a: signed in as $(as auth status 2>/dev/null | awk '/^User/ {print $2}')"
 done

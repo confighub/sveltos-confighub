@@ -14,7 +14,7 @@ mkdir -p "$AI_CHAOS_DIR" "$CHAOS_RUNS"
 # One kubeconfig with a context per cluster (kind-chaos-mgmt, kind-chaos-staging, ...).
 _demo_kc=$(find "$AI_CHAOS_DIR" -maxdepth 1 -name 'chaos-*.kubeconfig' 2>/dev/null | sort | paste -sd: -)
 if [ -n "$_demo_kc" ]; then
-  KUBECONFIG=$_demo_kc kubectl config view --flatten > "$AI_CHAOS_DIR/fleet.kubeconfig"
+  (umask 077; KUBECONFIG=$_demo_kc kubectl config view --flatten > "$AI_CHAOS_DIR/fleet.kubeconfig")
   export KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig
 fi
 unset _demo_kc

@@ -102,10 +102,11 @@ needs it.
 
 Each agent signs in to ConfigHub as its own service account, with a key, in
 a `cub` configuration of its own, `$AI_CHAOS_DIR/cub/<agent>`
-(`setup/identities.sh`). So an agent has no other identity to switch to,
-yours included. Each run is held in Claude Code's sandbox, which keeps every
-command it runs from reading the keys, your `cub` configuration and the other
-agents' (`agents/run-agent.sh`). `teardown.sh --confighub` deletes the keys
+(`setup/identities.sh`), and each run gets one made for it. So an agent has no
+other identity to switch to, yours included. Each run is held in Claude
+Code's sandbox, which keeps every command it runs from reading your home
+folder, beyond what its tools need: not the keys, your `cub` configuration or
+the other agents' (`agents/run-agent.sh`). `teardown.sh --confighub` deletes the keys
 with the accounts. The recorded runs, on 3 and 4 October 2026, used workers,
 which ConfigHub is removing.
 
@@ -207,13 +208,15 @@ Set them on the command line, without the order's Space, for example
 its change orders, and so does `cub changeorder list --space <base space>`.
 
 Each run:
-- **Identity:** acts as that agent's ConfigHub identity, from its own `cub`
-  configuration, signed in afresh for the run.
+- **Identity:** acts as that agent's ConfigHub identity, from a `cub`
+  configuration made for the run and signed in afresh with its key.
 - **Isolation:** starts in an empty directory, outside any repository, with
   nothing on stdin and no MCP servers or connectors. Every command it runs is
-  held in Claude Code's sandbox: it cannot read the keys or another identity's
-  sign-in, it writes only its directory and its own `cub` configuration, and
-  it reaches only ConfigHub and the kind clusters.
+  held in Claude Code's sandbox: it reads nothing in your home folder but what
+  its tools need (so not the keys, your `cub` configuration or your notes), it
+  writes only its directory, which goes when the run ends, and it reaches
+  ConfigHub and local ports (the kind clusters). Its own kubeconfig has no
+  current context, so every command names its cluster.
 - **Tools:** may use only the tools its role allows (`agents/run-agent.sh`):
   - Devil changes things with kubectl and cub;
   - Angel reads the clusters and works through ConfigHub;
