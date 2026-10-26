@@ -9,8 +9,8 @@ Each time, the angel proposes two changes, and neither takes effect
 until it is approved: a fix for the configuration that caused the
 outage, and a rule that stops the same failure happening again. In
 this demo we have three outages: in both 1 and 2 that new rule is an 
-admission policy; in outage 3 it is a release gate, which the approver 
-adds.
+admission policy; in outage 3 it is a gate that ConfigHub itself checks on
+every change, which the approver turns on.
 
 By using ConfigHub we get the advantage of a single operational database
 for configuration and facts.   So the demo is a simple set of compliance 
@@ -23,7 +23,7 @@ engine matters differently to each:
 | Job | In this demo | With Kyverno or OPA Gatekeeper instead |
 | --- | --- | --- |
 | **Enforce** the rule on the clusters | Kubernetes' own admission control: ValidatingAdmissionPolicy, with rules written in CEL. Nothing extra runs on the clusters | Works the same way. A Kyverno policy or a Gatekeeper constraint is a unit like any other: ConfigHub holds it and releases it on approval, and Sveltos delivers it. Install the engine on the clusters first, as the demo installs Reloader |
-| **Check** a change in ConfigHub before it is released | Not used: the demo's gates are approvals, and outage 3's parity check | Kyverno: yes, through a worker running `vet-kyverno-server` (see [Check every change against your policies](../docs/user/policy-checks.md)). OPA: no ready-made check today. ConfigHub's own checks run CEL (`vet-cel`) or Starlark (`vet-starlark`) |
+| **Check** a change in ConfigHub before it is released | Outage 3's repave gate: ConfigHub's own `vet-starlark` and `where-filter` functions, run as triggers on every change | Kyverno: yes, through a worker running `vet-kyverno-server` (see [Check every change against your policies](../docs/user/policy-checks.md)). OPA: no ready-made check today. ConfigHub's own checks run CEL (`vet-cel`) or Starlark (`vet-starlark`) |
 | **Preview** a new policy's effect before it ships | `cub sveltos impact`: server-side dry runs in a sandbox cluster that runs nothing else | Not yet. The preview reads ValidatingAdmissionPolicy verdicts only, and Kyverno and Gatekeeper run as workloads, which the sandbox must not |
 
 So the demo does not bring an engine of its own: it uses the one built into
@@ -49,7 +49,7 @@ NOTE: In this demo version, kind clusters are 'standing in' for production.
 | --- | --- | --- |
 | [1. A rotation nobody picked up](scenarios/01-rotation.md) | A Secret rotated outside ConfigHub; `web` keeps the old token on every cluster | Admission policy: a workload that takes a Secret from its environment must say how it picks up a rotation |
 | [2. Half the fleet at once](scenarios/02-blast-radius.md) | A ClusterProfile applied by hand blocks the shop on the two `region=us` clusters | Admission policy on the management cluster: profiles come only from the record |
-| [3. Staging said yes, prod said no](scenarios/03-parity.md) | A prod-only memory limit, then a cache that passes staging, so prod is OOMKilled | Prod's release requires a parity check; differences from staging must be declared |
+| [3. The nightly repave](scenarios/03-repave.md) | The prod clusters, rebuilt from nothing overnight, come back without the shop: Sveltos delivers nothing, and the shop's hand-made token is gone | A gate ConfigHub checks on every change: what a workload uses, the release holds or makes. The repave job asks Sveltos to deliver again |
 
 [PROOF.md](PROOF.md) lists each claim and where to check it, in the CLI and
 the web UI. We ran it twice, and [diary/](diary/README.md) tells each run as it
@@ -57,6 +57,11 @@ happened, with screenshots and the agents' own commands:
 - [the first run](diary/first-run.md), with a person approving;
 - [the verification run](diary/verification-run.md), made from this README with
   Milton approving everything. There Milton refused the change behind outage 3.
+
+Both runs had an earlier outage 3, "staging said yes, prod said no": a
+prod-only memory cut. On ConfigHub v0.9.5 a change made in prod alone no longer
+goes through the rollout by itself, so the repave replaced it. Its scenario is
+in this directory's history.
 
 [recording/](recording/README.md) has the first run's transcripts, and
 ConfigHub's record of both runs.
@@ -71,7 +76,8 @@ ConfigHub's record of both runs.
 | **Change order** | One named change, followed through a workflow. Written `<base Space>/<name>`, for example `chaos-shop-base/web-reload-on-token-rotation` |
 | **Workflow, stage** | The path a change order takes: `bases`, then `staging`, then `prod`. Each stage may need approvals before its release |
 | **Release** | What ConfigHub publishes for a variant, and what Sveltos fetches and applies to that cluster |
-| **Attestation** | A recorded verdict on a change: an Approval by you or Milton, or a ParityCheck by Angel |
+| **Attestation** | A recorded verdict on a change: an Approval by you or Milton |
+| **Trigger** | A function ConfigHub runs on every change to a unit. A validating one that fails blocks the unit's release |
 | **The record** | The management cluster's Space, `chaos-management`. Its releases deliver every Sveltos delivery profile, so profiles come from ConfigHub, not by hand |
 | **Guard** | A note on a field of a unit. A guard `departure=<why>` declares that prod may differ from staging there |
 | **Live status** | What each cluster reports, written into ConfigHub every 15 seconds: Synced or not, Healthy or Degraded. The web UI shows Healthy as Live |
@@ -184,7 +190,7 @@ bash $DEMO/approve.sh milton chaos-shop-base/<order> staging <run-name> [request
 
 `me` records your approval with your note. `milton` has Milton review the
 order against what the requester wrote in that run. The requester is `angel`
-unless you name another; outage 3 names `devil`. Milton reads:
+unless you name another. Milton reads:
 - the change order;
 - every Space's diff, head against last release;
 - the evidence the request cites.
@@ -194,9 +200,9 @@ only one of you, set `APPROVERS=$YOU_ID` or `APPROVERS=$MILTON_ID` before
 running `setup/onboard.sh` and `setup/gates.sh`.
 
 Milton is meant to catch things, and it may. In our verification run it
-refused Devil's prod-only memory cut in outage 3: staging never ran it, and
-nothing showed it was safe. To stage the outage anyway, approve that step by
-hand.
+refused Devil's prod-only memory cut, that run's outage 3: staging never ran
+it, and nothing showed it was safe. To stage an outage anyway, approve that
+step by hand.
 
 ## Run the outages
 
@@ -249,10 +255,9 @@ that, `node $DEMO/setup/kind-fleet.mjs --refresh` renews them.
 
 **Check the kit itself.** `bash demo/verify.sh` checks offline that every
 script parses, every prompt is used by a step, and every `${VARIABLE}` is
-explained where it is used. After onboarding, `bash $DEMO/proof/parity-gate-check.sh`
-checks outage 3's prevention against your ConfigHub without any agent. It takes
-off again any gate it puts on, so outage 3 can still be staged: see
-[PROOF.md](PROOF.md). The plugin's own tests are `go test ./...` at the
+explained where it is used. After onboarding, `bash $DEMO/proof/repave-gate-check.sh`
+checks outage 3's prevention, the repave gate, against your ConfigHub without
+any agent, in a Space of its own: see [PROOF.md](PROOF.md). The plugin's own tests are `go test ./...` at the
 repository root.
 
 ## Tear it down

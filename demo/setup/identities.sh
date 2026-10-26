@@ -14,7 +14,7 @@
 # Each agent's cub configuration is the directory $AI_CHAOS_DIR/cub/<agent>
 # (CUB_CONFIG), holding one context, chaos-<agent>, and a link to your cub
 # plugins. The scripts that act as an agent use it (setup/onboard.sh,
-# setup/reporter.sh, proof/parity-gate-check.sh); an agent's own run gets a
+# setup/reporter.sh); an agent's own run gets a
 # new one each time (agents/run-agent.sh), and cannot read these. Your own cub
 # configuration is not touched. ConfigHub keeps only the public half of each
 # key; the private half is in $AI_CHAOS_DIR/keys, which no agent can read. teardown.sh --confighub deletes both with

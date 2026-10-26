@@ -1,6 +1,6 @@
 # Outage 2: half the fleet at once
 
-[The demo](../README.md) · [Outage 1](01-rotation.md) · Outage 2 · next: [Outage 3](03-parity.md)
+[The demo](../README.md) · [Outage 1](01-rotation.md) · Outage 2 · next: [Outage 3](03-repave.md)
 
 Someone applies a ClusterProfile by hand on the management cluster, outside
 ConfigHub. It selects `region=us`, which is two of the four clusters, and
@@ -119,4 +119,4 @@ What you should see:
   cluster". The policy covers profiles, not ConfigMaps, so Devil deletes the
   ConfigMap it created.
 
-Next: [Outage 3, staging said yes, prod said no](03-parity.md). To check what ConfigHub recorded, see [PROOF.md](../PROOF.md).
+Next: [Outage 3, the nightly repave](03-repave.md). To check what ConfigHub recorded, see [PROOF.md](../PROOF.md).

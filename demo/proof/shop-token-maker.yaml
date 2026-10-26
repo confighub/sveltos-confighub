@@ -1,0 +1,57 @@
+# A Job that makes the shop's token on a fresh cluster, and makes nothing where
+# it already exists, with the least RBAC it needs: create Secrets, and read
+# shop-token, in namespace shop. The value is made in the cluster and never
+# leaves it. The label tells the repave gate this Job restores Secret/shop-token.
+# proof/repave-gate-check.sh adds it to a copy of the shop; in outage 3 Angel
+# writes its own.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: token-maker, namespace: shop}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: token-maker, namespace: shop}
+rules:
+  - {apiGroups: [""], resources: [secrets], verbs: [create]}
+  - {apiGroups: [""], resources: [secrets], resourceNames: [shop-token], verbs: [get]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: token-maker, namespace: shop}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: token-maker}
+subjects: [{kind: ServiceAccount, name: token-maker, namespace: shop}]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: make-shop-token
+  namespace: shop
+  labels: {repave-makes: secret.shop-token}
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      serviceAccountName: token-maker
+      restartPolicy: OnFailure
+      containers:
+        - name: make
+          image: python:3.12-alpine
+          command:
+            - python3
+            - -c
+            - |
+              import json, secrets, ssl, urllib.error, urllib.request
+              sa = "/var/run/secrets/kubernetes.io/serviceaccount"
+              ns = open(sa + "/namespace").read()
+              ctx = ssl.create_default_context(cafile=sa + "/ca.crt")
+              url = "https://kubernetes.default.svc/api/v1/namespaces/%s/secrets" % ns
+              headers = {"Authorization": "Bearer " + open(sa + "/token").read(), "Content-Type": "application/json"}
+              try:
+                  urllib.request.urlopen(urllib.request.Request(url + "/shop-token", headers=headers), context=ctx)
+                  print("shop-token is there; nothing to make")
+              except urllib.error.HTTPError as e:
+                  if e.code != 404:
+                      raise
+                  body = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "shop-token"}, "stringData": {"token": secrets.token_hex(16)}}
+                  urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST"), context=ctx)
+                  print("shop-token made")

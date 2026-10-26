@@ -43,6 +43,14 @@ for base, wf in (("chaos-shop-base", "rollout"), ("chaos-platform-base", "rollou
         print(f"  {base}/{wf}: {p['Name']} = {p.get('Count', 1)} {p['Type']} from {', '.join(who(i) for i in p.get('FromUserIDs') or []) or 'anyone'}; authors counted: {p.get('AllowAuthors', False)}")
     for s in w.get("Stages") or []:
         print(f"  {base}/{wf}: stage {s['Name']} releases need {', '.join(s.get('ReleasePrerequisites') or []) or 'nothing'}")
+# The repave gate: triggers ConfigHub runs on every change to the shop.
+for t in cub("trigger", "list", "--space", "chaos-shop-base"):
+    t = ent(t, "Trigger")
+    if t["Slug"] != "restores" and not t["Slug"].startswith("restores-"):
+        continue
+    args = {a.get("ParameterName"): str(a.get("Value")) for a in t.get("Arguments") or []}
+    what = args.get("param", "").removeprefix("restores=") if t["FunctionName"] == "vet-starlark" else args.get("where-expression", "")
+    print(f"  chaos-shop-base: repave gate {t['Slug']} ({t['FunctionName']}): {what}")
 
 print("\n## Change orders, and how each ended")
 for base in ("chaos-shop-base", "chaos-platform-base", "chaos-management"):

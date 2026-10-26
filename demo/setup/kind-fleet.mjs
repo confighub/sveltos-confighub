@@ -5,6 +5,8 @@
 //
 //   node demo/setup/kind-fleet.mjs               build the fleet
 //   node demo/setup/kind-fleet.mjs --refresh     register every cluster again, with a fresh token
+//   node demo/setup/kind-fleet.mjs --repave prod-eu prod-us-1 ...
+//                                                rebuild those clusters from nothing, and register them again
 //   node demo/setup/kind-fleet.mjs --delete      remove it
 //
 // Sveltos reaches each cluster with a token that lasts 30 days; --refresh
@@ -58,11 +60,32 @@ if (process.argv[2] === "--delete") {
   process.exit(0);
 }
 const refresh = process.argv[2] === "--refresh";
-const registerOnly = refresh;
+const repave = process.argv[2] === "--repave";
+const registerOnly = refresh || repave;
 const existing = run("kind", ["get", "clusters"]).split("\n");
 // --refresh registers every workload cluster there is, those that joined too.
-const registered = existing.filter((n) => /^chaos-/.test(n) && n !== MGMT).map((n) => workload(n.slice(6)));
-for (const name of refresh ? [] : [MGMT, ...WORKLOADS.map((w) => w.kind)]) {
+// The policy sandbox is not part of the fleet, and a cluster this script does
+// not define has labels it does not know, so both are left as they are.
+let registered = existing.filter((n) => /^chaos-/.test(n) && n !== MGMT && FLEET[n.slice(6)]).map((n) => workload(n.slice(6)));
+// --repave deletes each named workload cluster and creates it again, empty: a
+// new node, a new API server and certificate authority, nothing installed.
+// Registering it again gives Sveltos the new address's credentials; what
+// Sveltos then delivers is all the cluster gets back.
+if (repave) {
+  const names = process.argv.slice(3);
+  if (!names.length || names.some((n) => !FLEET[n])) {
+    console.error(`name the clusters to repave: ${Object.keys(FLEET).join(", ")}`);
+    process.exit(2);
+  }
+  for (const n of names) {
+    log(`repaving ${n}: deleting chaos-${n}`);
+    spawnSync("kind", ["delete", "cluster", "--name", `chaos-${n}`]);
+    log(`repaving ${n}: creating chaos-${n}, empty`);
+    run("kind", ["create", "cluster", "--name", `chaos-${n}`, "--kubeconfig", kc(`chaos-${n}`), "--wait", "180s"]);
+  }
+  registered = names.map(workload);
+}
+for (const name of registerOnly ? [] : [MGMT, ...WORKLOADS.map((w) => w.kind)]) {
   if (existing.includes(name)) { log(`${name} exists`); continue; }
   log(`creating ${name}`);
   run("kind", ["create", "cluster", "--name", name, "--kubeconfig", kc(name), "--wait", "180s"]);
