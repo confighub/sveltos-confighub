@@ -1,6 +1,7 @@
 package onboard
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"sort"
@@ -333,10 +334,26 @@ func ApplyScript(plan *Plan) string {
 		`        if [ "$waitfor" = approval ]; then echo "$1 waits for approval"; else kind=${reason#*: }; kind=${kind#* }; echo "$1 waits for $waitfor: cub attestation create --space $1 --type ${kind%% *} --change-order $2"; fi`,
 		"        return 0 ;;",
 		`      *"outstanding ValidationErrors"*) sleep "${RETRY_SECONDS:-15}" ;;`,
+		`      *"422"*) released "$1" && { echo "$out" >&2; return 1; }; baseline "$1" "$2" "$out"; return $? ;;`,
 		`      *) echo "$out" >&2; return 1 ;;`,
 		"    esac",
 		"  done",
 		`  echo "$1 is held by its policy checks, so it is not released: $out" >&2; return 1`,
+		"}",
+		"# ConfigHub #5794: a change order over variants just cloned from their base",
+		"# counts them as released, so a variant's first release cannot go through it;",
+		"# the publish is refused (422) and an approval records nothing. Until ConfigHub",
+		"# fixes that, a variant that has never been released gets its first release",
+		"# at head instead, as the onboarding baseline: what its base holds, which the",
+		"# handover compared with what each cluster runs. Changes after it go through",
+		"# the workflow. With PROPOSE_ONLY it is not published: a person does that.",
+		"baseline() {",
+		`  if [ -n "${PROPOSE_ONLY:-}" ]; then`,
+		`    echo "$1 cannot have its first release through $2 (ConfigHub #5794). Once you have reviewed it, publish its baseline: cub release publish $1"`,
+		"    return 0",
+		"  fi",
+		`  cub release publish "$1" --annotation sveltos.confighub.com/first-release=baseline --quiet || { echo "$3" >&2; return 1; }`,
+		`  echo "$1: first release published at head as the onboarding baseline (ConfigHub #5794)"`,
 		"}",
 		"# PROPOSE_ONLY=1 approves nothing. Each stage is promoted, and a release",
 		"# waits in ConfigHub until a person approves it; run the script again to",
@@ -407,7 +424,7 @@ func ApplyScript(plan *Plan) string {
 		"# on its Target, read through the kubeconfig Sveltos reaches it with. A cluster",
 		"# only the management cluster reaches needs CLUSTER_KUBECONFIGS=<dir> holding",
 		"# <cluster>.kubeconfig; without it, onboarding goes on and says so.",
-		fmt.Sprintf(`cub sveltos facts ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} --targets %s ${CLUSTER_KUBECONFIGS:+--kubeconfigs "$CLUSTER_KUBECONFIGS"} || echo "Some clusters' facts were not collected; run cub sveltos facts again once they can be reached"`, plan.TargetsSpace))
+		fmt.Sprintf(`cub sveltos facts ${MGMT_CONTEXT:+--kube-context "$MGMT_CONTEXT"} --targets %s ${CLUSTER_KUBECONFIGS:+--kubeconfigs "$CLUSTER_KUBECONFIGS"} || echo "Some clusters' facts were not collected; run cub sveltos facts again once they can be reached"`, plan.TargetsSpace))
 	L = append(L, "", `step "2/6 One component per profile: a base holding what its charts and policies render to, and a rollout workflow"`)
 	for _, p := range plan.Profiles {
 		L = append(L,
@@ -662,7 +679,7 @@ func HandoverScript(plan *Plan) string {
 		"# there through the cluster's kubeconfig Secret, as Sveltos reaches it.",
 		"# CLUSTER_KUBECONFIGS, if set, is a directory of <cluster>.kubeconfig files for",
 		"# clusters Sveltos reaches at an address only the management cluster can.",
-		`compare() { ${SVELTOS:-cub sveltos} compare ${MGMT_CONTEXT:+--context "$MGMT_CONTEXT"} ${CLUSTER_KUBECONFIGS:+--kubeconfig-dir "$CLUSTER_KUBECONFIGS"} --cluster "$1" --release "$2" --space "$3" --unit "$4" || differs=1; }`,
+		`compare() { ${SVELTOS:-cub sveltos} compare ${MGMT_CONTEXT:+--kube-context "$MGMT_CONTEXT"} ${CLUSTER_KUBECONFIGS:+--kubeconfig-dir "$CLUSTER_KUBECONFIGS"} --cluster "$1" --release "$2" --space "$3" --unit "$4" || differs=1; }`,
 		`differs=`,
 		fmt.Sprintf(`k get secret -n %s %s >/dev/null 2>&1 || fail "the gateway Secret is missing: run apply.sh first"`, secretNamespace, gatewaySecretName(plan.TargetsSpace)),
 	}
@@ -895,15 +912,20 @@ func dependsOnOf(source *yaml.Node) []string {
 	return out
 }
 
-// renderCommand is the cub helm template command a chart unit was rendered
-// with, reading its values from the file apply writes beside it. Rendering the
+// renderCommand is the helm template command a chart unit was rendered with,
+// reading its values from the file apply writes beside it, and printing the
+// Namespace the rendering put in front when the chart has none. Rendering the
 // next version the same way is how a chart upgrade starts.
 func renderCommand(p Profile, u Unit) string {
 	values := ""
 	if u.Chart.Values != "" {
 		values = valuesFile(p, u)
 	}
-	return line(u.Chart.Command(values)...) + " | " + chartrender.Filter
+	cmd := line(u.Chart.HelmCommand(values)...)
+	if bytes.HasPrefix(u.raw, []byte(chartrender.NamespaceDoc(u.Chart.Namespace))) {
+		cmd = "{ printf " + q(`apiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n`) + " " + q(u.Chart.Namespace) + "; " + cmd + "; }"
+	}
+	return cmd
 }
 
 // valuesFile is where apply writes a chart's values.

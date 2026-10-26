@@ -105,8 +105,7 @@ With `cub` logged in to an organization that has 10 Spaces free, and kind,
 kubectl and helm installed:
 
 ```bash
-cub plugin install confighub/sveltos-confighub
-cub plugin install confighub/cub-helm
+cub plugin install confighub/sveltos-confighub    # and Helm v3 or v4 on the PATH, to render the charts
 node examples/meridian-slice/kind-fleet.mjs
 bash examples/meridian-slice/run.sh
 node examples/meridian-slice/kind-fleet.mjs --delete
@@ -119,7 +118,7 @@ To see a cluster join, run the watcher with the options `run.sh` planned with,
 then register one more cluster:
 
 ```bash
-cub sveltos watch onboard/profiles.yaml --out onboard --context kind-mer-mgmt \
+cub sveltos watch onboard/profiles.yaml --out onboard --kube-context kind-mer-mgmt \
   --class-label class --stage-label class --stages test,uat,prod --prefix mer
 node examples/meridian-slice/kind-fleet.mjs --join prod4    # in another terminal
 ```

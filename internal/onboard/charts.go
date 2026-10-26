@@ -25,6 +25,10 @@ type (
 // chart onboarded here holds the objects cub helm install would have written.
 var CubHelm = chartrender.CubHelm
 
+// Helm renders with helm template, which cub sveltos uses from v0.14.1: cub helm
+// v0.1.2 and later preview units instead of printing them.
+var Helm = chartrender.Helm
+
 // Object is one Kubernetes object a unit holds.
 type Object struct {
 	APIVersion string
@@ -69,9 +73,9 @@ type Unit struct {
 	Objects []Object
 	// Hooks are the Helm hook manifests the rendering left out.
 	Hooks []Hook
-	// raw is a chart's rendering as cub helm template printed it, in its order
-	// and without the stray line, so rendering the next version the same way
-	// shows a reviewer only what changed.
+	// raw is a chart's rendering as it was printed, in its order and without
+	// the stray line, so rendering the next version the same way shows a
+	// reviewer only what changed.
 	raw []byte
 }
 

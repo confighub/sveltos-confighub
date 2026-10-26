@@ -37,7 +37,7 @@ publishes before the gates go on.
 | Only you or Milton may approve, never a change's author | `evidence.sh`, Gates: `approval = 1 Approval from you, milton (Worker); authors counted: False` |
 | A component takes changes only through its workflow | `cub component get chaos-shop -o yaml`: `ChangeWorkflowRequired: true` |
 | The management record can't be published directly | `cub release publish chaos-management` is refused: "requires a ChangeWorkflow" |
-| Live status reaches ConfigHub | Components: each deployment Live and Synced. `cub sveltos status --context kind-chaos-mgmt` |
+| Live status reaches ConfigHub | Components: each deployment Live and Synced. `cub sveltos status --kube-context kind-chaos-mgmt` |
 
 ## Outage 1: a rotation nobody picked up
 

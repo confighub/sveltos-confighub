@@ -28,7 +28,7 @@ chaos-management`. In our verification run they were `withdraw-shop-lockdown`,
 | Step | Command |
 | --- | --- |
 | 1. Devil applies the lockdown by hand | `$R devil 02-blast-radius $P/1-devil-lockdown.txt` |
-| Wait about a minute: prod-us-1 and prod-us-2 Degraded, staging and prod-eu Healthy | `cub sveltos status --context kind-chaos-mgmt` |
+| Wait about a minute: prod-us-1 and prod-us-2 Degraded, staging and prod-eu Healthy | `cub sveltos status --kube-context kind-chaos-mgmt` |
 | 2. Angel proposes the fix, the policy and the clean-up as change orders on `chaos-management/record` | `$R angel 02-blast-radius $P/2-angel-fix-and-prevent.txt` |
 | 3. Review, then approve each order | `$A me chaos-management/<order> record "<why>"`, or `$A milton chaos-management/<order> record 02-blast-radius` |
 | 3b. Only if the review finds a problem: Angel aborts the orders sent back and proposes them again; then step 3 for the new ones | `SENT_BACK="<the orders>" FINDING="<what you found>" $R angel 02-blast-radius $P/2b-angel-revise.txt` |

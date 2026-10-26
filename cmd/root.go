@@ -131,9 +131,10 @@ func newRoot() *cobra.Command {
          YAML you wrote or 'kubectl get clusterprofiles,sveltosclusters -A -o yaml',
          and shows the fleet ConfigHub would govern: one base per profile holding
          the objects its Helm charts and policy ConfigMaps render to, and one
-         variant per cluster it selects. Each chart is rendered with cub helm
-         template, so plan needs the cub helm plugin and the chart repositories,
-         but no account and no cluster. Nothing changes.
+         variant per cluster it selects. Each chart is rendered with helm
+         template, so plan needs Helm and the chart repositories, and no
+         cluster. It works without a ConfigHub account; signed in, it asks the
+         server which registry Sveltos fetches from. Nothing changes.
 
   apply  writes the plan as files, the rendered objects among them, beside one
          script of cub and kubectl steps, apply.sh, and handover.sh when the
@@ -287,7 +288,7 @@ Guide: https://github.com/confighub/sveltos-confighub/blob/main/docs/user/onboar
 			return nil
 		},
 	}
-	compare.Flags().StringVar(&lc.Context, "context", "", "kubectl context of the management cluster")
+	compare.Flags().StringVar(&lc.Context, "kube-context", "", "kubectl context of the management cluster (cub keeps --context for its own context)")
 	compare.Flags().StringVar(&lc.KubeconfigDir, "kubeconfig-dir", "", "a directory of <cluster>.kubeconfig files, for clusters Sveltos reaches at an address only the management cluster can")
 	compare.Flags().StringVar(&cluster, "cluster", "", "the cluster, as <kind>/<namespace>/<name>")
 	compare.Flags().StringVar(&release, "release", "", "the Helm release, as <namespace>/<name>")
@@ -354,7 +355,7 @@ recorded, which takes Edit on the Space.`,
 			}
 		},
 	}
-	status.Flags().StringVar(&so.Context, "context", "", "kubectl context of the management cluster")
+	status.Flags().StringVar(&so.Context, "kube-context", "", "kubectl context of the management cluster (cub keeps --context for its own context)")
 	status.Flags().BoolVar(&so.DryRun, "dry-run", false, "show what would be written, and write nothing")
 	status.Flags().DurationVar(&so.Refresh, "refresh", 10*time.Minute, "write an unchanged reading again once the one the release holds is this old")
 	status.Flags().BoolVar(&watch, "watch", false, "keep reporting")
@@ -365,7 +366,7 @@ recorded, which takes Edit on the Space.`,
 	var once bool
 	var every time.Duration
 	watchCmd := &cobra.Command{
-		Use:   "watch <profiles.yaml> --out <dir> --context <management context> [the options you planned with]",
+		Use:   "watch <profiles.yaml> --out <dir> --kube-context <management context> [the options you planned with]",
 		Short: "Propose variants for each cluster that joins, and release them once a person approves",
 		Long: `Propose variants for each cluster that joins, and release them once a person approves.
 
@@ -440,7 +441,7 @@ sveltos.confighub.com/joined annotation and in the release order's description;
 	}
 	wf.register(watchCmd)
 	watchCmd.Flags().StringVar(&wo.Out, "out", "", "the directory apply wrote for this fleet")
-	watchCmd.Flags().StringVar(&wo.Context, "context", "", "kubectl context of the management cluster")
+	watchCmd.Flags().StringVar(&wo.Context, "kube-context", "", "kubectl context of the management cluster (cub keeps --context for its own context)")
 	watchCmd.Flags().DurationVar(&every, "interval", time.Minute, "how often to look")
 	watchCmd.Flags().BoolVar(&once, "once", false, "look once, and stop")
 
@@ -676,7 +677,7 @@ the next create or update would be refused.`,
 
 	var fo onboard.FactsOptions
 	factsCmd := &cobra.Command{
-		Use:   "facts --context <management cluster context> --targets <space>",
+		Use:   "facts --kube-context <management cluster context> --targets <space>",
 		Short: "Store each cluster's facts (Kubernetes version, CRDs, storage and ingress classes) on its Target",
 		Long: `Store each cluster's facts on its Target, so ConfigHub knows each destination.
 
@@ -717,7 +718,7 @@ kubeconfig that reaches it at <dir>/<cluster>.kubeconfig, with --kubeconfigs.`,
 			return nil
 		},
 	}
-	factsCmd.Flags().StringVar(&fo.Context, "context", "", "kubectl context of the management cluster")
+	factsCmd.Flags().StringVar(&fo.Context, "kube-context", "", "kubectl context of the management cluster (cub keeps --context for its own context)")
 	factsCmd.Flags().StringVar(&fo.TargetsSpace, "targets", "", "the Space holding one Target per cluster, as apply made them (<prefix>-targets)")
 	factsCmd.Flags().StringVar(&fo.KubeconfigDir, "kubeconfigs", "", "a directory of <cluster>.kubeconfig files for clusters only the management cluster reaches")
 	factsCmd.Flags().BoolVar(&fo.DryRun, "dry-run", false, "print the facts and store nothing")

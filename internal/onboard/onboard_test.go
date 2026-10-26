@@ -24,20 +24,20 @@ import (
 // go test ./internal/onboard -update rewrites the committed example from the code.
 var update = flag.Bool("update", false, "rewrite examples/onboard from the code")
 
-// go test ./internal/onboard -record renders the example's charts with cub helm
-// and keeps what it printed in testdata, so the tests run offline.
-var record = flag.Bool("record", false, "render the example's charts with cub helm and record them")
+// go test ./internal/onboard -record renders the example's charts with helm
+// template and keeps what it printed in testdata, so the tests run offline.
+var record = flag.Bool("record", false, "render the example's charts with helm template and record them")
 
 const exampleDir = "../../examples/onboard"
 
 var exampleOpts = Options{StageLabel: "env", Stages: []string{"staging", "prod"}, IncludeHooks: []string{"ingress-nginx"}, Render: recorded}
 
-// recorded replays a rendering cub helm template printed for the same chart,
+// recorded replays a rendering helm template printed for the same chart,
 // recorded under testdata/renders.
 func recorded(c Chart) (Rendering, error) {
 	file := filepath.Join("testdata", "renders", c.Key()+".json.gz")
 	if *record {
-		r, err := CubHelm(c)
+		r, err := Helm(c)
 		if err != nil {
 			return r, err
 		}
@@ -344,8 +344,8 @@ func TestExamplePlan(t *testing.T) {
 			t.Errorf("the chart should render with the profile's values: the admission controller at 3 replicas")
 		}
 	}
-	if text, _ := kyverno[0].Text(); !strings.HasPrefix(string(text), "# Unit: ") {
-		t.Errorf("a chart's unit holds what cub helm template printed, as printed, so rendering the next version shows only what changed")
+	if text, _ := kyverno[0].Text(); !strings.HasPrefix(string(text), chartrender.NamespaceDoc("kyverno")+"---\n# Source: kyverno/") {
+		t.Errorf("a chart's unit holds what helm template printed, as printed, after the Namespace it lacks, so rendering the next version shows only what changed")
 	}
 	if !strings.Contains(RenderPlan(plan, true), "13 Spaces and 8 Links") {
 		t.Errorf("one Link per unit of each variant: %s", RenderPlan(plan, true))
@@ -640,6 +640,15 @@ func TestChartReferences(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("chart references:\n got %q\nwant %q", got, want)
+	}
+	got = []string{strings.Join(charts[0].HelmCommand("v.yaml"), " "), strings.Join(charts[1].HelmCommand(""), " "), strings.Join(charts[2].HelmCommand(""), " ")}
+	want = []string{
+		"helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.1 --namespace kyverno --include-crds --no-hooks",
+		"helm template vault oci://registry-1.docker.io/bitnamicharts/vault --version 1.4.0 --namespace default --include-crds --no-hooks",
+		"helm template app oci://ghcr.io/org/charts/app --version 2.0.0 --namespace apps --no-hooks",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("helm template commands:\n got %q\nwant %q", got, want)
 	}
 }
 
@@ -1048,7 +1057,7 @@ func TestKeptHooks(t *testing.T) {
 	if len(plan.Problems) > 0 || string(text) != string(rendering.Stdout) {
 		t.Errorf("a chart whose hooks are kept is held exactly as cub helm template printed it, TTL and all:\n%s\n%v", text, plan.Problems)
 	}
-	if script := ApplyScript(plan); !strings.Contains(script, "--include-hooks -f ingress/ingress.values.yaml | "+chartrender.Filter+"\n") {
+	if script := ApplyScript(plan); !strings.Contains(script, "--include-crds -f ingress/ingress.values.yaml\n") {
 		t.Errorf("apply.sh records the plain render, so the next version is rendered the same way:\n%s", script)
 	}
 	dp, _ := EncodeYAML(plan.Management.ByProfile[0].Profiles[0])
@@ -1235,9 +1244,10 @@ func TestProfilesSomethingElseApplies(t *testing.T) {
 	}
 }
 
-// cub helm template prints a stray line at the top of some documents, which
-// ConfigHub drops when a unit is created but keeps when it is updated. The
-// base must hold the render without it, and every object the render has.
+// cub helm template v0.1.1 printed a stray line at the top of some documents,
+// which ConfigHub drops when a unit is created but keeps when it is updated.
+// helm template prints none. Either way the base must hold the render without
+// it, and every object the render has.
 func TestStrayLinesAreDropped(t *testing.T) {
 	plan := mustPlan(t, exampleDocs(t), exampleOpts)
 	for _, p := range plan.Profiles {
@@ -1254,8 +1264,8 @@ func TestStrayLinesAreDropped(t *testing.T) {
 			if got := strings.Count(string(rendering.Stdout), "\n") - strings.Count(string(text), "\n"); got != want {
 				t.Errorf("%s: %d lines dropped, want the %d stray ones only", u.Slug, got, want)
 			}
-			if u.Slug == "kyverno" && (want == 0 || len(u.Objects) != 71) {
-				t.Errorf("kyverno's recorded render has stray lines (%d), and all 71 objects stay (%d)", want, len(u.Objects))
+			if u.Slug == "kyverno" && len(u.Objects) != 71 {
+				t.Errorf("kyverno renders 70 objects, and its Namespace goes in front: got %d", len(u.Objects))
 			}
 		}
 	}
@@ -1321,5 +1331,65 @@ func TestCompareLive(t *testing.T) {
 	r, err = CompareLive(world(true, "", ""), hub, check)
 	if err != nil || !strings.Contains(r.Skipped, "pull mode") {
 		t.Errorf("a cluster in pull mode cannot be read from the management cluster: %+v %v", r, err)
+	}
+}
+
+// ConfigHub #5794: a change order over freshly cloned variants counts them as
+// released, so a variant's first release cannot go through it. publish falls
+// back to a baseline release at head, except with PROPOSE_ONLY, which leaves
+// that to a person, and never for a variant that already has a release. This
+// runs apply.sh's own helpers against a stand-in cub.
+func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("needs bash")
+	}
+	script := ApplyScript(mustPlan(t, exampleDocs(t), exampleOpts))
+	start := strings.Index(script, "released() {")
+	end := strings.Index(script, "\nbaseline() {")
+	if start < 0 || end < 0 {
+		t.Fatalf("apply.sh has no released() or baseline():\n%s", script)
+	}
+	rest := script[end+1:]
+	stop := strings.Index(rest, "\n}\n")
+	helpers := script[start:end+1] + rest[:stop+3]
+	fake := `cub() {
+  echo "cub $*" >> "$LOG"
+  case "$*" in
+    "release list"*) echo "$RELEASES" ;;
+    *"--revision ChangeOrder:"*) echo "Failed: HTTP 422 for req x: requires approval, but no Revision was found to evaluate it on"; return 1 ;;
+  esac
+}
+holds() { return 0; }
+sleep() { :; }
+`
+	baseline := "cub release publish v --annotation sveltos.confighub.com/first-release=baseline --quiet"
+	for _, c := range []struct {
+		name, propose, releases string
+		fails                   bool
+		said, called, notCalled string
+	}{
+		{"by hand", "", "0", false, "first release published at head as the onboarding baseline", baseline, ""},
+		{"proposing", "1", "0", false, "cannot have its first release through base/o (ConfigHub #5794)", "", "--annotation"},
+		{"already released", "", "1", true, "no Revision was found", "", "--annotation"},
+	} {
+		dir := t.TempDir()
+		log := filepath.Join(dir, "cub.log")
+		file := filepath.Join(dir, "run.sh")
+		if err := os.WriteFile(file, []byte(helpers+"\n"+fake+"publish v base/o 1 prod\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("bash", file)
+		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "PROPOSE_ONLY="+c.propose)
+		out, err := cmd.CombinedOutput()
+		calls, _ := os.ReadFile(log)
+		if (err != nil) != c.fails || !strings.Contains(string(out), c.said) {
+			t.Errorf("%s: publish should %s and say %q (err %v):\n%s", c.name, map[bool]string{true: "fail", false: "succeed"}[c.fails], c.said, err, out)
+		}
+		if c.called != "" && !strings.Contains(string(calls), c.called) {
+			t.Errorf("%s: expected %q among:\n%s", c.name, c.called, calls)
+		}
+		if c.notCalled != "" && strings.Contains(string(calls), c.notCalled) {
+			t.Errorf("%s: no baseline release expected:\n%s", c.name, calls)
+		}
 	}
 }

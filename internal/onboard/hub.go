@@ -6,10 +6,10 @@ import "time"
 // rather than by running cub and reading what it prints. Hub is everything it
 // asks; the SDK-backed answer is in hub_sdk.go, and tests stand in for it.
 //
-// Three things still run cub, because each is a cub command the user could
-// run themselves and not a question: the validating function a check names
-// (cub function vet), a cluster's facts (cub k8s collect), and a chart's
-// rendering (cub helm template). The scripts apply writes call cub too: they
+// Two things still run cub, because each is a cub command the user could run
+// themselves and not a question: the validating function a check names (cub
+// function vet) and a cluster's facts (cub k8s collect). A chart's rendering
+// runs Helm (helm template). The scripts apply writes call cub too: they
 // are for a person to read and run, and watch runs apply.sh for a cluster
 // that joins.
 

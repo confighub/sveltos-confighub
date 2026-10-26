@@ -15,7 +15,7 @@ c := chartrender.Chart{
 if !chartrender.ExactVersion(c.Version) {
 	// refuse: "2.4.x" renders whatever is newest that day
 }
-r, err := chartrender.Render(chartrender.CubHelm, c)
+r, err := chartrender.Render(chartrender.Helm, c) // helm template; CubHelm needs cub helm v0.1.1
 switch {
 case errors.Is(err, chartrender.ErrNotRepeatable):
 	// refuse, or leave the source to render late: it mints values per render
@@ -24,18 +24,27 @@ case err != nil:
 }
 // r.Objects is the text to store as the unit.
 // r.Hooks are the hook manifests left out; see AtInstall.
-// Record how it was rendered, beside it:
-recorded := strings.Join(c.Command("values.yaml"), " ") + " | " + chartrender.Filter
+// Record how it was rendered, beside it. Helm puts NamespaceDoc in front when
+// the chart renders no Namespace, so a recorded command prints it too:
+recorded := strings.Join(c.HelmCommand("values.yaml"), " ")
+if bytes.HasPrefix(r.Objects, []byte(chartrender.NamespaceDoc(c.Namespace))) {
+	recorded = "{ printf 'apiVersion: v1\\nkind: Namespace\\nmetadata:\\n  name: %s\\n' " + c.Namespace + "; " + recorded + "; }"
+}
 ```
+
+`Helm` needs [Helm](https://helm.sh/docs/intro/install/) v3 or v4 on the PATH
+and no ConfigHub connection. `CubHelm`, with `Chart.Command` and `Filter`, is
+kept for tools that pin `cub helm` v0.1.1: from v0.1.2, `cub helm template`
+previews units through the server instead of printing YAML.
 
 ## The rules, and why
 
 | Rule | Why |
 | --- | --- |
-| One exact version (`ExactVersion`) | `cub helm template --version` also takes a range. A range renders whatever is newest when it is rendered, which need not be what the cluster runs. |
+| One exact version (`ExactVersion`) | `helm template --version` also takes a range. A range renders whatever is newest when it is rendered, which need not be what the cluster runs. |
 | The same bytes twice (`Render`) | A chart that mints a password or a certificate per render, or reads `lookup`, cannot be held as one reviewed set of objects. |
 | Hooks named (`HooksOf`, in `Render`) | Only Helm runs hooks. An install hook's work is missing from plain objects unless something routes it: `cub sveltos` refuses such a chart until it is told to keep its hooks as plain objects, which its delivery marks `projectsveltos.io/driftDetectionIgnore`. Hooks for upgrade, delete or test are left out, and named. |
-| No stray line (`DropStrayLines`, `Filter`) | `cub helm template` prints `$comment$head$: ""` at the top of some documents (26 in Kyverno 3.8.1). ConfigHub drops it when a unit is created, but keeps it when a unit is updated, so a chart upgrade would carry it into review and to the clusters. |
+| No stray line (`DropStrayLines`, `Filter`) | `cub helm template` v0.1.1, which `CubHelm` runs, prints `$comment$head$: ""` at the top of some documents (26 in Kyverno 3.8.1). ConfigHub drops it when a unit is created, but keeps it when a unit is updated, so a chart upgrade would carry it into review and to the clusters. |
 
 Measured on kind with stock Sveltos v1.15.0 and ConfigHub production; see
 [the onboarding rehearsal record](../docs/planning/onboarding-rehearsal.md).
@@ -66,7 +75,7 @@ chart that rendered differently on the cluster, through `.Capabilities` or
 
 ## What it does not decide
 
-- **The cluster's Kubernetes version and APIs.** `cub helm template` renders
+- **The cluster's Kubernetes version and APIs.** `helm template` renders
   `.Capabilities` for a default cluster. A chart that branches on them can
   render other objects than the cluster runs; `Compare` finds them.
 - **A deterministic `lookup`.** It renders the same twice, but not what it

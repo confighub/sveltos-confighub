@@ -16,13 +16,19 @@ func TestParseGateway(t *testing.T) {
 		"http://host.docker.internal:9093":  {Host: "host.docker.internal:9093", PlainHTTP: true},
 		"http://host.docker.internal:9093/": {Host: "host.docker.internal:9093", PlainHTTP: true},
 		"[fd00::1]:5000":                    {Host: "[fd00::1]:5000"},
+		"[fd00::1]":                         {Host: "[fd00::1]"},
+		"OCI.Example.com":                   {Host: "oci.example.com"},
+		"https://oci.example.com:443":       {Host: "oci.example.com"},
+		"http://registry.example.com:80":    {Host: "registry.example.com", PlainHTTP: true},
+		"HTTP://Host.Docker.Internal:9093":  {Host: "host.docker.internal:9093", PlainHTTP: true},
 	} {
 		got, err := ParseGateway(in)
 		if err != nil || got != want {
 			t.Errorf("ParseGateway(%q) = %+v, %v; want %+v", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "oci://oci.example.com", "http://", "oci.example.com/space", "http://h:9093/space/x", "h:port", "h:70000"} {
+	for _, in := range []string{"", "oci://oci.example.com", "http://", "oci.example.com/space", "http://h:9093/space/x", "h:port", "h:70000",
+		"h:", "fd00::1", "fd00::1:5000", "localhost:5000", "http://127.0.0.1:9093", "http://[::1]:9093", "0.0.0.0:5000", "registry.localhost"} {
 		if g, err := ParseGateway(in); err == nil {
 			t.Errorf("ParseGateway(%q) = %+v, want an error", in, g)
 		}

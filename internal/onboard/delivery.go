@@ -121,7 +121,7 @@ func deliveryProfile(v Variant, source *yaml.Node, gw Gateway, secretName string
 			spec.Content = append(spec.Content, deepCopy(s.Content[i]), deepCopy(s.Content[i+1]))
 		}
 	}
-	// A release lists a chart's objects in the order cub helm template prints
+	// A release lists a chart's objects in the order its rendering printed
 	// them, which can put a custom resource before its CRD; by default Sveltos
 	// stops at the first object that fails. Continuing, the CRD is applied in
 	// the same pass and the custom resource on the retry: measured, a fresh

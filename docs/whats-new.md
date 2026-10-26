@@ -24,6 +24,52 @@ where ConfigHub v0.8.2 and newer read it.
 The [onboarding guide](user/onboard-your-sveltos-fleet.md) is the full
 walkthrough.
 
+## 0.14.1, unreleased
+
+**Works with today's `cub` and ConfigHub again.** Three things stopped working
+in October, and #119 left a few loose ends.
+
+- **`--kube-context` replaces `--context`** on `status`, `watch`, `facts` and
+  `compare`. Since `cub` v0.8.17, `--context` anywhere on a command line is
+  cub's own: it names a cub context, and a plugin never sees it. So
+  `cub sveltos status --context kind-mgmt` failed with "context not found"
+  (seen on `cub` v0.9.0 on 2026-10-26). `apply.sh` and `handover.sh` pass
+  `--kube-context` now. Without the flag, the current context of
+  `KUBECONFIG` is used, as before.
+- **Charts are rendered with Helm.** `cub helm` v0.1.2 (7 October) changed
+  `cub helm template` to preview units through the server instead of
+  printing YAML, so `plan` could render no chart. The plugin now runs
+  `helm template` (Helm v3 or v4 on the PATH), the way `helm install` would
+  install the chart: CRDs included, hooks left out unless `--include-hooks`,
+  and a Namespace for the release namespace in front when the chart has
+  none. The `cub helm` plugin is no longer needed.
+  - `apply.sh` notes the exact command above each chart. For the onboarding
+    example's ingress-nginx and Kyverno, that command reproduces the stored
+    rendering byte for byte.
+  - A chart onboarded before 0.14.1 was rendered by `cub helm template`,
+    whose layout differs. Its first upgrade shows a large text diff, so
+    review it with `cub unit diff ... -o mutations`, which lists only the
+    fields that changed.
+- **A variant's first release, when ConfigHub refuses it through the change
+  order.** Since ConfigHub v0.8.12, a change order over freshly cloned
+  variants counts them as released, so their first governed release is
+  refused (confighubai/confighub#5794, seen on v0.8.17 and open).
+  - `apply.sh` now publishes such a variant's first release at head, as the
+    onboarding baseline, annotated `sveltos.confighub.com/first-release=baseline`:
+    what its base holds, which the handover compared with what the cluster
+    runs. Every change after it goes through the workflow.
+  - With `PROPOSE_ONLY=1`, as `cub sveltos watch` runs it for a cluster that
+    joins, it publishes nothing, and says what to run once a person has
+    reviewed it.
+- **The registry Sveltos fetches from** (#119's follow-ups):
+  - asking ConfigHub for its registry gives up after 20 seconds;
+  - a broken login, a `CUB_CONTEXT` that does not exist, or another
+    server's context that is not signed in, stops the plan instead of
+    falling back to the hosted registry;
+  - `--gateway` lowercases the host, drops a scheme's default port, wants an
+    IPv6 address in brackets, and refuses an empty port and a loopback or
+    unspecified address, as the advertised registry already was.
+
 ## 0.14.0, 2026-10-09
 
 **Live status goes on the Release, where ConfigHub now reads it.** ConfigHub

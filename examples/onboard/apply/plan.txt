@@ -39,6 +39,6 @@ In ConfigHub
   13 Spaces and 8 Links, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
   first rollout: ingress-nginx in 1 stage, kyverno in 2 stages, kyverno-policies in 2 stages; one approval per stage, one release per variant
 
-Note: kyverno's chart kyverno has 11 Helm hooks for upgrade, delete or test, among them Jobs kyverno-migrate-resources, kyverno-rm-webhooks, kyverno-scale-to-zero. They are left out, as cub helm leaves them out, because only Helm runs them.
+Note: kyverno's chart kyverno has 11 Helm hooks for upgrade, delete or test, among them Jobs kyverno-migrate-resources, kyverno-rm-webhooks, kyverno-scale-to-zero. They are left out, as helm template --no-hooks leaves them out, because only Helm runs them.
 
 Next: cub sveltos apply <the same input and options> --out <dir>, read <dir>/apply.sh, then run it.

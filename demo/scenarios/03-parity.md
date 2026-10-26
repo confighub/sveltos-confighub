@@ -44,7 +44,7 @@ is on. To take it off, as yourself:
 | 5. Devil releases it to staging, measures it, and promotes it to prod | `CACHE_ORDER=<the cache> $R devil 03-parity $P/3-devil-staging.txt` |
 | 6. Approve the cache for prod | `$A me chaos-shop-base/<the cache> prod "<why>"` or Milton |
 | 7. Devil releases it to prod | `CACHE_ORDER=<the cache> $R devil 03-parity $P/4-devil-prod.txt` |
-| Wait two or three minutes: prod's `api` OOMKilled, live status flapping Degraded | `cub sveltos status --context kind-chaos-mgmt` |
+| Wait two or three minutes: prod's `api` OOMKilled, live status flapping Degraded | `cub sveltos status --kube-context kind-chaos-mgmt` |
 | 8. Angel diagnoses, proposes the fix, and proposes the gate | `$R angel 03-parity $P/5-angel-fix.txt` |
 | 9. Approve the fix for prod | `$A me chaos-shop-base/<the restore> prod "<why>"` or Milton |
 | Check Angel's ParityCheck passed in every prod Space | `cub attestation list --space chaos-shop-prod-eu`, and the same for `chaos-shop-prod-us-1` and `-us-2` |

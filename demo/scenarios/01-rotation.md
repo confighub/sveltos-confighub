@@ -27,7 +27,7 @@ bash $DEMO/setup/sandbox.sh --reset  # an empty sandbox
 | Step | Command |
 | --- | --- |
 | 1. Devil rotates the token on all four clusters | `$R devil 01-rotation $P/1-devil-rotate.txt` |
-| Wait about a minute, until the shop is Degraded everywhere | `cub sveltos status --context kind-chaos-mgmt` |
+| Wait about a minute, until the shop is Degraded everywhere | `cub sveltos status --kube-context kind-chaos-mgmt` |
 | 2. Angel diagnoses and proposes the fix | `$R angel 01-rotation $P/2-angel-fix.txt` |
 | 3. Angel writes the policy and previews it | `FIX_ORDER=<the fix> $R angel 01-rotation $P/3-angel-prevent.txt` |
 | Let Milton see the new Space chaos-policies | `bash $DEMO/setup/grant-agents.sh` |

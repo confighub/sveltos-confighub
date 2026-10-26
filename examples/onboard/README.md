@@ -16,7 +16,7 @@ before running anything against your own:
   joining cluster from. `apply` also writes each chart rendered to its objects,
   `apply/kyverno/kyverno.yaml` (71 objects, over 5 MB with its CRDs) and
   `apply/ingress-nginx/ingress-nginx.yaml`; they are left out here for their
-  size, and `internal/onboard/testdata/renders` keeps what `cub helm template`
+  size, and `internal/onboard/testdata/renders` keeps what `helm template`
   printed for them.
 
 The fleet has four workload clusters: staging-eu, prod-eu, prod-us, and
@@ -35,7 +35,7 @@ staging-us, joins later in the run.
 
 `go test ./...` checks that these files are what the plugin writes today;
 `go test ./internal/onboard -update` regenerates them, and `-record` renders
-the charts again with `cub helm`. The guide is
+the charts again with `helm template`. The guide is
 [Onboard your Sveltos fleet](../../docs/user/onboard-your-sveltos-fleet.md).
 
 ## Run it yourself
@@ -47,8 +47,7 @@ logged in to an organization that has 15 Spaces free, and kind, kubectl and
 helm installed:
 
 ```bash
-cub plugin install confighub/sveltos-confighub
-cub plugin install confighub/cub-helm
+cub plugin install confighub/sveltos-confighub    # and Helm v3 or v4 on the PATH, to render the charts
 node examples/onboard/kind-fleet.mjs
 bash examples/onboard/run.sh
 node examples/onboard/kind-fleet.mjs --delete
