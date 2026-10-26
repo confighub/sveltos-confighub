@@ -37,6 +37,9 @@ need "the cub sveltos plugin, v0.15.0 or later" \
      sh -c 'v=$(cub sveltos version | awk "{print \$3}" | tr -d v); [ "$(printf "%s\n0.15.0\n" "$v" | sort -V | head -1)" = 0.15.0 ]'
 need "Helm, to render charts"               helm version --short
 need "Claude Code, signed in (for the agents)" sh -c 'claude auth status | grep -Eq "\"loggedIn\": *true"'
+# The agents' runs need Claude Code's command sandbox as it works on macOS;
+# everything else runs anywhere, so this is a note, not a stop.
+[ "$(uname -s)" = Darwin ] || echo "  note    the agents' runs need macOS: agents/run-agent.sh holds each in Claude Code's command sandbox, which on Linux cannot reach the kind clusters"
 if [ "$missing" = 1 ]; then
   echo "Install or sign in to what is missing; demo/README.md lists the versions we used." >&2
   exit 1

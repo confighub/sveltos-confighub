@@ -16,16 +16,22 @@ release is its onboarding baseline, and the handover publishes the record's
 first release. Every release after those waits for an approval from you or
 Milton.
 
+Every release after onboarding waits for one approval, from you or Milton. To
+allow only one of you, set `APPROVERS=$YOU_ID` or `APPROVERS=$MILTON_ID` before
+the first command below, and keep it set until `setup/gates.sh` has run.
+Onboarding takes about ten minutes.
+
 ```bash
 source demo/env.sh
 bash $DEMO/setup/onboard.sh
 ```
 
-It runs `cub sveltos apply`, which writes `apply.sh`, then runs `apply.sh`.
-`apply.sh`'s first step reports that facts could not be collected from the management cluster
-(`mgmt/mgmt: not collected`). That is expected on kind, where the cluster's
-in-cluster address isn't reachable from your machine, and nothing depends on
-it.
+It runs `cub sveltos apply`, which writes `apply.sh`, then runs `apply.sh`. The
+terminal shows its steps; its whole output is in `$AI_CHAOS_DIR/onboard.log`.
+There, the first step reports that facts could not be collected from the
+management cluster (`mgmt/mgmt: not collected`). That is expected on kind,
+where the cluster's in-cluster address isn't reachable from your machine, and
+nothing depends on it.
 
 **Why a baseline.** ConfigHub refuses a variant's first release through the
 onboarding change order: the order counts a variant just cloned from its base

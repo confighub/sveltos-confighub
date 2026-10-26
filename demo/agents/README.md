@@ -10,14 +10,27 @@ page is that contract.
 
 `run-agent.sh <devil|angel|milton> <run-name> <prompt-file>` gives the agent:
 
-| What | Where it comes from |
-| --- | --- |
-| **The task** | The prompt file, with each `${VARIABLE}` filled from the environment. A missing one stops the run before it starts. The scenarios say what to set |
-| **Standing instructions** | `devil.md`, `angel.md` or `milton.md`, with `$AI_CHAOS_DIR` and `$DEMO` filled in, added to the runtime's own system prompt |
-| **Its ConfigHub identity** | A `cub` configuration made for the run in its directory (`CUB_CONFIG`), with one context, `chaos-<agent>`, signed in afresh as that agent's service account with its key, and a copy of the `cub sveltos` plugin. It goes when the run ends. Your own `cub` configuration, and the agents' in `$AI_CHAOS_DIR/cub`, which the scripts use, are not in reach |
-| **The clusters** | A kubeconfig made for the run (`KUBECONFIG`), with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2`, and no current context, so every command names its cluster |
-| **The policy sandbox** | `$AI_CHAOS_DIR/sandbox.kubeconfig`, named in the prompts that need it |
-| **Isolation** | It starts in a new empty directory outside any repository. It gets nothing on stdin, no MCP servers or connectors, and no memory of earlier runs. Every command it runs is held in Claude Code's sandbox (below) |
+- **The task:** the prompt file, with each `${VARIABLE}` filled from the
+  environment. A missing one stops the run before it starts. The scenarios say
+  what to set.
+- **Standing instructions:** `devil.md`, `angel.md` or `milton.md`, with
+  `$AI_CHAOS_DIR` and `$DEMO` filled in, added to the runtime's own system
+  prompt.
+- **Its ConfigHub identity:** a `cub` configuration made for the run in its
+  directory (`CUB_CONFIG`). It holds one context, `chaos-<agent>`, signed in
+  afresh as that agent's service account with its key, and a copy of the
+  `cub sveltos` plugin, and it goes when the run ends. Your own `cub`
+  configuration, and the agents' in `$AI_CHAOS_DIR/cub`, which the scripts
+  use, are out of reach.
+- **The clusters:** a kubeconfig made for the run (`KUBECONFIG`), with the
+  contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`,
+  `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2`, and no current context,
+  so every command names its cluster.
+- **The policy sandbox:** `$AI_CHAOS_DIR/sandbox.kubeconfig`, named in the
+  prompts that need it.
+- **Isolation:** it starts in a new empty directory outside any repository. It
+  gets nothing on stdin, no MCP servers or connectors, and no memory of earlier
+  runs. Every command it runs is held in Claude Code's command sandbox (below).
 
 ## What each agent may run
 
@@ -61,19 +74,21 @@ still show loops and chained commands.
 
 Matching text is not a boundary on its own: a program can still open any file
 its user can. So there are two more lines:
-- **The sandbox.** Every command an agent runs is held in Claude Code's
-  sandbox (macOS Seatbelt), set per run in `$AI_CHAOS_DIR/guards/<agent>.json`.
-  It reads nothing in your home folder but what the agent's tools need:
-  `cub`, the policy sandbox's kubeconfig, Python's packages, and the two files
-  of this kit the prompts name, `agents/no-policies.yaml` and
-  `proof/token-subject.sh`. So not your `cub` configuration, the keys, the
-  other agents' configurations, your notes or other credentials, whichever
-  program asks (`kubectl --from-file` included). It writes only its own
-  directory, which holds a `cub` configuration made for the run and goes when
-  the run ends. It reaches ConfigHub and local ports (the kind clusters), and
-  a command cannot leave the sandbox. One opening is needed: `cub`, a Go
-  program, checks TLS through macOS's trust service, which the sandbox
-  reaches only with `enableWeakerNetworkIsolation`.
+- **The command sandbox.** Every command an agent runs is held in Claude
+  Code's sandbox (macOS Seatbelt), set per run in
+  `$AI_CHAOS_DIR/guards/<agent>.json`, and a command cannot leave it.
+  - **What it reads.** Nothing in your home folder but what the agent's tools
+    need: `cub`, the policy sandbox's kubeconfig, Python's packages, and the
+    two files of this kit the prompts name, `agents/no-policies.yaml` and
+    `proof/token-subject.sh`. So not your `cub` configuration, the keys, the
+    other agents' configurations, your notes or other credentials, whichever
+    program asks (`kubectl --from-file` included).
+  - **What it writes.** Only its own directory, which holds the `cub`
+    configuration made for the run and goes when the run ends.
+  - **What it reaches.** ConfigHub, and local ports: the kind clusters.
+  - **The one opening.** `cub`, a Go program, checks TLS through macOS's trust
+    service, which the sandbox reaches only with
+    `enableWeakerNetworkIsolation`.
 - **ConfigHub.** It refuses an approval from anyone the workflow does not
   name. `setup/gates.sh` and the rollouts name only you and Milton, and never
   a change's author. With no other identity in reach, Devil and Angel cannot

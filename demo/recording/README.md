@@ -16,7 +16,7 @@ generated.
 | --- | --- |
 | `runs/01-rotation/` | A rotation nobody picked up |
 | `runs/02-blast-radius/` | Half the fleet at once |
-| `runs/03-parity/` | Staging said yes, prod said no |
+| `runs/03-parity/` | Staging said yes, prod said no (since retired: the demo's outage 3 is now [the nightly repave](../scenarios/03-repave.md)) |
 
 In each:
 - **`<agent>-<UTC time>.jsonl`** is the agent's full event stream, and the
@@ -38,6 +38,12 @@ In each:
 
 How this run differed from the demo as it now stands:
 - **Approvals:** a person approved every release. The demo adds Milton.
+- **Identities:** the agents were ConfigHub workers, run with the operator's
+  own `cub` configuration and without Claude Code's command sandbox. The demo
+  now gives each agent a service account, a `cub` configuration of its own,
+  and the command sandbox.
+- **Outage 3:** this run's outage 3, the parity outage, has been retired. The
+  demo's outage 3 is now the nightly repave.
 - **The plugin:** the agents ran a development build of `cub sveltos`, invoked
   as `cub-sveltos-chaos`. Its features shipped in v0.13.0. The demo calls
   `cub sveltos`.
