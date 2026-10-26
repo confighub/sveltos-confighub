@@ -66,7 +66,7 @@ things:
    bash $DEMO/proof/token-subject.sh kind-chaos-mgmt mgmt mgmt-sveltos-kubeconfig re-kubeconfig
    ```
 
-   With Sveltos v1.15.0 it prints `system:serviceaccount:projectsveltos:projectsveltos`.
+   With Sveltos v1.15.0 and v1.16.0 it prints `system:serviceaccount:projectsveltos:projectsveltos`.
    The policy must exempt that identity, not `register-mgmt-cluster`, which is the
    job that registered the cluster. The first run's Angel exempted the wrong
    one, and the review caught it.

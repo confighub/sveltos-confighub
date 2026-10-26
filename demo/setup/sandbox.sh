@@ -24,12 +24,22 @@ if [ "${1:-}" = --reset ]; then
   echo "sandbox reset"; exit 0
 fi
 dir=${AI_CHAOS_DIR:-$HOME/ai-chaos}
-sveltos=${SVELTOS_VERSION:-v1.16.0}
+# The fleet's Sveltos version and its manifest's sha256 are kind-fleet.mjs's.
+fleet="$(cd "$(dirname "$0")" && pwd)/kind-fleet.mjs"
+pinned=$(sed -n 's/^const VERSION = "\(.*\)";$/\1/p' "$fleet")
+lock=$(sed -n 's/^const MANIFEST_SHA = "\(.*\)";$/\1/p' "$fleet")
+sveltos=${SVELTOS_VERSION:-$pinned}
 mkdir -p "$dir"
 kind get clusters 2>/dev/null | grep -q '^chaos-policy-sandbox$' ||
   kind create cluster --name chaos-policy-sandbox --kubeconfig "$dir/sandbox.kubeconfig" --wait 180s
 manifest=$(mktemp)
 curl -fsSL "https://raw.githubusercontent.com/projectsveltos/sveltos/$sveltos/manifest/manifest.yaml" -o "$manifest"
+if [ "$sveltos" = "$pinned" ]; then
+  got=$(shasum -a 256 "$manifest" | cut -d' ' -f1)
+  [ "$got" = "$lock" ] || { rm -f "$manifest"; echo "the Sveltos $sveltos manifest's sha256 is $got, not $lock" >&2; exit 1; }
+else
+  echo "Sveltos $sveltos is not the version kind-fleet.mjs pins ($pinned), so its manifest is not checked" >&2
+fi
 python3 - "$manifest" <<'PY' | kubectl --kubeconfig "$dir/sandbox.kubeconfig" apply --server-side -f - >/dev/null
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d and d.get("kind") == "CustomResourceDefinition"]
