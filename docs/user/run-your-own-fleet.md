@@ -140,16 +140,17 @@ These were each paid for once so you do not have to.
   the image its run used.
 - **The gateway auth secret must be typed** `addons.projectsveltos.io/cluster-profile`;
   an Opaque secret is rejected. Sveltos fetches over TLS unless the profile's
-  `remoteURL` sets `plainHTTP: true` (Sveltos v1.14.0 and later). For a fleet
-  that runs longer than a day, put a server-hosted worker in it, its ID
-  under `username` and its secret under `password`: the gateway lets a
-  worker pull the releases of the Targets that grant its bot user View and
-  ViewChildren, and the credential does not expire (measured on 2026-09-26
-  with Sveltos v1.15.0, when a Target named its worker). A `cub auth
-  get-token` login token under `token` also works, which is what the chapter
-  runs use, but it expires within a day. Give each worker its own Secret:
-  the gateway refuses a worker the Target does not grant access to with 403
-  (measured before `cub` v0.7.0, as a worker that was not the Target's own).
+  `remoteURL` sets `plainHTTP: true` (Sveltos v1.14.0 and later). Put a
+  service account's token in it: the word `token` under `username` and the
+  token under `password`. The gateway lets the account pull the releases of
+  the Targets that grant it View and ViewChildren, and a token does not
+  expire until it is revoked. Measured on 2026-10-26 with Sveltos v1.15.0 and
+  ConfigHub v0.9.5: one token served Targets in two Spaces, an account with
+  no grant got 403, and a revoked token got 401 at the next fetch. A
+  `cub auth get-token` login token under `token` also works, which is what
+  the chapter runs use, but it expires within a day. The chapters were
+  recorded with a server-hosted worker's ID and secret instead; ConfigHub is
+  removing workers.
 - **A Space serves from the gateway only with a release target set and a
   release published.** Until both exist the gateway answers with an error,
   which is the correct inert state for an unapproved record.
@@ -223,10 +224,10 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
 4. **Name the cluster's destination**: mint each cluster's named Target in
    your infrastructure Space, and grant the identity Sveltos pulls with View
    and ViewChildren on it:
-   `cub target create <cluster> --space <infra-space> --permission View:<bot user> --permission ViewChildren:<bot user> --allow-exists`,
-   where `<bot user>` is the worker's `UserID`
-   (`cub worker get --space <infra-space> <worker> -o jq=.BridgeWorker.UserID`),
-   not its worker ID.
+   `cub target create <cluster> --space <infra-space> --allow-exists`, then
+   `cub target update <cluster> --space <infra-space> --permission View:serviceaccount:<account> --permission ViewChildren:serviceaccount:<account>`,
+   where `<account>` is a service account with no role in the organization
+   (`cub serviceaccount create <account>`).
    That is the form since `cub` v0.7.0. The recorded chapters were made
    before it, when a Target was created against a worker
    (`cub target create <cluster> '{}' <worker> --provider OCI --toolchain Any`),
@@ -284,8 +285,9 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    for hub.confighub.com; another server names its own in `GET /api/info`), and
    publishing is what moves the tag the fleet follows.
 10. **Let Sveltos fetch**: the management cluster carries a Secret of type
-    `addons.projectsveltos.io/cluster-profile` holding the Targets' server
-    worker as `username` and `password` (a credential that does not expire),
+    `addons.projectsveltos.io/cluster-profile` holding the word `token` as
+    `username` and a token of the service account the Targets grant as
+    `password` (it does not expire until revoked),
     and one bootstrap ClusterProfile per workload Space pointing at that
     Space's gateway address. [Onboard your Sveltos fleet](onboard-your-sveltos-fleet.md)
     writes both for you.

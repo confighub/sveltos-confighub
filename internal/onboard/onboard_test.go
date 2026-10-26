@@ -498,11 +498,13 @@ func TestApplyScript(t *testing.T) {
 		{strings.Contains(script, `case "$out" in *"nothing left to promote"*) return 0`), "a promotion that outlasts its request is asked again, and one the change order finished counts as done"},
 		{strings.Contains(script, `--target-stage "$2" --squash --quiet`), "a promotion takes each change as one diff, so a function run at the root cannot reach a class's clusters past its protection"},
 		{strings.Contains(script, "k create secret generic confighub-sveltos-targets "), "the gateway Secret is named for its Targets Space"},
-		{regexp.MustCompile(`--from-file=username=<\(cub worker get [^)]*BridgeWorkerID`).MatchString(script) &&
-			regexp.MustCompile(`--from-file=password=<\(cub worker get [^)]*--include-secret -o jq=\.BridgeWorker\.Secret`).MatchString(script),
-			"the gateway credential is the Targets' worker, fed to the Secret through file descriptors"},
+		{strings.Contains(script, "cub serviceaccount token create sveltos-delivery ") &&
+			strings.Contains(script, `--from-literal=username=token --from-file=password=<(printf '%s' "$token")`) &&
+			strings.Contains(script, "k annotate --local -f - sveltos.confighub.com/token-jti="),
+			"the gateway credential is a token of the delivery service account, fed to the Secret through a file descriptor"},
+		{!strings.Contains(script, "cub worker create") && !strings.Contains(script, "cub worker get"), "no worker is made or read: ConfigHub is removing workers"},
 		{!strings.Contains(script, "get-token"), "a login token expires within a day, so the fleet must not read the gateway with one"},
-		{!strings.Contains(script, "--from-literal"), "a credential on the command line shows in the process list"},
+		{!strings.Contains(script, "--from-literal=password"), "a credential on the command line shows in the process list"},
 	}
 	for _, c := range checks {
 		if !c.ok {

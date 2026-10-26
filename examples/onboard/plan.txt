@@ -34,7 +34,7 @@ Not onboarded
   cluster dev-1: no profile selects it
 
 In ConfigHub
-  4 Targets in sveltos-targets, one per cluster, on a server-hosted worker
+  4 Targets in sveltos-targets, one per cluster, which the service account sveltos-delivery may pull from
   3 components, each one base, 8 variants, 1 management record
   13 Spaces and 8 Links, one tying each unit of a class base or a variant to its upstream (check your organization's quotas for both first)
   first rollout: ingress-nginx in 1 stage, kyverno in 2 stages, kyverno-policies in 2 stages; one approval per stage, one release per variant

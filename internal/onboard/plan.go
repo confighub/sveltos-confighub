@@ -17,17 +17,27 @@ import (
 )
 
 const (
-	workflowSlug  = "rollout"
-	workerSlug    = "server-worker"
+	workflowSlug = "rollout"
+	// oldWorkerSlug is the server-hosted worker apply.sh made before 0.15 as
+	// the credential Sveltos pulled with; a service account replaces it.
+	oldWorkerSlug = "server-worker"
 	defaultStage  = "fleet"
 	releaseTag    = "latest"
 	fetchInterval = "1m0s"
 	// MinimumSveltos is the first release whose addon controller reads the
 	// gzipped layers the ConfigHub gateway serves.
 	MinimumSveltos = "v1.14.0"
-	// MinimumCub is the first cub whose Targets take permissions in place of
-	// a worker, which apply.sh relies on.
-	MinimumCub        = "v0.7.0"
+	// MinimumCub is the first cub that issues service-account tokens with no
+	// expiry (cub serviceaccount token create), which apply.sh gives Sveltos.
+	// The gateway taking them as username token was measured on ConfigHub v0.9.5.
+	MinimumCub = "v0.8.13"
+	// tokenJTIAnnotation on the gateway Secret records which token it holds, so a
+	// re-run can tell whether ConfigHub still takes it.
+	tokenJTIAnnotation = "sveltos.confighub.com/token-jti"
+	// liveTokenJQ counts the tokens in cub serviceaccount token list whose jti
+	// is $jti (a shell variable) and that are neither revoked nor expired.
+	// cub v0.9.0 and later list each as {UserToken: ...}, earlier ones bare.
+	liveTokenJQ       = `[.[] | (.UserToken // .) | select(.Jti == \"$jti\" and .RevokedAt == null and (.ExpiresAt == null or .ExpiresAt > (now | todate)))] | length`
 	secretNamespace   = "projectsveltos"
 	secretType        = "addons.projectsveltos.io/cluster-profile"
 	profileAPIVersion = "config.projectsveltos.io/v1beta1"
@@ -38,10 +48,15 @@ var clusterRefAPI = map[string]string{
 	"Cluster":        "cluster.x-k8s.io/v1beta1",
 }
 
-// One gateway Secret per Targets Space: the gateway lets a worker pull only
-// the releases of Targets that grant its bot user access, so two onboardings
-// that shared a Secret would lock one of them out.
+// One gateway Secret per onboarding, named for its Targets Space: it holds a
+// token of the onboarding's own service account, which pulls only the releases
+// of the Targets that grant it access.
 func gatewaySecretName(targetsSpace string) string { return "confighub-" + targetsSpace }
+
+// deliveryAccount is the service account Sveltos pulls an onboarding's
+// releases with: no role in the organization, and View and ViewChildren on
+// each of its Targets. It writes nothing.
+func deliveryAccount(prefix string) string { return prefix + "-delivery" }
 
 // Options are the plan's choices beyond its input.
 type Options struct {
