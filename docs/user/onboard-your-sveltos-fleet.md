@@ -21,7 +21,7 @@ variant's latest approved release from ConfigHub's OCI gateway. If your
 profiles are live, the handover moves them over in the numbered order, with
 nothing reinstalled.
 
-You need the `cub` CLI, v0.7.0 or newer, logged in to your ConfigHub organization
+You need the `cub` CLI, v0.8.13 or newer, logged in to your ConfigHub organization
 (`cub auth login`), `kubectl` access to your management cluster, which must
 run Sveltos v1.14.0 or newer, the plugin, and [Helm](https://helm.sh/docs/intro/install/) v3 or v4:
 
@@ -205,7 +205,7 @@ MGMT_CONTEXT=<kubectl context of your management cluster> bash onboard/apply.sh
 `apply` writes the files, the rendered objects among them, and one script,
 and runs nothing. The script for the example is
 [committed](../../examples/onboard/apply/apply.sh), so you can read exactly
-what yours will do. It checks first that `cub` is logged in and is v0.7.0 or
+what yours will do. It checks first that `cub` is logged in and is v0.8.13 or
 newer, and that your management cluster runs Sveltos v1.14.0 or newer (earlier
 releases cannot read the gzipped layers ConfigHub's gateway serves), then:
 
@@ -241,25 +241,34 @@ releases cannot read the gzipped layers ConfigHub's gateway serves), then:
    its cluster, within a minute of it being published, and puts back
    anything changed by hand.
 
-![A delivery profile as apply writes it, annotated: one per variant, addressed to one cluster by clusterRefs, drift put back, continueOnError always on, and one policyRefs entry reading the variant's latest approved release from ConfigHub's OCI gateway with the Targets' worker credential](../images/sveltos/sveltos-delivery-profile.svg)
+![A delivery profile as apply writes it, annotated: one per variant, addressed to one cluster by clusterRefs, drift put back, continueOnError always on, and one policyRefs entry reading the variant's latest approved release from ConfigHub's OCI gateway with a token of the delivery service account](../images/sveltos/sveltos-delivery-profile.svg)
 
 The whole script is safe to re-run. It picks up where ConfigHub says each
 step stands, and it never writes over a change made in ConfigHub since.
 
 Sveltos reads the gateway as the service account `<prefix>-delivery`, with a
 token of it: the Secret's username is the word `token`, its password the
-token. The token does not expire until it is revoked, it can pull only the
-releases of the Targets that grant the account access, and the account can
-write nothing. The script moves the token from `cub` into the Secret without
-writing it to disk or showing it, and a re-run keeps the token the Secret
-holds.
-- **To rotate it,** revoke it (`cub serviceaccount token list <prefix>-delivery`
-  names each token by the Secret it was issued for), delete the Secret, and
-  run `apply.sh` again.
+token. A token issued this way does not expire, unless your server's policy
+sets an expiry. It can pull only the releases of the Targets that grant the
+account access, and the account can write nothing. The script moves the token
+from `cub` into the Secret without writing it to disk or showing it.
+- **Re-runs.** The Secret records which token it holds, in the annotation
+  `sveltos.confighub.com/token-jti`. A re-run keeps that token while ConfigHub
+  says it is live. One that was revoked or has expired, or that belongs to an
+  account made again, is replaced.
+- **To rotate it without a gap,** run `ROTATE_TOKEN=1 bash apply.sh`. It puts a
+  new token in the Secret and names the old one. Once the new token's
+  LAST-USED moves (`cub serviceaccount token list <prefix>-delivery`, which
+  names each token by the Secret it was issued for), revoke the old one with
+  `cub serviceaccount token revoke <prefix>-delivery <jti>`.
+- **Issuing a token takes Impersonate** on the service account, which an
+  organization admin has; Manage does not include it.
 - **A fleet onboarded before 0.15** has a Secret holding a server-hosted
   worker's ID and secret. ConfigHub is removing workers. Run the new
   `apply.sh`: it replaces that Secret with a token, and names the old worker
-  to delete once Sveltos has fetched with the token.
+  to delete once Sveltos has fetched with the token. Until you delete it, the
+  old worker still works, and the previous version's `apply.sh` would write
+  its credential back.
 
 Measured on 2026-10-26 with Sveltos v1.15.0 and ConfigHub v0.9.5:
 - a release pulled with username `token` and a service account's token was
@@ -677,13 +686,18 @@ cub target update <cluster> --space <prefix>-targets \
   --permission "View:serviceaccount:<prefix>-reporter" \
   --permission "ViewChildren:serviceaccount:<prefix>-reporter" \
   --permission "EditChildren:serviceaccount:<prefix>-reporter"
+cub serviceaccount key add <prefix>-reporter --generate <prefix>-reporter.jwk
+cub context create <prefix>-reporter --server https://hub.confighub.com
+cub --context <prefix>-reporter auth login --private-key=<prefix>-reporter.jwk
+CUB_CONTEXT=<prefix>-reporter cub sveltos status --kube-context <management cluster context> --watch
 ```
 
-A key sign-in lasts a day. `status --watch` reads the context's saved
-sign-in again before each reading, but only `cub` renews it, from the key,
-when a `cub` command runs for that context. So if nothing else does within a
-day, run `cub --context <context> auth get-token >/dev/null` daily beside the
-watch, or restart the watch.
+Keep the key file where only you can read it. A key sign-in lasts a day.
+`status --watch` reads the context's saved sign-in again before each
+reading, but only `cub` renews it, from the key, and only once it is within a
+minute of expiring. So beside the watch, run
+`cub --context <prefix>-reporter auth get-token >/dev/null` every few
+minutes, or restart the watch.
 
 **Health comes from Sveltos, when it deploys and after.** Each delivery
 profile carries `validateHealths` for the workloads its charts deliver, named

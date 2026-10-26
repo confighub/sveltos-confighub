@@ -27,13 +27,16 @@ const (
 	// MinimumSveltos is the first release whose addon controller reads the
 	// gzipped layers the ConfigHub gateway serves.
 	MinimumSveltos = "v1.14.0"
-	// MinimumCub is the first cub with service accounts whose tokens need not
-	// expire and that the OCI gateway takes as username token, which apply.sh
-	// relies on.
-	MinimumCub        = "v0.8.13"
-	secretNamespace   = "projectsveltos"
-	secretType        = "addons.projectsveltos.io/cluster-profile"
-	profileAPIVersion = "config.projectsveltos.io/v1beta1"
+	// MinimumCub is the first cub that issues service-account tokens with no
+	// expiry (cub serviceaccount token create), which apply.sh gives Sveltos.
+	// The gateway taking them as username token was measured on ConfigHub v0.9.5.
+	MinimumCub = "v0.8.13"
+	// tokenJTIAnnotation on the gateway Secret records which token it holds, so a
+	// re-run can tell whether ConfigHub still takes it.
+	tokenJTIAnnotation = "sveltos.confighub.com/token-jti"
+	secretNamespace    = "projectsveltos"
+	secretType         = "addons.projectsveltos.io/cluster-profile"
+	profileAPIVersion  = "config.projectsveltos.io/v1beta1"
 )
 
 var clusterRefAPI = map[string]string{

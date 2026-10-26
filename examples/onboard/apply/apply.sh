@@ -296,23 +296,37 @@ fi
 step "6/6 Point Sveltos at ConfigHub (your management cluster)"
 # Sveltos reads the gateway as the service account sveltos-delivery, with a token
 # of it: the username is the word token, the password the token. It pulls
-# only the releases of the Targets that grant the account access, and does
-# not expire until it is revoked. A re-run keeps the token the Secret holds.
-# To rotate it, revoke it (cub serviceaccount token list sveltos-delivery names
-# each token by the Secret it was issued for), delete the Secret, and run
-# this script again. The token goes from cub into the Secret through a
-# variable and a file descriptor, never to disk, the command line, or the
-# terminal.
-held=$(k get secret -n projectsveltos confighub-sveltos-targets -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)
-if [ "$held" != token ]; then
-  token=$(cub serviceaccount token create sveltos-delivery --description "Sveltos on ${MGMT_CONTEXT:-the management cluster}, Secret projectsveltos/confighub-sveltos-targets" -o jq=.Token | tr -d '"\n')
-  case "$token" in ""|null) echo "could not issue a token for sveltos-delivery"; exit 1 ;; esac
-  k create secret generic confighub-sveltos-targets --namespace projectsveltos --type addons.projectsveltos.io/cluster-profile \
-    --from-literal=username=token --from-file=password=<(printf '%s' "$token") \
-    --dry-run=client -o yaml | k apply -f -
-  unset token
+# only the releases of the Targets that grant the account access. A token
+# issued here does not expire, unless your server's policy sets an expiry.
+# The Secret records which token it holds (annotation sveltos.confighub.com/token-jti),
+# and a re-run keeps it while ConfigHub says it is live: one revoked or
+# expired, or of an account made again, is replaced. The token goes from cub
+# into the Secret through a variable and a file descriptor, never to disk,
+# the command line, or the terminal.
+# To rotate it without a gap: ROTATE_TOKEN=1 bash apply.sh puts a new token in
+# the Secret and names the old one; once the new one's LAST-USED moves
+# (cub serviceaccount token list sveltos-delivery), revoke the old one.
+held=$(k get secret -n projectsveltos confighub-sveltos-targets -o go-template='{{ index .data "username" | base64decode }}' 2>/dev/null || true)
+jti=$(k get secret -n projectsveltos confighub-sveltos-targets -o go-template='{{ index .metadata.annotations "sveltos.confighub.com/token-jti" }}' 2>/dev/null || true)
+case "$jti" in "<no value>") jti= ;; esac
+live=0
+if [ "$held" = token ] && [ -n "$jti" ] && [ -z "${ROTATE_TOKEN:-}" ]; then
+  live=$(cub serviceaccount token list sveltos-delivery -o "jq=[.[] | .UserToken | select(.Jti == \"$jti\" and .RevokedAt == null and (.ExpiresAt == null or .ExpiresAt > (now | todate)))] | length") || live=0
+fi
+if [ "$live" != 1 ]; then
+  issued=$(cub serviceaccount token create sveltos-delivery --description "Sveltos on ${MGMT_CONTEXT:-the management cluster}, Secret projectsveltos/confighub-sveltos-targets" -o 'jq=.UserToken.Jti + " " + .Token' | tr -d '"') || issued=
+  new_jti=${issued%% *}; token=${issued#* }
+  case "$token" in ""|null|"$issued") echo "could not issue a token for sveltos-delivery: issuing one takes Impersonate on the service account, which an organization admin has"; exit 1 ;; esac
+  if ! k create secret generic confighub-sveltos-targets --namespace projectsveltos --type addons.projectsveltos.io/cluster-profile \
+      --from-literal=username=token --from-file=password=<(printf '%s' "$token") \
+      --dry-run=client -o yaml | k annotate --local -f - sveltos.confighub.com/token-jti="$new_jti" -o yaml | k apply -f -; then
+    cub serviceaccount token revoke sveltos-delivery "$new_jti" --quiet || true
+    echo "could not write the gateway Secret; the token issued for it is revoked"; exit 1
+  fi
+  unset token issued
   # A Secret from before cub sveltos 0.15 held a worker's ID and secret.
-  [ -z "$held" ] || echo "The gateway Secret held a worker's credential; it now holds a token of sveltos-delivery. Once Sveltos has fetched with it, delete the old worker: cub worker delete --space sveltos-targets server-worker"
+  [ -z "$held" ] || [ "$held" = token ] || echo "The gateway Secret held a worker's credential; it now holds a token of sveltos-delivery. The old worker keeps working until you delete it, once Sveltos has fetched with the token: cub worker delete --space sveltos-targets server-worker"
+  [ -z "$jti" ] || [ "$jti" = "$new_jti" ] || echo "The gateway Secret had token $jti. If it is still live, revoke it once the new token's LAST-USED moves: cub serviceaccount token revoke sveltos-delivery $jti"
 fi
 deliver ingress-nginx sveltos-ingress-nginx-prod-eu sveltos-ingress-nginx-prod-us
 deliver kyverno sveltos-kyverno-staging-eu sveltos-kyverno-prod-eu sveltos-kyverno-prod-us

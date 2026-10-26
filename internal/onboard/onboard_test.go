@@ -499,7 +499,8 @@ func TestApplyScript(t *testing.T) {
 		{strings.Contains(script, `--target-stage "$2" --squash --quiet`), "a promotion takes each change as one diff, so a function run at the root cannot reach a class's clusters past its protection"},
 		{strings.Contains(script, "k create secret generic confighub-sveltos-targets "), "the gateway Secret is named for its Targets Space"},
 		{strings.Contains(script, "cub serviceaccount token create sveltos-delivery ") &&
-			strings.Contains(script, `--from-literal=username=token --from-file=password=<(printf '%s' "$token")`),
+			strings.Contains(script, `--from-literal=username=token --from-file=password=<(printf '%s' "$token")`) &&
+			strings.Contains(script, "k annotate --local -f - sveltos.confighub.com/token-jti="),
 			"the gateway credential is a token of the delivery service account, fed to the Secret through a file descriptor"},
 		{!strings.Contains(script, "cub worker create") && !strings.Contains(script, "cub worker get"), "no worker is made or read: ConfigHub is removing workers"},
 		{!strings.Contains(script, "get-token"), "a login token expires within a day, so the fleet must not read the gateway with one"},

@@ -216,7 +216,8 @@ case "$*" in
   "unit list "*) echo 99 ;;
   "changeworkflow get "*) echo staging,prod ;;
   "serviceaccount token create --help") if [ -n "$OLD_CUB" ]; then echo 'unknown command "serviceaccount"'; else echo "      --expires-in duration"; fi ;;
-  "serviceaccount token create "*) if [ -n "$NO_TOKEN" ]; then echo null; else echo '"tok-123"'; fi ;;
+  "serviceaccount token create "*) if [ -n "$NO_TOKEN" ]; then echo null; else echo '"jti-new tok-123"'; fi ;;
+  "serviceaccount token list "*) echo "${LIVE:-0}" ;;
   "release publish "*)
     for s in $WAITING; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires approval: 1 Approval attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
     for s in $NEEDS; do [ "$3" = "$s" ] && { echo "Failed: HTTP 422: requires policycheck: 1 PolicyCheck attestation(s) from eligible attesters; kyverno revision 3 has 0 of 1" >&2; exit 1; }; done
@@ -234,8 +235,10 @@ exit 0
 echo "kubectl $*" >> "$LOG"
 case "$*" in
   *"get deployment addon-controller"*) echo ghcr.io/projectsveltos/addon-controller:v1.15.0 ;;
-  *"get secret"*"{.data.username}"*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "$HELD_USER" | base64 ;;
-  *"apply -f -"*) cat >> "$LOG.applied" ;;
+  *"get secret"*'index .data "username"'*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "$HELD_USER" ;;
+  *"get secret"*"index .metadata.annotations"*) [ -z "$HELD_USER" ] && exit 1; printf '%s' "${HELD_JTI:-<no value>}" ;;
+  *"annotate --local -f -"*) j=""; for a in "$@"; do case "$a" in *token-jti=*) j=${a#*=} ;; esac; done; cat; echo "# token-jti: $j" ;;
+  *"apply -f -"*) [ -z "$APPLY_FAILS" ] || exit 1; cat >> "$LOG.applied" ;;
   *"create secret generic "*)
     name="" user="" pw="" next=""
     for a in "$@"; do
@@ -270,12 +273,13 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 	bin := t.TempDir()
 	fakeTools(t, bin)
 	order := "sveltos-kyverno-base/" + plan.Profiles[0].ReleaseOrder
-	needs, held, heldUser := "", "", ""
+	needs, held, heldUser, heldJTI, live := "", "", "", "", ""
 	var applied string
 	run := func(unreleased, waiting string, propose bool) (string, string, error) {
 		log := filepath.Join(t.TempDir(), "calls")
 		cmd := exec.Command("bash", filepath.Join(dir, "apply.sh"))
-		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "UNRELEASED="+unreleased, "WAITING="+waiting, "RETRY_SECONDS=0", "NEEDS="+needs, "HELD="+held, "HELD_USER="+heldUser)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "LOG="+log, "UNRELEASED="+unreleased, "WAITING="+waiting, "RETRY_SECONDS=0", "NEEDS="+needs, "HELD="+held,
+			"HELD_USER="+heldUser, "HELD_JTI="+heldJTI, "LIVE="+live)
 		if propose {
 			cmd.Env = append(cmd.Env, "PROPOSE_ONLY=1")
 		}
@@ -305,7 +309,8 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 		t.Errorf("each Target grants the service account sveltos-delivery View and ViewChildren, and no worker is used:\n%s", calls)
 	}
 	if !strings.Contains(calls, "cub serviceaccount token create sveltos-delivery ") ||
-		!strings.Contains(applied, "name: confighub-sveltos-targets") || !strings.Contains(applied, "username: dG9rZW4=") || !strings.Contains(applied, "password: dG9rLTEyMw==") {
+		!strings.Contains(applied, "name: confighub-sveltos-targets") || !strings.Contains(applied, "username: dG9rZW4=") || !strings.Contains(applied, "password: dG9rLTEyMw==") ||
+		!strings.Contains(applied, "# token-jti: jti-new") {
 		t.Errorf("the gateway Secret holds username token and a token of the service account:\n%s\n%s", calls, applied)
 	}
 	if strings.Contains(calls, "cub variant approve") {
@@ -347,23 +352,43 @@ func TestProposeOnlyApplyScript(t *testing.T) {
 
 	t.Setenv("NO_TOKEN", "1")
 	out, _, err = run("sveltos-kyverno-prod-us", "", true)
-	if err == nil || !strings.Contains(out, "could not issue a token for sveltos-delivery") || strings.Contains(applied, "kind: Secret") {
-		t.Errorf("no token, no Secret: %v\n%s", err, out)
+	if err == nil || !strings.Contains(out, "could not issue a token for sveltos-delivery") || !strings.Contains(out, "Impersonate") || strings.Contains(applied, "kind: Secret") {
+		t.Errorf("no token, no Secret, and the likely reason: %v\n%s", err, out)
 	}
 	os.Unsetenv("NO_TOKEN")
 
-	heldUser = "token"
+	heldUser, heldJTI, live = "token", "jti-old", "1"
 	_, calls, err = run("sveltos-kyverno-prod-us", "", true)
-	if err != nil || strings.Contains(calls, "serviceaccount token create sveltos-delivery ") || strings.Contains(applied, "kind: Secret") {
-		t.Errorf("a re-run keeps the token the Secret holds: %v\n%s", err, calls)
+	if err != nil || strings.Contains(calls, "serviceaccount token create sveltos-delivery ") || strings.Contains(applied, "kind: Secret") ||
+		!strings.Contains(calls, `select(.Jti == "jti-old"`) {
+		t.Errorf("a re-run keeps a token ConfigHub says is live: %v\n%s", err, calls)
 	}
-	heldUser = "6f1c9a40-worker-id"
+	live = "0"
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err != nil || !strings.Contains(calls, "serviceaccount token create sveltos-delivery ") || !strings.Contains(applied, "# token-jti: jti-new") ||
+		!strings.Contains(out, "cub serviceaccount token revoke sveltos-delivery jti-old") {
+		t.Errorf("a revoked or expired token is replaced, and the old one named: %v\n%s\n%s", err, out, calls)
+	}
+	live = "1"
+	t.Setenv("ROTATE_TOKEN", "1")
+	_, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err != nil || !strings.Contains(calls, "serviceaccount token create sveltos-delivery ") {
+		t.Errorf("ROTATE_TOKEN issues a new token even while the old one is live: %v\n%s", err, calls)
+	}
+	os.Unsetenv("ROTATE_TOKEN")
+	heldUser, heldJTI = "6f1c9a40-worker-id", ""
 	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
 	if err != nil || !strings.Contains(calls, "serviceaccount token create sveltos-delivery ") ||
-		!strings.Contains(out, "delete the old worker: cub worker delete --space sveltos-targets server-worker") {
+		!strings.Contains(out, "delete it, once Sveltos has fetched with the token: cub worker delete --space sveltos-targets server-worker") {
 		t.Errorf("a Secret holding a worker's credential is replaced, and the old worker named: %v\n%s", err, out)
 	}
-	heldUser = ""
+	heldUser, live = "", ""
+	t.Setenv("APPLY_FAILS", "1")
+	out, calls, err = run("sveltos-kyverno-prod-us", "", true)
+	if err == nil || !strings.Contains(calls, "cub serviceaccount token revoke sveltos-delivery jti-new") || !strings.Contains(out, "the token issued for it is revoked") {
+		t.Errorf("a token issued for a Secret that could not be written is revoked: %v\n%s\n%s", err, out, calls)
+	}
+	os.Unsetenv("APPLY_FAILS")
 
 	out, calls, err = run("", "", true)
 	if err != nil || strings.Contains(calls, "changeorder create") || strings.Contains(calls, "release publish") || !strings.Contains(out, "every variant in this plan is released") {

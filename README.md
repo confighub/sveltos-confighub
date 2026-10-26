@@ -82,7 +82,7 @@ plugin installation stays CLI-only.
 After onboarding you don't need the plugin day to day: changes are made with
 ConfigHub's own `cub` commands, shown below.
 
-You need the `cub` CLI, v0.7.0 or newer (`cub auth login`), `kubectl` access to your Sveltos
+You need the `cub` CLI, v0.8.13 or newer (`cub auth login`), `kubectl` access to your Sveltos
 management cluster, and Sveltos v1.14.0 or newer.
 
 ## What you can do with it
@@ -489,7 +489,7 @@ cluster: `npm run verify`, `go test ./...` and, for the demo, `bash demo/verify.
 
 ## Status
 
-`cub sveltos` v0.14.0 needs `cub` v0.7.0 or newer, and ConfigHub v0.8.2 or newer for live status. It is tested on kind with stock Sveltos v1.15.0. It has not
+`cub sveltos` needs `cub` v0.8.13 or newer, and ConfigHub v0.8.2 or newer for live status. It is tested on kind with stock Sveltos v1.15.0. It has not
 run in a production fleet yet.
 
 To stop a rollout part-way, abort its change order, then undo it in each Space

@@ -34,15 +34,21 @@ workers (confighubai/confighub#5980), and `cub` marks them deprecated.
   organization, and grants it View and ViewChildren on each Target. It can
   pull those Targets' releases and write nothing.
 - The gateway Secret holds the word `token` as username and a token of that
-  account as password. A token does not expire until it is revoked. A
-  re-run keeps the token the Secret holds; to rotate it, revoke it, delete
-  the Secret and run `apply.sh` again.
+  account as password. A token issued this way does not expire, unless the
+  server's policy sets an expiry.
+  - The Secret records the token's id. A re-run keeps the token while
+    ConfigHub says it is live, and replaces one that was revoked or has
+    expired.
+  - `ROTATE_TOKEN=1 bash apply.sh` rotates it without a gap: a new token
+    goes in the Secret, and the script names the old one to revoke once the
+    new one is in use.
+  - A token issued for a Secret that then could not be written is revoked.
 - A fleet onboarded before 0.15 keeps working until workers go. Running the
   new `apply.sh` replaces its Secret's worker credential with a token, and
   names the old worker to delete afterwards.
-- `apply.sh` now needs `cub` v0.8.13 or later, the first whose service
-  account tokens need not expire and which the gateway takes as username
-  `token`.
+- `apply.sh` now needs `cub` v0.8.13 or later, the first that issues
+  service-account tokens with no expiry. The gateway taking them as username
+  `token` was measured on ConfigHub v0.9.5.
 - Measured on 2026-10-26, with Sveltos v1.15.0 and ConfigHub v0.9.5:
   - one token served Targets in two Spaces;
   - an account with no grant was refused (403);

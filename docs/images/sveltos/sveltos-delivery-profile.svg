@@ -71,7 +71,7 @@
   <text class="p" x="668" y="330">from ConfigHub's OCI gateway, checked every</text>
   <text class="p" x="668" y="345">minute. Nothing else reaches the cluster.</text>
   <circle class="dot" cx="626" cy="385.5" r="2.5"/><path class="lead" d="M626 385.5L664 376"/>
-  <text class="ct" x="668" y="380">The Targets' worker credential</text>
+  <text class="ct" x="668" y="380">A token of the delivery service account</text>
   <text class="p" x="668" y="396">It can pull only these Targets' releases,</text>
-  <text class="p" x="668" y="411">and it does not expire.</text>
+  <text class="p" x="668" y="411">and write nothing.</text>
 </svg>
