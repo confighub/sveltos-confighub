@@ -24,7 +24,7 @@ if [ "${1:-}" = --reset ]; then
   echo "sandbox reset"; exit 0
 fi
 dir=${AI_CHAOS_DIR:-$HOME/ai-chaos}
-sveltos=${SVELTOS_VERSION:-v1.15.0}
+sveltos=${SVELTOS_VERSION:-v1.16.0}
 mkdir -p "$dir"
 kind get clusters 2>/dev/null | grep -q '^chaos-policy-sandbox$' ||
   kind create cluster --name chaos-policy-sandbox --kubeconfig "$dir/sandbox.kubeconfig" --wait 180s
