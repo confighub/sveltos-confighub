@@ -46,18 +46,29 @@ cubconfig=$(cd "${CUB_CONFIG:-$HOME/.confighub}" && pwd -P)
 home=$(cd "$HOME" && pwd -P)
 guard=("Bash(cub *--context*)" "Bash(cub *--debug*)" "Bash(*CUB_CONTEXT*)" "Bash(*CUB_CONFIG*)"
        "Read(/$cubconfig/**)" "Read(/$chaos/keys/**)" "Read(/$chaos/cub/**)" "Read(/$chaos/guards/**)"
-       "Edit(./.claude/**)")
+       "Read(./.cub/**)" "Read(./.kubeconfig)" "Edit(./.claude/**)")
+# kubectl naming Secrets as a resource, in any case: get secret, secrets/x,
+# pods,secrets. A name that merely contains "secret" is not refused.
+secrets=()
+for w in secret secrets Secret Secrets SECRET SECRETS; do
+  secrets+=("Bash(kubectl * $w)" "Bash(kubectl * $w *)" "Bash(kubectl * $w/*)" "Bash(kubectl *,$w*)" "Bash(kubectl * $w,*)")
+done
 case $agent in
   devil)
     tools=Bash
     allowed=("Bash(kubectl:*)" "Bash(cub:*)" "Bash(date:*)" "Bash(openssl rand:*)")
     # It rotates shop-token on the workload clusters; the management cluster's
     # Secrets hold the delivery account's token.
-    denied=("${never[@]}" "Bash(kubectl *kind-chaos-mgmt*secret*)" "Bash(kubectl *secret*kind-chaos-mgmt*)") ;;
+    # Every kubectl command names its cluster, and it may not change its
+    # kubeconfig to make one the default.
+    denied=("${never[@]}" "Bash(kubectl config:*)"
+            "Bash(kubectl *kind-chaos-mgmt*secret*)" "Bash(kubectl *secret*kind-chaos-mgmt*)"
+            "Bash(kubectl *kind-chaos-mgmt*Secret*)" "Bash(kubectl *Secret*kind-chaos-mgmt*)"
+            "Bash(kubectl *kind-chaos-mgmt*SECRET*)" "Bash(kubectl *SECRET*kind-chaos-mgmt*)") ;;
   angel)
     tools=Bash,Read,Write,Edit
     allowed=("Bash(kubectl get:*)" "Bash(kubectl describe:*)" "Bash(kubectl logs:*)" "Bash(cub:*)" "Bash(date:*)" "Read(./**)" "Edit(./**)")
-    denied=("${never[@]}" "Bash(kubectl *secret*)") ;;
+    denied=("${never[@]}" "${secrets[@]}" "Bash(kubectl * -f *)" "Bash(kubectl * -f=*)" "Bash(kubectl *--filename*)") ;;
   milton)
     # Milton reads and approves; it changes nothing else. In the sandbox it may
     # apply a policy and impersonate identities, to test what it approves.
@@ -73,7 +84,8 @@ case $agent in
              "Bash(bash $DEMO/proof/token-subject.sh:*)" "Bash(date:*)")
     denied=("Bash(cub attestation create:*)" "Bash(cub attestation revoke:*)" "Bash(cub worker:*)"
             "Bash(cub auth:*)" "Bash(cub context:*)" "Bash(cub serviceaccount:*)"
-            "Bash(kubectl *secret*)" "Bash(kubectl *--kubeconfig*--kubeconfig*)") ;;
+            "${secrets[@]}" "Bash(kubectl get * -f *)" "Bash(kubectl describe * -f *)"
+            "Bash(kubectl *--kubeconfig*--kubeconfig*)") ;;
   *) echo "agent is devil, angel or milton" >&2; exit 2 ;;
 esac
 
@@ -100,13 +112,15 @@ CUB_CONFIG="$cfg" CUB_CONTEXT="chaos-$agent" cub auth login --private-key="$chao
 # A kubeconfig with a context per cluster and no current one, so every
 # command names its cluster.
 kubeconfig="$work/.kubeconfig"
-(umask 077; KUBECONFIG=$(find "$chaos" -maxdepth 1 -name 'chaos-*.kubeconfig' | sort | paste -sd: -) kubectl config view --flatten > "$kubeconfig")
+clusters=$(find "$chaos" -maxdepth 1 -name 'chaos-*.kubeconfig' | sort | paste -sd: -)
+[ -n "$clusters" ] || { echo "no chaos-*.kubeconfig in $chaos: stand the fleet up first" >&2; exit 1; }
+(umask 077; KUBECONFIG=$clusters kubectl config view --flatten > "$kubeconfig")
 KUBECONFIG="$kubeconfig" kubectl config unset current-context >/dev/null
 
 # The sandbox every command the agent runs is held in (macOS Seatbelt). It
 # reads nothing in your home folder but what the agent's tools need: cub, the
-# policy sandbox's kubeconfig, Python's packages and, for Milton,
-# proof/token-subject.sh. So not your cub configuration, the keys,
+# policy sandbox's kubeconfig, Python's packages, and the two files of this
+# kit the prompts name, agents/no-policies.yaml and proof/token-subject.sh. So not your cub configuration, the keys,
 # the other agents' configurations, your notes or other credentials, whichever
 # program asks (kubectl --from-file included). It writes only its own
 # directory, never its .claude settings. It reaches ConfigHub, and local ports
@@ -116,9 +130,11 @@ KUBECONFIG="$kubeconfig" kubectl config unset current-context >/dev/null
 host=${server#*://}; host=${host%%/*}; host=${host%%:*}
 mkdir -p "$chaos/guards"
 settings="$chaos/guards/$agent.json"
-python3 - "$settings" "$work" "$host" "$home" "$chaos" "$cubconfig" "$(dirname "$(command -v cub)")" \
+demo=$(cd "$DEMO" && pwd -P)
+cubbin=$(python3 -c 'import os, shutil; print(os.path.dirname(os.path.realpath(shutil.which("cub"))))')
+python3 - "$settings" "$work" "$host" "$home" "$chaos" "$cubconfig" "$cubbin" \
   "$chaos/sandbox.kubeconfig" "$home/Library/Python" \
-  "$(cd "$DEMO" && pwd -P)/proof/token-subject.sh" <<'PY'
+  "$demo/agents/no-policies.yaml" "$demo/proof/token-subject.sh" <<'PY'
 import json, sys
 out, work, host, home, chaos, cubconfig, *readable = sys.argv[1:]
 json.dump({"sandbox": {
@@ -133,7 +149,7 @@ PY
 
 model=()
 [ -n "${MODEL:-}" ] && model=(--model "$MODEL")
-env -u CUB_TOKEN -u CUB_SERVER -u GITHUB_TOKEN \
+env -u CUB_TOKEN -u CUB_SERVER -u CONFIGHUB_TOKEN -u GITHUB_TOKEN -u GH_TOKEN \
   CUB_CONFIG="$cfg" CUB_CONTEXT="chaos-$agent" KUBECONFIG="$kubeconfig" KUBECACHEDIR="$work/.kube-cache" AI_CHAOS_DIR="$AI_CHAOS_DIR" \
   claude -p "$task" ${model[@]+"${model[@]}"} --setting-sources project --settings "$settings" --permission-mode dontAsk \
     --append-system-prompt "$(sed -e "s|\$AI_CHAOS_DIR|$AI_CHAOS_DIR|g" -e "s|\$DEMO|$DEMO|g" "$here/$agent.md")" \

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Looks through the agents' runs, before you publish them, for anything that
-# looks like a credential: a bearer token (a JWT), a private key, or a
-# kubeconfig's client key. Prints the file and line of each, never the value,
-# and exits non-zero if it finds one.
+# looks like a credential: a bearer token (a JWT), a private key, a
+# kubeconfig's client key, or a Secret's password, as text or base64-encoded
+# as a Secret's data prints them. Prints the file and line of each, never the
+# value, and exits non-zero if it finds one.
 #
 #   source demo/env.sh && bash $DEMO/proof/scan-runs.sh [directory]
 #
@@ -17,7 +18,8 @@ patterns = {
     "a PEM private key": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     "a kubeconfig client key": re.compile(r"client-key-data\\?\"?\s*:\s*\\?\"?[A-Za-z0-9+/=]{40,}"),
     # The same, base64-encoded, as a Secret's data prints them.
-    "a bearer token, base64 (a Secret's data)": re.compile(r"ZXlK[A-Za-z0-9+/]{40,}"),
+    # A JWT starts eyJhbGci; base64 again, that reads one of three ways.
+    "a bearer token, base64 (a Secret's data)": re.compile(r"(?:ZXlK|V5SmhiR2Np|leUpoYkdjaU)[A-Za-z0-9+/]{30,}"),
     "a PEM private key, base64": re.compile(r"LS0tLS1CRUdJTi[A-Za-z0-9+/]{0,12}(?:UFJJVkFURS|BSSVZBVEU|QUklWQVRF)"),
     "a Secret's password field": re.compile(r'\bpassword\\?"?\s*:\s*\\?"?[A-Za-z0-9+/=]{20,}'),
 }

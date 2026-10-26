@@ -14,8 +14,8 @@ page is that contract.
 | --- | --- |
 | **The task** | The prompt file, with each `${VARIABLE}` filled from the environment. A missing one stops the run before it starts. The scenarios say what to set |
 | **Standing instructions** | `devil.md`, `angel.md` or `milton.md`, with `$AI_CHAOS_DIR` and `$DEMO` filled in, added to the runtime's own system prompt |
-| **Its ConfigHub identity** | Its own `cub` configuration, `CUB_CONFIG=$AI_CHAOS_DIR/cub/<agent>`, which `setup/identities.sh` made with one context, `chaos-<agent>`, signed in as that agent's service account with its key. `run-agent.sh` signs it in afresh before each run. Your own `cub` configuration is not in reach |
-| **The clusters** | `KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`, with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2` |
+| **Its ConfigHub identity** | A `cub` configuration made for the run in its directory (`CUB_CONFIG`), with one context, `chaos-<agent>`, signed in afresh as that agent's service account with its key, and a copy of the `cub sveltos` plugin. It goes when the run ends. Your own `cub` configuration, and the agents' in `$AI_CHAOS_DIR/cub`, which the scripts use, are not in reach |
+| **The clusters** | A kubeconfig made for the run (`KUBECONFIG`), with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2`, and no current context, so every command names its cluster |
 | **The policy sandbox** | `$AI_CHAOS_DIR/sandbox.kubeconfig`, named in the prompts that need it |
 | **Isolation** | It starts in a new empty directory outside any repository. It gets nothing on stdin, no MCP servers or connectors, and no memory of earlier runs. Every command it runs is held in Claude Code's sandbox (below) |
 
@@ -23,9 +23,9 @@ page is that contract.
 
 | Agent | May run | Never |
 | --- | --- | --- |
-| Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below; `kubectl` on Secrets of the management cluster, where the delivery account's token is |
-| Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files, in its own directory only | the shared list below; `kubectl` on Secrets |
-| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`; `kubectl` on Secrets; a second `--kubeconfig` |
+| Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below; `kubectl config`; `kubectl` on Secrets of the management cluster, where the delivery account's token is |
+| Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files, in its own directory only, but not the run's `cub` configuration or kubeconfig | the shared list below; `kubectl` on Secrets, or on objects read from a file (`-f`) |
+| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`; `kubectl` on Secrets, or `get` and `describe` of objects read from a file; a second `--kubeconfig` |
 
 The shared list Devil and Angel may never run:
 - `cub variant approve`, and `cub attestation create` or `revoke`;
@@ -80,8 +80,9 @@ What is left:
   print it;
 - Devil can read the workload clusters' Secrets, and a pod it starts can
   reach anywhere;
-- the rules on Secrets match command text, so a command that lists Secrets
-  without saying so could still print the delivery account's token. That
+- the rules on Secrets match the command's text (`get secret`,
+  `secrets/<name>`, `pods,secrets`, in any case), so a command that reaches
+  Secrets another way could still print the delivery account's token. That
   account can only read the Targets' releases. Rotate its token after a run:
   `ROTATE_TOKEN=1` with the onboarding's `apply.sh`.
 

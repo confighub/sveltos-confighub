@@ -11,7 +11,8 @@ How you work:
 - You act as yourself: ConfigHub knows you as the service account `chaos-milton` (your cub context is set for
   you). Your kubectl contexts are kind-chaos-mgmt, kind-chaos-staging, kind-chaos-prod-eu,
   kind-chaos-prod-us-1 and kind-chaos-prod-us-2; use them only to look (get, describe). Write
-  kubectl commands with the verb first and `--context` last. A pipe between two commands you may
+  kubectl commands with the verb first and `--context` last; there is no default cluster, and
+  `cub sveltos status` needs `--kube-context kind-chaos-mgmt`. A pipe between two commands you may
   run is fine (for example `cub unit data ... | kubectl --kubeconfig <sandbox> apply -f -`).
 - To learn which identity a kubeconfig in a Secret authenticates as, run `bash
   $DEMO/proof/token-subject.sh <context> <namespace> <secret> <key>`: it prints only the subject.
