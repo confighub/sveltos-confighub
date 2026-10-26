@@ -13,7 +13,8 @@ release too, can deliver the management cluster's record from ConfigHub, and
 stores each cluster's facts on its Target. Version 0.12 works with `cub`
 v0.7.0's Targets, and asks ConfigHub through its SDK. Version 0.13 checks that
 prod runs what staging ran. Version 0.14 records live status on the Release,
-where ConfigHub v0.8.2 and newer read it.
+where ConfigHub v0.8.2 and newer read it, and 0.14.1 works with October's
+`cub`: Helm renders the charts, and the kubectl context is `--kube-context`.
 
 - **Before 0.5,** it held each Sveltos ClusterProfile, so a chart's settings
   were a Helm values string.
@@ -59,7 +60,7 @@ workers (confighubai/confighub#5980), and `cub` marks them deprecated.
   - a revoked token was refused at the next fetch (401), within a minute,
     and what was delivered stayed.
 
-## 0.14.1, unreleased
+## 0.14.1, 2026-10-26
 
 **Works with today's `cub` and ConfigHub again.** Three things stopped working
 in October, and #119 left a few loose ends.
