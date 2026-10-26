@@ -36,7 +36,7 @@ else
     : > "$run"
     if ! CUB_CONTEXT=chaos-angel PROPOSE_ONLY=1 bash apply.sh 2>&1 | tee -a "$log" "$run" |
       { grep --line-buffered -v "confighub#5794" | grep --line-buffered -E "^== |waits|approve|released|Released|Failed|error|could not" || true; }; then
-      echo "apply.sh stopped; its whole output is in $log" >&2; exit 1
+      tail -n 5 "$run" >&2; echo "apply.sh stopped; its whole output is in $log" >&2; exit 1
     fi
   }
   # The variants apply.sh says ConfigHub refused a first release.
@@ -51,7 +51,8 @@ else
   if [ -n "$baselines" ]; then
     { echo "== baselines (confighub#5794)"
       for s in $baselines; do
-        CUB_CONTEXT=chaos-angel cub release publish "$s" --annotation sveltos.confighub.com/first-release=baseline --quiet
+        CUB_CONTEXT=chaos-angel cub release publish "$s" --annotation sveltos.confighub.com/first-release=baseline --quiet ||
+          { echo "$s: its baseline was not published; run onboard.sh again (the log is $log)"; exit 1; }
         echo "$s: first release published at head, as the onboarding baseline"
       done; } 2>&1 | tee -a "$log"
     propose
