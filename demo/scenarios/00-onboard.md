@@ -13,13 +13,12 @@ It creates:
 
 The first releases are what the clusters already run: each variant's first
 release is its onboarding baseline, and the handover publishes the record's
-first release. Every release after those waits for an approval from you or
+first release. Every release after those waits for one approval, from you or
 Milton.
 
-Every release after onboarding waits for one approval, from you or Milton. To
-allow only one of you, set `APPROVERS=$YOU_ID` or `APPROVERS=$MILTON_ID` before
+To allow only one of you, set `APPROVERS=$YOU_ID` or `APPROVERS=$MILTON_ID` before
 the first command below, and keep it set until `setup/gates.sh` has run.
-Onboarding takes about ten minutes.
+Onboarding and the handover take a few minutes each.
 
 ```bash
 source demo/env.sh

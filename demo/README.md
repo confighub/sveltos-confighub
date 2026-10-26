@@ -137,7 +137,7 @@ to each:
 | Job | In this demo | With Kyverno or OPA Gatekeeper instead |
 | --- | --- | --- |
 | **Enforce** the rule on the clusters | Kubernetes' own admission control: ValidatingAdmissionPolicy, with rules written in CEL. Nothing extra runs on the clusters | Works the same way. A Kyverno policy or a Gatekeeper constraint is a unit like any other: ConfigHub holds it and releases it on approval, and Sveltos delivers it. Install the engine on the clusters first, as the demo installs Reloader |
-| **Check** a change in ConfigHub before it is released | Outage 3's repave gate: ConfigHub's own `vet-starlark` and `where-filter` functions, run as triggers on every change | Kyverno: yes, through a worker running `vet-kyverno-server` (see [Check every change against your policies](../docs/user/policy-checks.md)). OPA: no ready-made check today. ConfigHub's own checks run CEL (`vet-cel`) or Starlark (`vet-starlark`) |
+| **Check** a change in ConfigHub before it is released | Outage 3's repave gate: ConfigHub's own `vet-starlark` and `where-filter` functions, run as triggers on every change | Kyverno: yes, through `vet-kyverno-server` on a worker today; ConfigHub is removing workers, so see [Check every change against your policies](../docs/user/policy-checks.md) for what applies now. OPA: no ready-made check today. ConfigHub's own checks run CEL (`vet-cel`) or Starlark (`vet-starlark`) |
 | **Preview** a new policy's effect before it ships | `cub sveltos impact`: server-side dry runs in the policy sandbox, a cluster that runs nothing else | Not yet. The preview reads ValidatingAdmissionPolicy verdicts only, and Kyverno and Gatekeeper run as workloads, which the sandbox must not |
 
 So the demo does not bring an engine of its own: it uses the one built into
@@ -163,11 +163,11 @@ handover, the gates, live status and each piece of outage 3 were last checked:
 | Stakater Reloader (Helm chart) | 2.2.18 |
 | Also used | kubectl v1.36, Docker 29.4, Node.js 25, Python 3 with PyYAML |
 
-The recorded runs of 3 and 4 October 2026 used ConfigHub v0.8.1 and v0.8.3,
-`cub` v0.8.1, `cub sveltos` v0.13.0 and Sveltos v1.15.0, with the agents as
-ConfigHub workers and no command sandbox. ConfigHub is removing workers.
+The recorded runs of 3 October 2026 used ConfigHub v0.8.1, `cub` v0.8.1,
+`cub sveltos` v0.13.0 and Sveltos v1.15.0, with the agents as ConfigHub
+workers and no command sandbox. ConfigHub is removing workers.
 [recording/check-2026-10-04.md](recording/check-2026-10-04.md) is the recheck
-on v0.8.3.
+on v0.8.3, the next day.
 
 ## What you need
 
@@ -182,9 +182,10 @@ on v0.8.3.
   [kind's docs](https://kind.sigs.k8s.io/docs/user/known-issues/#pod-errors-due-to-too-many-open-files)
   say for many clusters.
 - **A ConfigHub organization** with 20 free Spaces, where you have the admin
-  role. Setup creates 17 `chaos-` Spaces, service accounts with org roles, and
-  components; Angel adds `chaos-policies` in outage 1. As an admin you can
-  approve any change yourself. The scripts act through your current `cub`
+  role. Onboarding creates 16 `chaos-` Spaces, plus service accounts with org
+  roles, and components. Angel adds `chaos-policies` in outage 1, and the
+  repave gate's check adds `chaos-repave-check`. You are a named approver
+  unless you set `APPROVERS=$MILTON_ID`. The scripts act through your current `cub`
   context. If it points at another organization, run
   `export CUB_CONTEXT=<your context>` in each terminal, setup and teardown
   included.
@@ -218,8 +219,10 @@ cub plugin install confighub/sveltos-confighub@v0.15.0
 - `$AI_CHAOS_DIR` (default `~/ai-chaos`), for the kubeconfigs, the onboarding
   output, the agents' identities and their runs;
 - `$CHAOS_RUNS` (default `$AI_CHAOS_DIR/runs`), where each agent run is kept;
-- `KUBECONFIG`, to one file with a context per cluster (`kind-chaos-mgmt`,
-  `kind-chaos-staging`, `kind-chaos-prod-eu`, ...), in that terminal only;
+- `CONFIGHUB_URL` (default `https://hub.confighub.com`);
+- `KUBECONFIG`, once the fleet exists, to one file with a context per cluster
+  (`kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, ...), in that
+  terminal only;
 - `YOU_ID` and `MILTON_ID`, once `setup/identities.sh` has written them.
 
 From the repository's root:
@@ -230,7 +233,7 @@ source demo/env.sh
 ```
 
 `bash demo/standup.sh --check` only checks for the tools, the sign-in and the
-plugins. The full run takes about ten minutes. Running it again is safe: it
+plugins. The full run took us about seven minutes. Running it again is safe: it
 keeps the clusters and identities it finds, brings the rest up to date, and
 skips the shop once the fleet is onboarded. In order, it runs:
 
@@ -242,8 +245,8 @@ bash $DEMO/setup/identities.sh              # devil, angel, reporter, milton; wr
 ```
 
 Then onboard the fleet into ConfigHub, with a script signed in as Angel doing
-the work: [scenarios/00-onboard.md](scenarios/00-onboard.md). It takes about
-ten minutes, and ends by granting the agents their permissions, gating the
+the work: [scenarios/00-onboard.md](scenarios/00-onboard.md). It takes a few
+minutes, and ends by granting the agents their permissions, gating the
 workflows, and starting live status. To let only you, or only Milton,
 approve, set `APPROVERS` first: see [Approvals](#approvals-by-hand-or-by-milton).
 
@@ -260,8 +263,8 @@ bash $DEMO/approve.sh me     chaos-shop-base/<order> staging "<why, in your word
 bash $DEMO/approve.sh milton chaos-shop-base/<order> staging <run-name> [agent]
 ```
 
-`me` records your approval with your note: you are an admin, so you may
-approve any change. `milton` has Milton review the order against what the
+`me` records your approval with your note: the gates name you as an approver
+unless you set `APPROVERS=$MILTON_ID`. `milton` has Milton review the order against what the
 agent that asked for it wrote in that run, `angel` unless you name another.
 Milton reads:
 - the change order;

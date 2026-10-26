@@ -38,7 +38,7 @@ page is that contract.
 | --- | --- | --- |
 | Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below; `kubectl config`, wherever it stands on the line; `kubectl` on Secrets of the management cluster, where the delivery account's token is |
 | Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files, in its own directory only, but not the run's `cub` configuration or kubeconfig | the shared list below; `kubectl` on Secrets, or on objects read from a file (`-f`) |
-| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`; `kubectl` on Secrets, or `get` and `describe` of objects read from a file; a second `--kubeconfig` |
+| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the policy sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`; `kubectl` on Secrets, or `get` and `describe` of objects read from a file; a second `--kubeconfig` |
 
 The shared list Devil and Angel may never run:
 - `cub variant approve`, and `cub attestation create` or `revoke`;

@@ -48,7 +48,7 @@ forms. Check it the way its form needs.
 **If it judges a profile by its shape**, as in our verification run (one
 `clusterRef`, a name of the form `<component>-<cluster>`, only the release
 delivered), it exempts nobody. The preview gives a verdict for every known case.
-Check in the sandbox that it admits every profile the record delivers today,
+Check in the policy sandbox that it admits every profile the record delivers today,
 and refuses the hand-applied one:
 
 ```bash
@@ -62,8 +62,8 @@ $S apply --dry-run=server -f $DEMO/proof/shop-lockdown.yaml                     
 <details>
 <summary><b>If it judges by who sends the request</b>, as in our first run</summary>
 
-Only Sveltos,
-writing for the record, may write profiles), the preview can only answer
+In this form only Sveltos, writing for the record, may write profiles. The
+preview can only answer
 "unknown", because a configuration does not say who will send it. Check two
 things:
 
@@ -78,9 +78,9 @@ things:
    The policy must exempt that identity, not `register-mgmt-cluster`, which is the
    job that registered the cluster. The first run's Angel exempted the wrong
    one, and the review caught it.
-2. **The policy's logic, in the sandbox, by impersonation.**
+2. **The policy's logic, in the policy sandbox, by impersonation.**
    - Apply the policy and bind it.
-   - Give Sveltos's identity cluster-admin, in the sandbox only.
+   - Give Sveltos's identity cluster-admin, in the policy sandbox only.
    - Try the hand-applied profile as yourself (refused), and as Sveltos's
      identity (allowed). Then delete it as Sveltos (allowed).
 
