@@ -1346,6 +1346,9 @@ func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
 	script := ApplyScript(mustPlan(t, exampleDocs(t), exampleOpts))
 	start := strings.Index(script, "released() {")
 	end := strings.Index(script, "\nbaseline() {")
+	if !strings.Contains(script, "\nrefused_first() {") {
+		t.Fatalf("apply.sh has no refused_first():\n%s", script)
+	}
 	if start < 0 || end < 0 {
 		t.Fatalf("apply.sh has no released() or baseline():\n%s", script)
 	}
@@ -1356,21 +1359,24 @@ func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
   echo "cub $*" >> "$LOG"
   case "$*" in
     "release list"*) echo "$RELEASES" ;;
-    *"--revision ChangeOrder:"*) echo "Failed: HTTP 422 for req x: requires approval, but no Revision was found to evaluate it on"; return 1 ;;
+    "changeorder get"*) echo "\"$STATE\"" ;;
+    *"--revision ChangeOrder:"*) echo "Failed: HTTP 422 for req x: $REFUSAL"; return 1 ;;
   esac
 }
 holds() { return 0; }
 sleep() { :; }
 `
 	baseline := "cub release publish v --annotation sveltos.confighub.com/first-release=baseline --quiet"
+	noRevision := "requires approval, but no Revision was found to evaluate it on"
 	for _, c := range []struct {
-		name, propose, releases string
-		fails                   bool
-		said, called, notCalled string
+		name, propose, releases, state, refusal string
+		fails                                   bool
+		said, called, notCalled                 string
 	}{
-		{"by hand", "", "0", false, "first release published at head as the onboarding baseline", baseline, ""},
-		{"proposing", "1", "0", false, "cannot have its first release through base/o (ConfigHub #5794)", "", "--annotation"},
-		{"already released", "", "1", true, "no Revision was found", "", "--annotation"},
+		{"by hand", "", "0", "Released", noRevision, false, "first release published at head as the onboarding baseline", baseline, ""},
+		{"proposing", "1", "0", "Released", noRevision, false, "cannot have its first release through base/o (ConfigHub #5794)", "", "--annotation"},
+		{"already released", "", "1", "Released", noRevision, true, "no Revision was found", "", "--annotation"},
+		{"an approval still to come", "", "0", "Resolved", "ApprovalRequired: the release needs an approval from another person", true, "ApprovalRequired", "", "--annotation"},
 	} {
 		dir := t.TempDir()
 		log := filepath.Join(dir, "cub.log")
@@ -1379,7 +1385,7 @@ sleep() { :; }
 			t.Fatal(err)
 		}
 		cmd := exec.Command("bash", file)
-		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "PROPOSE_ONLY="+c.propose)
+		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "PROPOSE_ONLY="+c.propose, "STATE="+c.state, "REFUSAL="+c.refusal)
 		out, err := cmd.CombinedOutput()
 		calls, _ := os.ReadFile(log)
 		if (err != nil) != c.fails || !strings.Contains(string(out), c.said) {

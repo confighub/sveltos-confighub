@@ -89,7 +89,7 @@ publish() {
         if [ "$waitfor" = approval ]; then echo "$1 waits for approval"; else kind=${reason#*: }; kind=${kind#* }; echo "$1 waits for $waitfor: cub attestation create --space $1 --type ${kind%% *} --change-order $2"; fi
         return 0 ;;
       *"outstanding ValidationErrors"*) sleep "${RETRY_SECONDS:-15}" ;;
-      *"422"*) released "$1" && { echo "$out" >&2; return 1; }; baseline "$1" "$2" "$out"; return $? ;;
+      *"422"*) refused_first "$1" "$2" || { echo "$out" >&2; return 1; }; baseline "$1" "$2" "$out"; return $? ;;
       *) echo "$out" >&2; return 1 ;;
     esac
   done
@@ -102,6 +102,10 @@ publish() {
 # at head instead, as the onboarding baseline: what its base holds, which the
 # handover compared with what each cluster runs. Changes after it go through
 # the workflow. With PROPOSE_ONLY it is not published: a person does that.
+# refused_first <variant> <base>/<order> is the state #5794 leaves, and only
+# that one: the order says it is released, and the variant has no release.
+# Any other refusal, such as an approval still to come, stops the script.
+refused_first() { ! released "$1" && [ "$(cub changeorder get --space "${2%%/*}" "${2#*/}" -o 'jq=.ChangeOrder.State' | tr -d '"')" = Released ]; }
 baseline() {
   if [ -n "${PROPOSE_ONLY:-}" ]; then
     echo "$1 cannot have its first release through $2 (ConfigHub #5794). Once you have reviewed it, publish its baseline: cub release publish $1"
