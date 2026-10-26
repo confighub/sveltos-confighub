@@ -1335,10 +1335,12 @@ func TestCompareLive(t *testing.T) {
 }
 
 // ConfigHub #5794: a change order over freshly cloned variants counts them as
-// released, so a variant's first release cannot go through it. publish falls
-// back to a baseline release at head, except with PROPOSE_ONLY, which leaves
-// that to a person, and never for a variant that already has a release. This
-// runs apply.sh's own helpers against a stand-in cub.
+// released, so a variant's first release cannot go through it. publish then
+// stops and says how to publish a baseline at head; FIRST_RELEASE=baseline
+// publishes it; PROPOSE_ONLY leaves it to a person and waits. It never does so
+// for a variant that has a release, for any other refusal, or when cub fails.
+// This runs apply.sh's own helpers, under its own shell options, against a
+// stand-in cub.
 func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("needs bash")
@@ -1346,11 +1348,8 @@ func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
 	script := ApplyScript(mustPlan(t, exampleDocs(t), exampleOpts))
 	start := strings.Index(script, "released() {")
 	end := strings.Index(script, "\nbaseline() {")
-	if !strings.Contains(script, "\nrefused_first() {") {
-		t.Fatalf("apply.sh has no refused_first():\n%s", script)
-	}
-	if start < 0 || end < 0 {
-		t.Fatalf("apply.sh has no released() or baseline():\n%s", script)
+	if start < 0 || end < 0 || !strings.Contains(script, "\nrefused_first() {") {
+		t.Fatalf("apply.sh has no released(), refused_first() or baseline():\n%s", script)
 	}
 	rest := script[end+1:]
 	stop := strings.Index(rest, "\n}\n")
@@ -1358,9 +1357,10 @@ func TestFirstReleaseFallsBackToABaseline(t *testing.T) {
 	fake := `cub() {
   echo "cub $*" >> "$LOG"
   case "$*" in
-    "release list"*) echo "$RELEASES" ;;
-    "changeorder get"*) echo "\"$STATE\"" ;;
-    *"--revision ChangeOrder:"*) echo "Failed: HTTP 422 for req x: $REFUSAL"; return 1 ;;
+    "release list --space v "*) [ -z "$LIST_FAILS" ] || return 1; echo "$RELEASES" ;;
+    "changeorder get --space base o -o jq=.ChangeOrder.State") echo "\"$STATE\"" ;;
+    "changeorder get"*) echo "BAD ARGS" >> "$LOG"; return 1 ;;
+    *"--revision ChangeOrder:base/o"*) echo "Failed: HTTP 422 for req x: $REFUSAL"; return 1 ;;
   esac
 }
 holds() { return 0; }
@@ -1369,33 +1369,72 @@ sleep() { :; }
 	baseline := "cub release publish v --annotation sveltos.confighub.com/first-release=baseline --quiet"
 	noRevision := "requires approval, but no Revision was found to evaluate it on"
 	for _, c := range []struct {
-		name, propose, releases, state, refusal string
-		fails                                   bool
-		said, called, notCalled                 string
+		name, env, releases, state, refusal string
+		fails                               bool
+		said                                []string
+		published                           bool
 	}{
-		{"by hand", "", "0", "Released", noRevision, false, "first release published at head as the onboarding baseline", baseline, ""},
-		{"proposing", "1", "0", "Released", noRevision, false, "cannot have its first release through base/o (ConfigHub #5794)", "", "--annotation"},
-		{"already released", "", "1", "Released", noRevision, true, "no Revision was found", "", "--annotation"},
-		{"an approval still to come", "", "0", "Resolved", "ApprovalRequired: the release needs an approval from another person", true, "ApprovalRequired", "", "--annotation"},
+		{"by hand", "", "0", "Released", noRevision, true, []string{"refuses its first release through base/o (confighub#5794)", "no Revision was found", "FIRST_RELEASE=baseline"}, false},
+		{"by hand, baseline asked for", "FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"first release published at head as the onboarding baseline"}, true},
+		{"proposing", "PROPOSE_ONLY=1", "0", "Released", noRevision, false, []string{"refuses its first release through base/o", "no Revision was found", "run this script again"}, false},
+		{"proposing, baseline asked for", "PROPOSE_ONLY=1 FIRST_RELEASE=baseline", "0", "Released", noRevision, false, []string{"refuses its first release"}, false},
+		{"already released", "FIRST_RELEASE=baseline", "1", "Released", noRevision, true, []string{"no Revision was found"}, false},
+		{"an approval still to come", "FIRST_RELEASE=baseline", "0", "Resolved", "ApprovalRequired: the release needs an approval from another person", true, []string{"ApprovalRequired"}, false},
+		{"cub cannot list the releases", "FIRST_RELEASE=baseline LIST_FAILS=1", "", "Released", noRevision, true, []string{"no Revision was found"}, false},
 	} {
 		dir := t.TempDir()
 		log := filepath.Join(dir, "cub.log")
 		file := filepath.Join(dir, "run.sh")
-		if err := os.WriteFile(file, []byte(helpers+"\n"+fake+"publish v base/o 1 prod\n"), 0o644); err != nil {
+		if err := os.WriteFile(file, []byte("set -euo pipefail\n"+helpers+"\n"+fake+"publish v base/o 1 prod\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		cmd := exec.Command("bash", file)
-		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "PROPOSE_ONLY="+c.propose, "STATE="+c.state, "REFUSAL="+c.refusal)
+		cmd.Env = append(os.Environ(), "LOG="+log, "RELEASES="+c.releases, "STATE="+c.state, "REFUSAL="+c.refusal, "PROPOSE_ONLY=", "FIRST_RELEASE=", "LIST_FAILS=")
+		cmd.Env = append(cmd.Env, strings.Fields(c.env)...)
 		out, err := cmd.CombinedOutput()
 		calls, _ := os.ReadFile(log)
-		if (err != nil) != c.fails || !strings.Contains(string(out), c.said) {
-			t.Errorf("%s: publish should %s and say %q (err %v):\n%s", c.name, map[bool]string{true: "fail", false: "succeed"}[c.fails], c.said, err, out)
+		if (err != nil) != c.fails {
+			t.Errorf("%s: publish should %s (err %v):\n%s", c.name, map[bool]string{true: "fail", false: "succeed"}[c.fails], err, out)
 		}
-		if c.called != "" && !strings.Contains(string(calls), c.called) {
-			t.Errorf("%s: expected %q among:\n%s", c.name, c.called, calls)
+		for _, said := range c.said {
+			if !strings.Contains(string(out), said) {
+				t.Errorf("%s: should say %q:\n%s", c.name, said, out)
+			}
 		}
-		if c.notCalled != "" && strings.Contains(string(calls), c.notCalled) {
-			t.Errorf("%s: no baseline release expected:\n%s", c.name, calls)
+		if got := strings.Contains(string(calls), baseline); got != c.published {
+			t.Errorf("%s: baseline published %v, want %v:\n%s", c.name, got, c.published, calls)
+		}
+		if strings.Contains(string(calls), "BAD ARGS") {
+			t.Errorf("%s: changeorder get was not asked for base/o:\n%s", c.name, calls)
+		}
+	}
+}
+
+// The command apply.sh records above a chart must print what the unit holds,
+// Namespace included, so the next version renders the same way. This runs it
+// against a stand-in helm.
+func TestRecordedRenderCommandRuns(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("needs bash")
+	}
+	dir := t.TempDir()
+	printed := "---\n# Source: c/templates/cm.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app\n  namespace: my-apps\n"
+	helm := "#!/usr/bin/env bash\nprintf '%s' '" + printed + "'\n"
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(helm), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chart := &Chart{Release: "app", Namespace: "my-apps", Ref: "oci://example.com/c", Version: "1.0.0", Values: "a: 1"}
+	for name, raw := range map[string]string{
+		"with the Namespace helm leaves out": chartrender.NamespaceDoc("my-apps") + printed,
+		"as helm printed it":                 printed,
+	} {
+		cmd := renderCommand(Profile{Name: "p"}, Unit{Slug: "app", Chart: chart, raw: []byte(raw)})
+		run := exec.Command("bash", "-c", cmd)
+		run.Dir = dir
+		run.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, err := run.Output()
+		if err != nil || string(out) != raw {
+			t.Errorf("%s: %s\nprinted %q (err %v)\nwant    %q", name, cmd, out, err, raw)
 		}
 	}
 }

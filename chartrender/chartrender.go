@@ -164,8 +164,9 @@ func CubHelm(c Chart) (Rendering, error) {
 	return Rendering{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, nil
 }
 
-// Helm renders with helm template (Helm v3 or v4 on the PATH), the way helm
-// install would install the chart, and needs no ConfigHub connection. Stdout is
+// Helm renders with helm template (Helm on the PATH; tested with v4.1.4), as
+// helm install would render the chart for a default cluster, without reading
+// the cluster's version or APIs, and needs no ConfigHub connection. Stdout is
 // the objects, with NamespaceDoc in front when the chart renders no Namespace
 // for the release namespace. Stderr names each hook left out, in the form
 // HooksOf reads, so Render reports them as it does for CubHelm.
@@ -247,16 +248,28 @@ func runHelm(helm string, args []string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		text := strings.TrimSpace(stderr.String())
-		if i := strings.LastIndex(text, "\n"); i >= 0 {
-			text = text[i+1:]
-		}
-		if text == "" {
-			text = err.Error()
-		}
-		return nil, fmt.Errorf("%s: %s", strings.Join(args[:4], " "), text)
+		return nil, fmt.Errorf("%s: %s", strings.Join(args[:4], " "), helmError(stderr.String(), err))
 	}
 	return stdout.Bytes(), nil
+}
+
+// helmError is what to show of Helm's stderr: its "Error:" line, which is the
+// reason, rather than the advice it prints after it (such as "Use --debug flag
+// to render out invalid YAML"); else its last line; else err.
+func helmError(stderr string, err error) string {
+	text := strings.TrimSpace(stderr)
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "Error:") {
+			return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "Error:"))
+		}
+	}
+	if i := strings.LastIndex(text, "\n"); i >= 0 {
+		text = text[i+1:]
+	}
+	if text == "" {
+		return err.Error()
+	}
+	return text
 }
 
 // doc is what Helm says of one rendered object: enough to find Namespaces and hooks.

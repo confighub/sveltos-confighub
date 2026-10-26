@@ -60,7 +60,7 @@ cub plugin install confighub/sveltos-confighub
 ```
 
 Charts are rendered with Helm's own `helm template`, so `plan` also needs
-[Helm](https://helm.sh/docs/intro/install/) v3 or v4 on the PATH.
+[Helm](https://helm.sh/docs/intro/install/) on the PATH (tested with v4.1.4).
 
 Already installed? `cub plugin upgrade sveltos-confighub` moves you to the
 latest release. `cub sveltos version` prints which one you run.

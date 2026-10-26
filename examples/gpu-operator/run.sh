@@ -52,7 +52,7 @@ say "1. Onboard: export, plan, apply, hand over"
 kubectl get clusterprofiles,sveltosclusters -A -o yaml > my-fleet.yaml
 $BIN plan my-fleet.yaml $OPTS || fail "plan"
 $BIN apply my-fleet.yaml $OPTS --out onboard > /dev/null || fail "apply"
-bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" || true
+FIRST_RELEASE=baseline bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" || true
 sleep 60
 bash onboard/handover.sh || fail "handover"
 wait_for 'kubectl get clustersummaries -A -o json | python3 -c "
@@ -71,7 +71,7 @@ echo "  a minute later, the label alone has shipped nothing:"; state | grep gpu-
 kubectl get sveltosclusters -A -o yaml > clusters.yaml
 $BIN plan onboard/profiles.yaml clusters.yaml $OPTS | sed -n '/^gpu-operator/,/^$/p'
 $BIN apply onboard/profiles.yaml clusters.yaml $OPTS --out onboard > /dev/null || fail "join apply"
-bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" | sed -n '/2\/6/,/4\/6/p;/5\/6/,/6\/6/p' || true
+FIRST_RELEASE=baseline bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" | sed -n '/2\/6/,/4\/6/p;/5\/6/,/6\/6/p' || true
 wait_for '[ "$(driver gpu-b)" != "-" ]' || fail "gpu-b never got the operator"
 sleep 15
 cub changeworkflow get --space ch7-gpu-operator-base rollout -o 'jq=[.ChangeWorkflow.Stages[].Name] | join(",")' | sed 's/^/  workflow stages: /'
@@ -91,7 +91,8 @@ say "4. Upgrade: operator v26.3.1 to v26.7.0, driver 580.126.20 to 580.173.02, s
 echo "  rendered the way apply.sh says gpu-operator was rendered, at v26.7.0, with the driver moved to 580.173.02:"
 grep '^# gpu-operator is rendered with' onboard/apply.sh | sed 's/^/    /'
 sed 's/580.126.20/580.173.02/' onboard/gpu-operator/gpu-operator.values.yaml > values-26.7.yaml
-cub helm template gpu-operator gpu-operator --repo https://helm.ngc.nvidia.com/nvidia --version v26.7.0 --namespace gpu-operator --create-namespace -f values-26.7.yaml 2>/dev/null | grep -vxF '$comment$head$: ""' > gpu-operator-26.7.yaml || fail "render v26.7.0"
+render=$(grep '^# gpu-operator is rendered with: ' onboard/apply.sh | sed "s/^# gpu-operator is rendered with: //; s/--version v26\.3\.1 /--version v26.7.0 /; s#-f gpu-operator/gpu-operator.values.yaml#-f $PWD/values-26.7.yaml#")
+(cd onboard && bash -c "$render") > gpu-operator-26.7.yaml 2>/dev/null || fail "render v26.7.0"
 cub unit update --space ch7-gpu-operator-base gpu-operator gpu-operator-26.7.yaml --change-desc "Upgrade to AICR h100-any as published: gpu-operator v26.7.0, driver 580.173.02" --quiet || fail "base update"
 head=$(cub unit get --space ch7-gpu-operator-base gpu-operator -o jq=.Unit.HeadRevisionNum)
 cub unit diff --space ch7-gpu-operator-base gpu-operator --from $((head - 1)) --to "$head" -o mutations 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' > upgrade.mutations

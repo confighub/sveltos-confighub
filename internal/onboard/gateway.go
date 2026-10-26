@@ -51,9 +51,21 @@ func (g Gateway) remoteURL(space, secretName string) *yaml.Node {
 	return n
 }
 
-// serves says whether a reference is to one of this gateway's releases.
+// serves says whether a reference is to one of this gateway's releases, with
+// or without the scheme's default port, as profiles written before or after
+// --gateway dropped it name it.
 func (g Gateway) serves(ref string) bool {
-	return strings.HasPrefix(ref, "oci://"+g.Host+"/")
+	if strings.HasPrefix(ref, "oci://"+g.Host+"/") {
+		return true
+	}
+	if _, _, err := net.SplitHostPort(g.Host); err == nil {
+		return false
+	}
+	port := "443"
+	if g.PlainHTTP {
+		port = "80"
+	}
+	return strings.HasPrefix(ref, "oci://"+net.JoinHostPort(strings.Trim(g.Host, "[]"), port)+"/")
 }
 
 // ParseGateway reads --gateway: host[:port] for a registry served over TLS,
@@ -78,6 +90,11 @@ func ParseGateway(s string) (Gateway, error) {
 		rest = after
 	}
 	rest = strings.ToLower(strings.TrimSuffix(rest, "/"))
+	if h, p, ok := strings.Cut(rest, ":"); ok && !strings.HasPrefix(rest, "[") {
+		rest = strings.TrimSuffix(h, ".") + ":" + p
+	} else {
+		rest = strings.TrimSuffix(rest, ".")
+	}
 	u, err := url.Parse("//" + rest)
 	if err != nil || rest == "" || u.Host != rest || u.Hostname() == "" || strings.HasSuffix(rest, ":") {
 		return Gateway{}, want

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -131,11 +130,11 @@ func loggedIn(ctx context.Context) (bool, error) {
 			return false, fmt.Errorf("cub context %q: %w", env.Context, err)
 		}
 	}
+	if env.Context == "" && store.CurrentContextName() == "" {
+		return false, nil
+	}
 	active, err := store.ActiveContext()
 	if err != nil {
-		if strings.Contains(err.Error(), "no active context") {
-			return false, nil
-		}
 		return false, err
 	}
 	if _, err := store.TokenData(active); err == nil {

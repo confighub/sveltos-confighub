@@ -85,7 +85,7 @@ ls onboard onboard/kyverno
 printf '  onboard/kyverno/kyverno.yaml holds %s objects\n' "$(grep -c '^kind:' onboard/kyverno/kyverno.yaml)"
 
 say "4. Run them"
-bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" || true
+FIRST_RELEASE=baseline bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" || true
 [ "${PIPESTATUS[0]}" = 0 ] || fail "apply.sh"
 sleep 30
 say "   the live profiles still manage everything; the delivery profiles wait for handover.sh"
@@ -109,7 +109,8 @@ say "6. Two changes, one release, through the stages: a chart upgrade and a fiel
 SEL='select(.kind == "Deployment" and .metadata.name == "kyverno-admission-controller")'
 echo "  Kyverno 3.8.2, rendered the way apply.sh says kyverno was rendered, onto the base:"
 grep '^# kyverno is rendered with' onboard/apply.sh | sed 's/^/    /'
-cub helm template kyverno kyverno --repo https://kyverno.github.io/kyverno --version 3.8.2 --namespace kyverno --create-namespace -f onboard/kyverno/kyverno.values.yaml 2>/dev/null | grep -vxF '$comment$head$: ""' > kyverno-3.8.2.yaml || fail "render 3.8.2"
+render=$(grep '^# kyverno is rendered with: ' onboard/apply.sh | sed 's/^# kyverno is rendered with: //; s/--version 3\.8\.1 /--version 3.8.2 /')
+(cd onboard && bash -c "$render") > kyverno-3.8.2.yaml 2>/dev/null || fail "render 3.8.2"
 cub unit update --space ob-kyverno-base kyverno kyverno-3.8.2.yaml --change-desc "Kyverno 3.8.2" --quiet || fail "base update"
 echo "  and the admission controller at 4 replicas, a field changed in ConfigHub:"
 cub function set --space ob-kyverno-base --unit kyverno --change-desc "Admission controller at 4 replicas" --quiet -- set-yq "($SEL | .spec.replicas) = 4" > /dev/null || fail "base edit"
@@ -136,7 +137,7 @@ echo "  what Sveltos put on staging-us by itself: $(on staging-us get ns kyverno
 kubectl get sveltosclusters -A -o yaml > clusters.yaml
 $BIN plan onboard/profiles.yaml clusters.yaml $OPTS | sed -n '/^kyverno  /,/^$/p'
 $BIN apply onboard/profiles.yaml clusters.yaml $OPTS --out onboard > /dev/null || fail "join apply"
-bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" || true
+FIRST_RELEASE=baseline bash onboard/apply.sh 2>&1 | grep -v "^Upgraded\|^Adding\|^Marked\|^Promoting\|^Created variant\|^Awaiting\|^$\|Bulk create\|Success:" || true
 wait_provisioned 2 kyverno-staging-us kyverno-policies-staging-us || fail "staging-us did not get its variants"
 wait_for '[ "$(image staging-us)" = reg.kyverno.io/kyverno/kyverno:v1.18.2 ]' || fail "staging-us is not at 3.8.2"
 state

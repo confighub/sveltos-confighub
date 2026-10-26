@@ -88,7 +88,7 @@ onboarding, the gates and the parity gate were rechecked on it
 | ConfigHub (hub.confighub.com) | server v0.8.1, and rechecked on v0.8.3. The hosted server moves on: you get the version it runs |
 | `cub` | v0.8.1 |
 | `cub sveltos` (this repository) | v0.14.0 or newer, which the live-status reporter needs since ConfigHub v0.8.2. The recorded runs used v0.13.0 |
-| Helm (renders the charts) | v4.1.4; v3 works too |
+| Helm (renders the charts) | v4.1.4 |
 | Sveltos | v1.15.0 (installed by the fleet script) |
 | kind | v0.31.0, Kubernetes v1.35.0 nodes |
 | Stakater Reloader (Helm chart) | 2.2.18 |

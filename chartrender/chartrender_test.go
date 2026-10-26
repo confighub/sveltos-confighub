@@ -123,3 +123,16 @@ func TestHelmNeedsHelm(t *testing.T) {
 		t.Errorf("without helm on the PATH: %v", err)
 	}
 }
+
+func TestHelmShowsTheReasonHelmGives(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/usr/bin/env bash\necho 'Error: execution error at (c/templates/cm.yaml:3:9): host is required' >&2\necho 'Use --debug flag to render out invalid YAML' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "helm"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err := Helm(Chart{Release: "app", Namespace: "apps", Ref: "oci://example.com/c", Version: "1.0.0", Values: "a: 1"})
+	if err == nil || !strings.Contains(err.Error(), "host is required") || strings.Contains(err.Error(), "--debug") {
+		t.Errorf("the error should carry Helm's reason, not its advice: %v", err)
+	}
+}

@@ -32,9 +32,10 @@ cub plugin install confighub/sveltos-confighub
 If you installed it before, `cub plugin upgrade sveltos-confighub` brings it
 up to date.
 
-`cub sveltos` renders charts with Helm's own `helm template`, the way
-`helm install` would install them, so a chart onboarded here holds the objects
-Helm would have installed. (Before v0.14.1 it used `cub helm template`, which
+`cub sveltos` renders charts with Helm's own `helm template`, as `helm install`
+renders them for a default cluster, so a chart onboarded here holds the objects
+Helm would install, unless the chart reads the cluster's version or APIs (see
+[what this version leaves alone](#what-this-version-leaves-alone)). (Before v0.14.1 it used `cub helm template`, which
 from `cub helm` v0.1.2 previews units instead of printing them.)
 
 In this guide:
@@ -227,6 +228,14 @@ releases cannot read the gzipped layers ConfigHub's gateway serves), then:
 5. Rolls out the first release stage by stage: promote, approve, publish.
    A variant missing a unit is never released: Sveltos would remove from its
    cluster whatever the release no longer holds.
+   On recent ConfigHub servers this step can stop for a variant that has never
+   been released: its change order counts it as released, so its first release
+   cannot go through the order (confighubai/confighub#5794). The script says
+   so, with ConfigHub's reason. You then choose: publish that variant's first
+   release at head as the onboarding baseline, which skips the workflow's
+   release gates for that one release, with `FIRST_RELEASE=baseline bash
+   apply.sh`; or wait for ConfigHub's fix. Every change after the baseline goes
+   through the workflow.
 6. On your management cluster, adds the gateway Secret and the delivery
    profiles. From then on Sveltos delivers each variant's latest release to
    its cluster, within a minute of it being published, and puts back

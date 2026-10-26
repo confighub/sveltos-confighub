@@ -39,28 +39,34 @@ in October, and #119 left a few loose ends.
 - **Charts are rendered with Helm.** `cub helm` v0.1.2 (7 October) changed
   `cub helm template` to preview units through the server instead of
   printing YAML, so `plan` could render no chart. The plugin now runs
-  `helm template` (Helm v3 or v4 on the PATH), the way `helm install` would
-  install the chart: CRDs included, hooks left out unless `--include-hooks`,
-  and a Namespace for the release namespace in front when the chart has
-  none. The `cub helm` plugin is no longer needed.
+  `helm template` (Helm on the PATH; tested with v4.1.4), as `helm install`
+  renders the chart for a default cluster: CRDs included, hooks left out
+  unless `--include-hooks`, and a Namespace for the release namespace in
+  front when the chart has none. The `cub helm` plugin is no longer needed.
   - `apply.sh` notes the exact command above each chart. For the onboarding
     example's ingress-nginx and Kyverno, that command reproduces the stored
-    rendering byte for byte.
+    rendering byte for byte with the same Helm. The example scripts render
+    their upgrades from that command.
   - A chart onboarded before 0.14.1 was rendered by `cub helm template`,
     whose layout differs. Its first upgrade shows a large text diff, so
     review it with `cub unit diff ... -o mutations`, which lists only the
     fields that changed.
 - **A variant's first release, when ConfigHub refuses it through the change
-  order.** Since ConfigHub v0.8.12, a change order over freshly cloned
+  order.** On recent ConfigHub servers, a change order over freshly cloned
   variants counts them as released, so their first governed release is
-  refused (confighubai/confighub#5794, seen on v0.8.17 and open).
-  - `apply.sh` now publishes such a variant's first release at head, as the
-    onboarding baseline, annotated `sveltos.confighub.com/first-release=baseline`:
-    what its base holds, which the handover compared with what the cluster
-    runs. Every change after it goes through the workflow.
+  refused (confighubai/confighub#5794: v0.8.10 and v0.8.11 passed, v0.8.17
+  failed; still open).
+  - `apply.sh` recognises exactly that state: the order says Released and the
+    variant has no release. It then stops and says so, with the reason
+    ConfigHub gave and the command to publish the variant's first release at
+    head as the onboarding baseline: what its base holds, which the handover
+    compared with what the cluster runs.
+  - That release skips the workflow's release gates, so it is your call.
+    `FIRST_RELEASE=baseline bash apply.sh` publishes it, annotated
+    `sveltos.confighub.com/first-release=baseline`, for every such variant.
+    Every change after it goes through the workflow.
   - With `PROPOSE_ONLY=1`, as `cub sveltos watch` runs it for a cluster that
-    joins, it publishes nothing, and says what to run once a person has
-    reviewed it.
+    joins, it never publishes one: it says what to run, and waits.
 - **The registry Sveltos fetches from** (#119's follow-ups):
   - asking ConfigHub for its registry gives up after 20 seconds;
   - a broken login, a `CUB_CONTEXT` that does not exist, or another
@@ -68,7 +74,8 @@ in October, and #119 left a few loose ends.
     falling back to the hosted registry;
   - `--gateway` lowercases the host, drops a scheme's default port, wants an
     IPv6 address in brackets, and refuses an empty port and a loopback or
-    unspecified address, as the advertised registry already was.
+    unspecified address, as the advertised registry already was. Profiles
+    written with or without a default port are both recognised.
 
 ## 0.14.0, 2026-10-09
 
