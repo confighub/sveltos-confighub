@@ -35,7 +35,7 @@ echo "== 2. the parity gate"
 if cub changeworkflow get rollout --space chaos-shop-base -o yaml | grep -q "Type: ParityCheck"; then
   echo "  already there"
 else
-  angel_id=$(cub worker get --space chaos-agents angel -o jq=.BridgeWorker.UserID | tr -d '"')
+  angel_id=$(cub serviceaccount get chaos-angel -o jq=.ServiceAccount.UserID | tr -d '"')
   cub changeworkflow update rollout --space chaos-shop-base \
     --attestation-prerequisite approval --attestation-prerequisite parity \
     --attestation-prerequisite-type parity=ParityCheck --attestation-prerequisite-count parity=1 \

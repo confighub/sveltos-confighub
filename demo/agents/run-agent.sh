@@ -37,7 +37,8 @@ KUBECONFIG=$(find "$AI_CHAOS_DIR" -maxdepth 1 -name 'chaos-*.kubeconfig' | sort 
 never=("Bash(cub variant approve:*)" "Bash(cub attestation create:*)" "Bash(cub attestation revoke:*)"
        "Bash(cub space delete:*)" "Bash(cub changeworkflow create:*)" "Bash(cub changeworkflow update:*)"
        "Bash(cub changeworkflow edit:*)" "Bash(cub changeworkflow delete:*)" "Bash(cub component update:*)"
-       "Bash(cub worker:*)" "Bash(cub auth:*)" "Bash(cub context:*)"
+       "Bash(cub worker:*)" "Bash(cub auth:*)" "Bash(cub context:*)" "Bash(cub serviceaccount:*)"
+       "Bash(cub --context:*)" "Bash(cub --debug:*)"
        "Bash(kubectl delete namespace:*)" "Bash(kubectl delete ns:*)")
 case $agent in
   devil)
@@ -62,7 +63,7 @@ case $agent in
              "Bash(kubectl --kubeconfig $AI_CHAOS_DIR/sandbox.kubeconfig:*)"
              "Bash(bash $DEMO/proof/token-subject.sh:*)" "Bash(date:*)")
     denied=("Bash(cub attestation create:*)" "Bash(cub attestation revoke:*)" "Bash(cub worker:*)"
-            "Bash(cub auth:*)" "Bash(cub context:*)") ;;
+            "Bash(cub auth:*)" "Bash(cub context:*)" "Bash(cub serviceaccount:*)" "Bash(cub --context:*)" "Bash(cub --debug:*)") ;;
   *) echo "agent is devil, angel or milton" >&2; exit 2 ;;
 esac
 

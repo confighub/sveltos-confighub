@@ -98,9 +98,10 @@ onboarding, the gates and the parity gate were rechecked on it
 kind before v0.31 does not enforce NetworkPolicy by default, and outage 2
 needs it.
 
-Each agent signs in to ConfigHub as a worker (`setup/identities.sh`).
-ConfigHub plans to replace that with service accounts, so later versions of
-`cub` may need a different setup.
+Each agent signs in to ConfigHub as its own service account, with a key
+(`setup/identities.sh`). The keys stay in `$AI_CHAOS_DIR/keys`, readable by
+you alone, and `teardown.sh --confighub` deletes them with the accounts. The
+runs before October 2026 used workers, which ConfigHub is removing.
 
 ## What you need
 
@@ -108,7 +109,7 @@ ConfigHub plans to replace that with service accounts, so later versions of
   and 48 GB. On Linux, raise the inotify limits first, as kind's docs say for
   many clusters.
 - **A ConfigHub organization** with 20 free Spaces, and a user with the admin
-  role there. Setup creates Spaces, workers with org roles and components; it
+  role there. Setup creates Spaces, service accounts with org roles and components; it
   sets permissions on Spaces and edits workflows. The scripts act through your current
   `cub` context. If it points at another organization, run
   `export CUB_CONTEXT=<your context>` in each terminal, setup and teardown
@@ -208,7 +209,7 @@ Each run:
   - Angel reads the clusters and works through ConfigHub;
   - Milton reads, tests in the sandbox, and approves.
   - None of them may delete a Space or namespace, change a workflow, or
-    manage workers or logins.
+    manage identities, keys or logins.
   - Only Milton may approve.
 - **Output:** written to `$CHAOS_RUNS/<run-name>/`: the full event stream
   (`.jsonl`), a readable transcript (`.md`), and the prompt in `runs.log`.
@@ -252,7 +253,7 @@ record. Deleting the Spaces deletes it.
   repository, and the agent read private notes. Runs now start from an empty
   directory, with no connectors.
 - **An agent reads whatever a command prints.** One `--debug` printed a
-  worker's token into a transcript. The agents' instructions now forbid it.
+  worker's token into a transcript. The agents may no longer run `--debug`.
 - **Name the sandbox every time.** One preview, run without a sandbox, put its
   policy on the management cluster, and Sveltos was refused its own writes.
   `cub sveltos impact` and `check` now refuse a cluster that runs workloads,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts or stops the live-status reporter: cub sveltos status --watch, as the
-# worker reporter, writing what Sveltos sees into ConfigHub every 15 seconds.
+# service account chaos-reporter, writing what Sveltos sees into ConfigHub every 15 seconds.
 #
 #   source demo/env.sh && bash $DEMO/setup/reporter.sh start|stop|log
 set -euo pipefail

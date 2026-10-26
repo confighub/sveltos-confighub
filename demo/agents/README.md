@@ -14,7 +14,7 @@ page is that contract.
 | --- | --- |
 | **The task** | The prompt file, with each `${VARIABLE}` filled from the environment. A missing one stops the run before it starts. The scenarios say what to set |
 | **Standing instructions** | `devil.md`, `angel.md` or `milton.md`, with `$AI_CHAOS_DIR` and `$DEMO` filled in, added to the runtime's own system prompt |
-| **Its ConfigHub identity** | `CUB_CONTEXT=chaos-<agent>`, the `cub` context `setup/identities.sh` signed in as that agent's worker. Never switch the current context: set it per process |
+| **Its ConfigHub identity** | `CUB_CONTEXT=chaos-<agent>`, the `cub` context `setup/identities.sh` signed in as that agent's service account, with its key. Never switch the current context: set it per process |
 | **The clusters** | `KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`, with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2` |
 | **The policy sandbox** | `$AI_CHAOS_DIR/sandbox.kubeconfig`, named in the prompts that need it |
 | **Isolation** | It starts in a new empty directory outside any repository. It gets nothing on stdin, no MCP servers or connectors, and no memory of earlier runs |
@@ -25,14 +25,17 @@ page is that contract.
 | --- | --- | --- |
 | Devil | any `kubectl` and `cub` command, `date`, `openssl rand` | the shared list below |
 | Angel | `kubectl get`, `describe` and `logs`; any `cub` command; `date`. It may also read and write files. It works in its empty directory, but nothing confines it there | the shared list below |
-| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub auth`, `cub context` |
+| Milton | read-only `cub` commands, `cub variant approve`, `cub sveltos impact` and `status`; `kubectl get`, `describe` and `auth can-i`; any `kubectl` on the sandbox; `proof/token-subject.sh`; `date` | `cub attestation create` or `revoke`, `cub worker`, `cub serviceaccount`, `cub auth`, `cub context`, `cub --context`, `cub --debug` |
 
 The shared list Devil and Angel may never run:
 - `cub variant approve`, and `cub attestation create` or `revoke`;
 - `cub space delete`;
 - `cub changeworkflow create`, `update`, `edit` or `delete`;
 - `cub component update`;
-- `cub worker`, `cub auth` and `cub context`;
+- `cub worker`, `cub serviceaccount`, `cub auth` and `cub context`;
+- any `cub` command that names a context (`cub --context ...`), which would
+  act as another identity whose context is signed in on this machine, and
+  `cub --debug`, which prints the bearer token;
 - `kubectl delete namespace`.
 
 A refused command is refused, and the agent is told so. It cannot ask for
