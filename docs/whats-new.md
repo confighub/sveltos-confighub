@@ -47,7 +47,7 @@ workers (confighubai/confighub#5980), and `cub` marks them deprecated.
   - The Secret is written with `kubectl create`, or `kubectl replace` when it
     exists, never `kubectl apply`, which keeps a copy of what it applied,
     token included, in the Secret's `last-applied-configuration`
-    annotation. Every run also drops the copy an earlier `apply.sh` left
+    annotation. A run also drops the copy an earlier `apply.sh` left
     there, whether it keeps the token or replaces it.
   - If ConfigHub cannot be asked whether the held token is live, the Secret
     keeps it.
