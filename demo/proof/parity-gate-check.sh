@@ -23,8 +23,8 @@ failed=0 added=0
 expect() { # expect <what> <text> <pattern>: report whether the text shows it
   if printf '%s' "$2" | grep -Eq "$3"; then echo "  ok      $1"; else echo "  NOT MET $1"; failed=1; fi
 }
-devil() { CUB_CONTEXT=chaos-devil "$@"; }
-angel() { CUB_CONTEXT=chaos-angel "$@"; }
+devil() { CUB_CONFIG="$AI_CHAOS_DIR/cub/devil" CUB_CONTEXT=chaos-devil "$@"; }
+angel() { CUB_CONFIG="$AI_CHAOS_DIR/cub/angel" CUB_CONTEXT=chaos-angel "$@"; }
 
 echo "== 1. the check passes where prod matches staging"
 onboard=$(cub changeorder list --space chaos-shop-base -o jq='.[].ChangeOrder.Slug' | tr -d '"' | grep '^onboard-' | head -1)

@@ -14,10 +14,10 @@ page is that contract.
 | --- | --- |
 | **The task** | The prompt file, with each `${VARIABLE}` filled from the environment. A missing one stops the run before it starts. The scenarios say what to set |
 | **Standing instructions** | `devil.md`, `angel.md` or `milton.md`, with `$AI_CHAOS_DIR` and `$DEMO` filled in, added to the runtime's own system prompt |
-| **Its ConfigHub identity** | `CUB_CONTEXT=chaos-<agent>`, the `cub` context `setup/identities.sh` signed in as that agent's service account, with its key. Never switch the current context: set it per process |
+| **Its ConfigHub identity** | Its own `cub` configuration, `CUB_CONFIG=$AI_CHAOS_DIR/cub/<agent>`, which `setup/identities.sh` made with one context, `chaos-<agent>`, signed in as that agent's service account with its key. `run-agent.sh` signs it in afresh before each run. Your own `cub` configuration is not in reach |
 | **The clusters** | `KUBECONFIG=$AI_CHAOS_DIR/fleet.kubeconfig`, with the contexts `kind-chaos-mgmt`, `kind-chaos-staging`, `kind-chaos-prod-eu`, `kind-chaos-prod-us-1` and `kind-chaos-prod-us-2` |
 | **The policy sandbox** | `$AI_CHAOS_DIR/sandbox.kubeconfig`, named in the prompts that need it |
-| **Isolation** | It starts in a new empty directory outside any repository. It gets nothing on stdin, no MCP servers or connectors, and no memory of earlier runs |
+| **Isolation** | It starts in a new empty directory outside any repository. It gets nothing on stdin, no MCP servers or connectors, and no memory of earlier runs. Every command it runs is held in Claude Code's sandbox (below) |
 
 ## What each agent may run
 
@@ -33,25 +33,45 @@ The shared list Devil and Angel may never run:
 - `cub changeworkflow create`, `update`, `edit` or `delete`;
 - `cub component update`;
 - `cub worker`, `cub serviceaccount`, `cub auth` and `cub context`;
-- any `cub` command that names a context (`cub --context ...`), which would
-  act as another identity whose context is signed in on this machine, and
-  `cub --debug`, which prints the bearer token;
 - `kubectl delete namespace`.
 
+And no agent, Milton included, may:
+- run a `cub` command that names a context (`--context` anywhere on the
+  line), or `--debug`, which prints the bearer token;
+- run a command that sets `CUB_CONTEXT` or `CUB_CONFIG`;
+- read, with its Read tool or with `cat` and the like, your `cub`
+  configuration, `$AI_CHAOS_DIR/keys`, `$AI_CHAOS_DIR/cub` or
+  `$AI_CHAOS_DIR/guards`. These rules also refuse Edit and Write there.
+
 A refused command is refused, and the agent is told so. It cannot ask for
-permission. `run-agent.sh` holds the exact lists.
+permission (`--permission-mode dontAsk`). `run-agent.sh` holds the exact lists.
 
-Claude Code matches these lists by command prefix. So the instructions ask each
-agent for one plain command at a time, verb first and `--context` last, with no
-loops or chained commands. Milton may pipe one command into another. Another runtime may not need that, but the
-instructions still ask for it. The rule came after our first run, whose
-transcripts still show loops and chained commands.
+Claude Code matches these lists against the command's text. So the
+instructions ask each agent for one plain command at a time, verb first and
+`--context` last, with no loops or chained commands. Milton may pipe one
+command into another. The rule came after our first run, whose transcripts
+still show loops and chained commands.
 
-These limits are a second line, not the only one. ConfigHub refuses an
-approval from anyone the workflow does not name. `setup/gates.sh` and
-`setup/onboard.sh` name only you and Milton, and never a change's author. So an
-agent runtime that cannot restrict commands still cannot approve as Devil or
-Angel. It could still break more than the scenario asks for.
+Matching text is not a boundary on its own: a program can still open any file
+its user can. So there are two more lines:
+- **The sandbox.** Every command an agent runs is held in Claude Code's
+  sandbox (macOS Seatbelt), set per run in `$AI_CHAOS_DIR/guards/<agent>.json`.
+  It cannot read your `cub` configuration, the keys or the other agents'
+  `cub` configurations, whichever program asks (`kubectl --from-file`
+  included). It writes only its own directory and its own `cub`
+  configuration. It reaches only ConfigHub and the kind clusters on this
+  machine, and a command cannot leave the sandbox. One opening is needed:
+  `cub`, a Go program, checks TLS through macOS's trust service, which the
+  sandbox reaches only with `enableWeakerNetworkIsolation`.
+- **ConfigHub.** It refuses an approval from anyone the workflow does not
+  name. `setup/gates.sh` and the rollouts name only you and Milton, and never
+  a change's author. With no other identity in reach, Devil and Angel cannot
+  approve.
+
+What is left: an agent can read its own sign-in, which lasts a day, and a
+command can print it. Before you publish the transcripts,
+`bash $DEMO/proof/scan-runs.sh` names every line that looks like a
+credential.
 
 ## How long a run takes
 

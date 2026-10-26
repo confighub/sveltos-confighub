@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Gives each agent its own ConfigHub identity: a service account with a key,
-# and a cub context signed in with that key.
+# and a cub configuration of its own, signed in with that key.
 #   devil     causes the outages (org role editor)
 #   angel     fixes them and writes what prevents them (org role editor)
 #   reporter  writes live status (org role editor)
@@ -11,30 +11,47 @@
 #
 #   source demo/env.sh && bash $DEMO/setup/identities.sh
 #
-# ConfigHub keeps only the public half of each key. The private half is in
-# $AI_CHAOS_DIR/keys, readable by you alone, and teardown.sh --confighub
-# deletes it with the service accounts. A service account's role cannot be
-# above yours; the demo needs you to be an admin. The active cub context is
-# not changed. Safe to run again: a key that no longer signs in is replaced.
+# Each agent's cub configuration is the directory $AI_CHAOS_DIR/cub/<agent>
+# (CUB_CONFIG), holding one context, chaos-<agent>, and a link to your cub
+# plugins. Your own cub configuration is not touched, and an agent's has no
+# other identity in it to switch to. ConfigHub keeps only the public half of
+# each key; the private half is in $AI_CHAOS_DIR/keys, and agents/run-agent.sh
+# keeps every agent from reading it. teardown.sh --confighub deletes both with
+# the service accounts. A service account's role cannot be above yours; the
+# demo needs you to be an admin. Safe to run again: a key that no longer signs
+# in is replaced.
 set -euo pipefail
 [ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 : "${AI_CHAOS_DIR:?source demo/env.sh first}"
 server=${CONFIGHUB_URL:-https://hub.confighub.com}
 keys="$AI_CHAOS_DIR/keys"
+plugins="${CUB_CONFIG:-$HOME/.confighub}/plugins"
 umask 077
 mkdir -p "$keys"
 for a in devil angel reporter milton; do
   role=editor; [ "$a" = milton ] && role=viewer
   cub serviceaccount create "chaos-$a" --org-role "$role" --label Purpose=ai-chaos --allow-exists --quiet
-  cub context create "chaos-$a" --server="$server" >/dev/null 2>&1 || true
+  cfg="$AI_CHAOS_DIR/cub/$a"
+  mkdir -p "$cfg"
+  ln -sfn "$plugins" "$cfg/plugins"
+  # CUB_CONTEXT is set as well as CUB_CONFIG: cub refuses a CUB_CONTEXT, set
+  # in your shell, that its configuration does not have.
+  as() { CUB_CONFIG="$cfg" CUB_CONTEXT="chaos-$a" cub "$@"; }
+  CUB_CONFIG="$cfg" CUB_CONTEXT= cub context create "chaos-$a" --server="$server" >/dev/null 2>&1 || true
   key="$keys/chaos-$a.jwk"
-  if ! { [ -s "$key" ] && cub --context "chaos-$a" auth login --private-key="$key" >/dev/null 2>&1; }; then
+  if ! { [ -s "$key" ] && as auth login --private-key="$key" >/dev/null 2>&1; }; then
     mv -f "$key" "$key.old" 2>/dev/null || true
-    cub serviceaccount key add "chaos-$a" --generate "$key" --description "AI chaos demo: $a, on $(hostname -s)" >/dev/null
-    cub --context "chaos-$a" auth login --private-key="$key" >/dev/null 2>&1 || { echo "could not sign in as chaos-$a" >&2; exit 1; }
+    cub serviceaccount key add "chaos-$a" --generate "$key" --description "AI chaos demo: $a" >/dev/null
+    as auth login --private-key="$key" >/dev/null 2>&1 || { echo "could not sign in as chaos-$a" >&2; exit 1; }
     rm -f "$key.old"
+    # Any key it replaces is still registered: delete every other key of this
+    # account, matched by its public half, so only the one in $key signs in.
+    x=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["x"])' "$key")
+    for kid in $(cub serviceaccount key list "chaos-$a" -o "jq=[.[] | (.UserKey // .) | select(.PublicJWK.x != \"$x\") | .Kid] | join(\" \")" | tr -d '"'); do
+      cub serviceaccount key delete "chaos-$a" "$kid" >/dev/null && echo "chaos-$a: deleted the key it replaced, $kid"
+    done
   fi
-  echo "chaos-$a: signed in as $(cub --context "chaos-$a" auth status 2>/dev/null | awk '/^User/ {print $2}')"
+  echo "chaos-$a: signed in as $(as auth status 2>/dev/null | awk '/^User/ {print $2}')"
 done
 
 me=$(cub auth status | awk '/^User/ {print $2}')

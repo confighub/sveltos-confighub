@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Removes everything the demo made. Without --confighub: the reporter, the
 # kind clusters (the fleet and the policy sandbox) and the files in
-# $AI_CHAOS_DIR other than your agent runs. With --confighub: also every
-# ConfigHub Space whose slug starts with chaos-, the demo's three components,
-# the agents' service accounts and their keys, and the agents' cub contexts.
+# $AI_CHAOS_DIR other than your agent runs and the agents' identities. With
+# --confighub: also every ConfigHub Space whose slug starts with chaos-, the
+# demo's three components, and the agents' identities: their service
+# accounts, keys, cub configurations and run guards.
 # Deleting a service account disables it and keeps its identity, so the
 # record still says who made each change.
 # Deleting a Space deletes its units, revisions, releases and attestations for
@@ -48,9 +49,11 @@ fi
 for c in chaos-shop chaos-platform chaos-management; do cub component delete "$c" --quiet 2>/dev/null && echo "deleted component $c" || true; done
 for a in devil angel reporter milton; do
   cub serviceaccount delete "chaos-$a" --quiet 2>/dev/null && echo "deleted service account chaos-$a" || true
+  # Contexts by these names in your own cub configuration came from an earlier
+  # version of setup/identities.sh; the agents' own are in $AI_CHAOS_DIR/cub.
   cub context delete "chaos-$a" >/dev/null 2>&1 || true
 done
-rm -rf "$AI_CHAOS_DIR/keys"
+rm -rf "$AI_CHAOS_DIR/keys" "$AI_CHAOS_DIR/cub" "$AI_CHAOS_DIR/guards"
 rm -f "$AI_CHAOS_DIR/ids.env"
 spaces=$(list)
 [ -z "$spaces" ] && echo "ConfigHub: no chaos-* Spaces left" || { echo "still there (delete gates, or something depends on them):"; echo "$spaces" | sed 's/^/  /'; }
