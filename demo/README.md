@@ -82,16 +82,16 @@ Tested together on 2026-10-03. On 2026-10-04 the server moved to v0.8.3; stand-u
 onboarding, the gates and the parity gate were rechecked on it
 ([the check](recording/check-2026-10-04.md)). On 2026-10-26, with the agents
 as service accounts, stand-up, onboarding, the handover, the gates and live
-status were rechecked on ConfigHub v0.9.5 and `cub` v0.9.0.
+status were rechecked on ConfigHub v0.9.5, `cub` v0.9.0 and Sveltos v1.16.0.
 
 
 | Product | Version |
 | --- | --- |
-| ConfigHub (hub.confighub.com) | server v0.8.1, and rechecked on v0.8.3. The hosted server moves on: you get the version it runs |
+| ConfigHub (hub.confighub.com) | server v0.8.1, rechecked on v0.8.3 and v0.9.5. The hosted server moves on: you get the version it runs |
 | `cub` | v0.8.13 or newer, for service accounts; v0.9.0 on 2026-10-26. The recorded runs used v0.8.1 |
 | `cub sveltos` (this repository) | v0.14.1 or newer: the live-status reporter needs v0.14.0 since ConfigHub v0.8.2, and `--kube-context` came in v0.14.1. The recorded runs used v0.13.0 |
 | Helm (renders the charts) | v4.1.4 |
-| Sveltos | v1.15.0 (installed by the fleet script) |
+| Sveltos | v1.16.0 (installed by the fleet script); runs 1 and 2 used v1.15.0 |
 | kind | v0.31.0, Kubernetes v1.35.0 nodes |
 | Stakater Reloader (Helm chart) | 2.2.18 |
 | Claude Code | 2.1.285, model `claude-opus-5-5` |
@@ -158,7 +158,7 @@ keeps the clusters and identities it finds, brings the rest up to date, and
 skips the shop once the fleet is onboarded. In order, it runs:
 
 ```bash
-node $DEMO/setup/kind-fleet.mjs             # chaos-mgmt and four workload clusters, Sveltos v1.15.0
+node $DEMO/setup/kind-fleet.mjs             # chaos-mgmt and four workload clusters, Sveltos v1.16.0
 bash $DEMO/setup/sandbox.sh                 # the policy sandbox: a kind cluster with Sveltos's CRDs and nothing running
 bash $DEMO/setup/setup-shop.sh              # the shop and Reloader, delivered by plain Sveltos
 bash $DEMO/setup/identities.sh              # devil, angel, reporter, milton; writes your user ID and Milton's

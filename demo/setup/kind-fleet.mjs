@@ -1,5 +1,5 @@
 // The fleet for "AI chaos in production" on kind, standing in for production:
-// a management cluster running stock Sveltos v1.15.0 (which registers itself
+// a management cluster running stock Sveltos v1.16.0 (which registers itself
 // as mgmt/mgmt) and four workload clusters registered as SveltosClusters with
 // env and region labels. region=us covers two of the four: half the fleet.
 //
@@ -20,9 +20,9 @@ import { parseDocs } from "../../scripts/lib/proof-common.mjs";
 import { manifestImages, preloadSveltosImages, writeDocuments } from "../../scripts/lib/per-cluster-fleet.mjs";
 
 const W = process.env.AI_CHAOS_DIR ?? join(homedir(), "ai-chaos");
-const VERSION = "v1.15.0";
+const VERSION = "v1.16.0";
 const MANIFEST_URL = `https://raw.githubusercontent.com/projectsveltos/sveltos/${VERSION}/manifest/manifest.yaml`;
-const MANIFEST_SHA = "ad80fa92a73b167e30df7a98cc0295acd3716b476dd0cc25859df3f45b69b4ce";
+const MANIFEST_SHA = "5381af32cf8d0ee7c9cf2d86f17d30826ae1344b9a65208fb614f94fd55fc303";
 const MGMT = "chaos-mgmt";
 // name: [env, region]
 const FLEET = { staging: ["staging", "eu"], "prod-eu": ["prod", "eu"], "prod-us-1": ["prod", "us"], "prod-us-2": ["prod", "us"] };

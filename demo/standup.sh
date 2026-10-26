@@ -47,7 +47,7 @@ echo "  ConfigHub organization: ${org:-unknown}${CUB_CONTEXT:+ (context $CUB_CON
 
 . "$here/env.sh"
 
-echo "== the fleet: chaos-mgmt and four workload clusters, Sveltos v1.15.0"
+echo "== the fleet: chaos-mgmt and four workload clusters, Sveltos v1.16.0"
 node "$here/setup/kind-fleet.mjs"
 . "$here/env.sh"    # again, so the fleet's kubeconfig is built
 
