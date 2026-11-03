@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 540" width="1280" height="540" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6762"/>
+    </marker>
+    <marker id="arrowback" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b4342c"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="540" fill="#ffffff"/>
+
+  <text x="48" y="46" font-size="23" font-weight="700" fill="#1b2320">Agents propose. ConfigHub holds the gate.</text>
+  <text x="48" y="72" font-size="14.5" fill="#5a6762">Three outages, caused on purpose. The Devil Agent breaks a Kubernetes fleet, the Angel Agent fixes it, and</text>
+  <text x="48" y="92" font-size="14.5" fill="#5a6762">nothing reaches a cluster until somebody who did not write the change says yes.</text>
+
+  <!-- Box 1 -->
+  <rect x="48" y="128" width="208" height="134" rx="7" fill="#fdf2f1" stroke="#b4342c" stroke-width="1.4"/>
+  <text x="66" y="157" font-size="15.5" font-weight="700" fill="#8c2721">1. Devil Agent breaks</text>
+  <text x="66" y="176" font-size="15.5" font-weight="700" fill="#8c2721">something</text>
+  <text x="66" y="200" font-size="12.8" fill="#5a6762">It changes a password, or</text>
+  <text x="66" y="217" font-size="12.8" fill="#5a6762">sets something up by hand.</text>
+  <text x="66" y="234" font-size="12.8" fill="#5a6762">Ordinary things to do, done</text>
+  <text x="66" y="251" font-size="12.8" fill="#5a6762">in the wrong place.</text>
+
+  <!-- Box 2 -->
+  <rect x="296" y="128" width="208" height="134" rx="7" fill="#f3f7f5" stroke="#17695a" stroke-width="1.4"/>
+  <text x="314" y="157" font-size="15.5" font-weight="700" fill="#11574a">2. Sveltos sees it,</text>
+  <text x="314" y="176" font-size="15.5" font-weight="700" fill="#11574a">ConfigHub shows it</text>
+  <text x="314" y="200" font-size="12.8" fill="#5a6762">The app stopped working.</text>
+  <text x="314" y="217" font-size="12.8" fill="#5a6762">It showed as broken 81</text>
+  <text x="314" y="234" font-size="12.8" fill="#5a6762">seconds later. Nobody had</text>
+  <text x="314" y="251" font-size="12.8" fill="#5a6762">to notice.</text>
+
+  <!-- Box 3 -->
+  <rect x="544" y="128" width="208" height="134" rx="7" fill="#f3f7f5" stroke="#17695a" stroke-width="1.4"/>
+  <text x="562" y="157" font-size="15.5" font-weight="700" fill="#11574a">3. Angel Agent works</text>
+  <text x="562" y="176" font-size="15.5" font-weight="700" fill="#11574a">out why</text>
+  <text x="562" y="200" font-size="12.8" fill="#5a6762">It asks for two changes: one</text>
+  <text x="562" y="217" font-size="12.8" fill="#5a6762">to get the app running now,</text>
+  <text x="562" y="234" font-size="12.8" fill="#5a6762">and a new policy so this</text>
+  <text x="562" y="251" font-size="12.8" fill="#5a6762">cannot happen again.</text>
+
+  <!-- Box 4 -->
+  <rect x="792" y="128" width="208" height="134" rx="7" fill="#fdf7e8" stroke="#9a6a00" stroke-width="1.4"/>
+  <text x="810" y="157" font-size="15.5" font-weight="700" fill="#7d5600">4. Somebody else</text>
+  <text x="810" y="176" font-size="15.5" font-weight="700" fill="#7d5600">says yes</text>
+  <text x="810" y="200" font-size="12.8" fill="#5a6762">You, or a third agent. The</text>
+  <text x="810" y="217" font-size="12.8" fill="#5a6762">one who asked for a change</text>
+  <text x="810" y="234" font-size="12.8" fill="#5a6762">is never allowed to approve</text>
+  <text x="810" y="251" font-size="12.8" fill="#5a6762">it.</text>
+
+  <!-- Box 5 -->
+  <rect x="1040" y="128" width="208" height="134" rx="7" fill="#f3f7f5" stroke="#17695a" stroke-width="1.4"/>
+  <text x="1058" y="157" font-size="15.5" font-weight="700" fill="#11574a">5. ConfigHub releases,</text>
+  <text x="1058" y="176" font-size="15.5" font-weight="700" fill="#11574a">Sveltos installs</text>
+  <text x="1058" y="200" font-size="12.8" fill="#5a6762">One release for each</text>
+  <text x="1058" y="217" font-size="12.8" fill="#5a6762">cluster. The app works</text>
+  <text x="1058" y="234" font-size="12.8" fill="#5a6762">again.</text>
+  
+
+  <!-- Arrows between boxes -->
+  <line x1="258" y1="195" x2="292" y2="195" stroke="#5a6762" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="506" y1="195" x2="540" y2="195" stroke="#5a6762" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="754" y1="195" x2="788" y2="195" stroke="#5a6762" stroke-width="1.6" marker-end="url(#arrow)"/>
+  <line x1="1002" y1="195" x2="1036" y2="195" stroke="#5a6762" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+  <!-- Second band -->
+  <line x1="48" y1="290" x2="1248" y2="290" stroke="#d6ddd9" stroke-width="1"/>
+  <text x="48" y="304" font-size="14" font-weight="700" fill="#1b2320">How do we know it is true?</text>
+
+  <text x="296" y="332" font-size="12.8" fill="#1b2320">Because the clusters said so,</text>
+  <text x="296" y="349" font-size="12.8" fill="#1b2320">not because an agent said so.</text>
+
+  <text x="544" y="332" font-size="12.8" fill="#1b2320">The new policy is checked</text>
+  <text x="544" y="349" font-size="12.8" fill="#1b2320">against everything already</text>
+  <text x="544" y="366" font-size="12.8" fill="#1b2320">running, before it goes out.</text>
+
+  <text x="792" y="332" font-size="12.8" fill="#1b2320">Because somebody who did</text>
+  <text x="792" y="349" font-size="12.8" fill="#1b2320">not write it signed it off.</text>
+
+  <text x="1040" y="332" font-size="12.8" fill="#1b2320">Because the app is working,</text>
+  <text x="1040" y="349" font-size="12.8" fill="#1b2320">and we can see exactly what</text>
+  <text x="1040" y="366" font-size="12.8" fill="#1b2320">was installed.</text>
+
+  <!-- Return loop -->
+  <path d="M 1252 195 L 1266 195 L 1266 424 L 14 424 L 14 195 L 44 195" fill="none" stroke="#b4342c" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#arrowback)"/>
+  <rect x="380" y="406" width="520" height="36" rx="6" fill="#ffffff"/>
+  <text x="402" y="430" font-size="14" font-weight="600" fill="#8c2721">Devil Agent tries the same trick again. The new policy refuses it.</text>
+
+  <text x="48" y="474" font-size="13" font-weight="600" fill="#1b2320">What is a policy here? A gate, held in ConfigHub with the rest of the configuration.</text>
+  <text x="48" y="494" font-size="12.8" fill="#5a6762">Two of these gates run on the clusters and refuse a bad change as it arrives. The third is checked by ConfigHub itself, and a change that fails it is never released.</text>
+  <text x="48" y="514" font-size="12.8" fill="#5a6762">Each one is stored with the outage that caused it and the name of whoever approved it.</text>
+</svg>
