@@ -80,7 +80,7 @@ GPU daemonsets, and no driver, toolkit or device plugin ran. The example
 proves governance, delivery, the handover of a live GPU profile, and a staged
 operator and driver upgrade. Proving that the drivers come up needs real GPU
 nodes. That lane is the eks-inference stack, and it costs cloud money, so it
-waits for a go-ahead ([#48](https://github.com/confighub/sveltos-confighub/issues/48)).
+waits for a go-ahead.
 
 ## Two things this example teaches
 
