@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 380" width="1240" height="380" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5a6762"/>
+    </marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b4342c"/>
+    </marker>
+  </defs>
+
+  <rect width="1240" height="380" fill="#ffffff"/>
+
+  <text x="48" y="46" font-size="25" font-weight="700" fill="#1b2320">No human in the loop</text>
+  <text x="48" y="74" font-size="16" font-weight="600" fill="#11574a">No agent approves its own work.</text>
+
+  <!-- 1 Devil -->
+  <rect x="48" y="112" width="200" height="96" rx="7" fill="#fdf2f1" stroke="#b4342c" stroke-width="1.4"/>
+  <text x="68" y="146" font-size="16" font-weight="700" fill="#8c2721">Devil Agent</text>
+  <text x="68" y="172" font-size="13.5" fill="#5a6762">breaks something</text>
+
+  <!-- 2 Sveltos -->
+  <rect x="284" y="112" width="200" height="96" rx="7" fill="#f3f7f5" stroke="#17695a" stroke-width="1.4"/>
+  <text x="304" y="146" font-size="16" font-weight="700" fill="#11574a">Sveltos</text>
+  <text x="304" y="172" font-size="13.5" fill="#5a6762">sees it break</text>
+
+  <!-- 3 Angel -->
+  <rect x="520" y="112" width="200" height="96" rx="7" fill="#f3f7f5" stroke="#17695a" stroke-width="1.4"/>
+  <text x="540" y="146" font-size="16" font-weight="700" fill="#11574a">Angel Agent</text>
+  <text x="540" y="172" font-size="13.5" fill="#5a6762">proposes a fix,</text>
+  <text x="540" y="190" font-size="13.5" fill="#5a6762">and a policy</text>
+
+  <!-- 4 Milton -->
+  <rect x="756" y="112" width="200" height="96" rx="7" fill="#fdf7e8" stroke="#9a6a00" stroke-width="1.4"/>
+  <text x="776" y="146" font-size="16" font-weight="700" fill="#7d5600">Milton</text>
+  <text x="776" y="172" font-size="13.5" fill="#5a6762">approves, or refuses</text>
+
+  <!-- 5 ConfigHub -->
+  <rect x="992" y="112" width="200" height="96" rx="7" fill="#f3f7f5" stroke="#17695a" stroke-width="1.4"/>
+  <text x="1012" y="146" font-size="16" font-weight="700" fill="#11574a">ConfigHub</text>
+  <text x="1012" y="172" font-size="13.5" fill="#5a6762">releases it to the fleet</text>
+
+  <line x1="250" y1="160" x2="280" y2="160" stroke="#5a6762" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="486" y1="160" x2="516" y2="160" stroke="#5a6762" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="722" y1="160" x2="752" y2="160" stroke="#5a6762" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="958" y1="160" x2="988" y2="160" stroke="#5a6762" stroke-width="1.6" marker-end="url(#a)"/>
+
+  <!-- return -->
+  <path d="M 1196 160 L 1218 160 L 1218 270 L 22 270 L 22 160 L 44 160" fill="none" stroke="#b4342c" stroke-width="1.6" stroke-dasharray="6 5" marker-end="url(#r)"/>
+  <rect x="470" y="252" width="300" height="34" rx="6" fill="#ffffff"/>
+  <text x="492" y="275" font-size="14.5" font-weight="600" fill="#8c2721">Same fault, tried again. Refused.</text>
+
+  <text x="48" y="338" font-size="13.5" fill="#5a6762">A person writes the rules once, and names who may approve. The agents cannot change them.</text>
+</svg>

@@ -12,6 +12,11 @@
 # demo/teardown.sh takes everything down again.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+# A blog platform printed "--check" as a dash and a word ("— check"), so that
+# spelling, and "check" on its own, mean --check too.
+case "${1:-} ${2:-}" in
+  "— check"|"– check"|"check ") set -- --check ;;
+esac
 case "${1:-}" in
   ""|--check) ;;
   *) echo "usage: bash demo/standup.sh [--check]" >&2; exit 2 ;;

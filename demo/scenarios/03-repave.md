@@ -22,6 +22,11 @@ It does not:
   store. No release holds it, so no repave brings it back, and `web` and `api`
   wait for a Secret that is not there.
 
+A real repave usually moves each cluster onto newly hardened images as well.
+The demo rebuilds each kind cluster on kind's default node image, as before.
+Neither failure involves the image: one is Sveltos's record of what it
+delivered, the other a Secret no release holds.
+
 Angel repairs it, and proposes what stops it happening again:
 
 - **The fix:** Sveltos delivers to each rebuilt cluster again, and the shop's
