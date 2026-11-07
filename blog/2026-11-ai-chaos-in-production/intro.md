@@ -145,8 +145,8 @@ The prevention here is not a cluster rule but a check ConfigHub runs on every ch
 a workload uses must either be held in its release or be created by something in its release.
 If it is not, the change does not ship.
 
-**Where this one stands.** Outage three has been built and checked by hand, and the agents have
-not yet run it end to end. The first two have been run twice, by the agents, and are recorded.
+**Where this one stands.** Outage three was run by hand on 26 October, piece by piece, and
+checked live. The first two have been run twice, by the agents, and are recorded.
 
 ## Letting an agent approve
 

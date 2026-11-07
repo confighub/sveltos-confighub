@@ -7,8 +7,8 @@ pack is self-contained: the folder can be handed to anyone and nothing it needs 
 it. The originals stay in [`demo/diary/images/`](../../demo/diary/images/), where the run that
 produced them keeps them.
 
-None of the images is from outage 3. The agents have not run it, so there is nothing of it to
-capture yet.
+The screenshots come from the agents' runs of outages 1 and 2. Outage 3 was run by hand, on
+26 October 2026.
 
 ## The diagram
 

@@ -16,8 +16,8 @@ should not ask your reader to take yours.
    never round one into a better story.
 2. **Say NOT OBSERVED.** If something cannot be answered from the repository or from a run you
    have done, say so and say what you would need. A gap named is more useful than a gap filled.
-3. **Three things you must not claim.** The agents have not run outage 3 end to end, only outages
-   1 and 2. The policy preview's view inside ConfigHub is a mock, although the preview itself is
+3. **Get these right.** Outages 1 and 2 were run by the agents, end to end. Outage 3
+   was run by hand, piece by piece, on 26 October 2026. The policy preview's view inside ConfigHub is a mock, although the preview itself is
    real on the command line. The fleet is `kind` clusters standing in for production, not
    production. The post's screenshots come from outages 1 and 2, including the two shown under
    its outage 3 heading.
@@ -75,9 +75,10 @@ in the first run's published transcripts tried it, and every command was checked
 has its own configuration and runs inside a command sandbox. This is in `demo/README.md` under
 what we learned.
 
-**"Did the agents fix the repave?"** No. Outage 3 was built and checked by hand on 26 October
-2026, without agents, and the agents have not run it. The two screenshots under the post's
-outage 3 heading are from outage 1. Say so plainly if asked.
+**"Who fixed the repave?"** Outage 3 was run by hand on 26 October 2026, piece by piece: the
+repave, the redelivery, the token Job and the gate were each run and checked live (PR #131). The
+agents' runs on record are of outages 1 and 2. The two screenshots under the post's outage 3
+heading are from outage 1. Say so plainly if asked.
 
 **"Was there really no human in the loop?"** In the second run no person approved anything:
 Milton made all 19 approvals (VR:418). A person still set the rules and named who may approve,
@@ -106,8 +107,8 @@ right-hand column, not the post, when your reader needs the exact account.
 | Outage 2: down "on the two clusters in the United States", up "on the two in Europe" | True. `prod-us-1` and `prod-us-2` carry `region=us`; `staging` and `prod-eu` carry `region=eu`. `prod-us-1` went Degraded 56 seconds after the fault, `prod-us-2` 19 seconds later | `demo/setup/kind-fleet.mjs`; FR:229-231 |
 | "Nothing was stored in the source repository to record that this profile existed" | The profile was applied by hand with `kubectl` on the management cluster. The demo's record is ConfigHub's Space `chaos-management`, and it did not hold the profile | FR:224-227, FR:241-243; `demo/GLOSSARY.md`, "The record" |
 | Outage 3: clusters "re-based onto newly hardened images" | The demo rebuilds each kind cluster from nothing, on kind's default node image, as before. Neither failure involves the image: one is Sveltos's record of what it delivered, the other a Secret no release holds | `demo/scenarios/03-repave.md` |
-| Outage 3's two failures: Sveltos sent nothing while the dashboard said Healthy; the shop came back without its token | Found by hand on 26 October 2026, without agents: a rebuilt `prod-us-2` stayed empty while ConfigHub showed Healthy. Once delivery resumed, the shop could not start without its token, and live status went Degraded, naming `shop/api`. Why Sveltos delivers nothing to a rebuilt cluster is with the Sveltos maintainers, as a question | PR #131; `demo/scenarios/03-repave.md` |
-| The repair "shown as a config change promotion", and the transcript, under the outage 3 heading | Both are from outage 1, first run: the change order `web-reload-on-token-rotation`, and the Devil Agent's second try. There is no screenshot of outage 3 | `captions.md`, images 2 and 3 |
+| Outage 3's two failures: Sveltos sent nothing while the dashboard said Healthy; the shop came back without its token | Found by hand on 26 October 2026: a rebuilt `prod-us-2` stayed empty while ConfigHub showed Healthy. Once delivery resumed, the shop could not start without its token, and live status went Degraded, naming `shop/api`. Why Sveltos delivers nothing to a rebuilt cluster is with the Sveltos maintainers, as a question | PR #131; `demo/scenarios/03-repave.md` |
+| The repair "shown as a config change promotion", and the transcript, under the outage 3 heading | Both are from outage 1, first run: the change order `web-reload-on-token-rotation`, and the Devil Agent's second try | `captions.md`, images 2 and 3 |
 | The Devil Agent rotates the token again, "the shop survives, so it copies the old manifest", and is refused | True: outage 1, first run, 14:26:52 UTC, refused by `secret-env-needs-reload` | FR:182-191 |
 | "Nobody was watching when the first outage happened" | Nobody had to notice: the clusters' health checks reported it and ConfigHub showed it. A person was running the first run, step by step | FR:106, FR:205 |
 | A new policy was run "against every object already running on the fleet, on a spare cluster" | `cub sveltos impact`, by server-side dry runs in the policy sandbox. It judges each cluster's configuration at the release it runs, as ConfigHub records it, and only the objects a policy matches. It does not read objects back from the clusters. In outage 1: "4 newly denied" as the fleet ran, "0 newly denied" with the fix as the next promotion | FR:150-154; `cub sveltos impact --help`; `internal/onboard/impact.go` |
@@ -120,7 +121,7 @@ right-hand column, not the post, when your reader needs the exact account.
 | It needs "a Mac, Docker with room for six kind clusters, a ConfigHub organization where you are an admin, and Claude Code" | True. Budget also two to three hours, $20 to $30 of model time, and 20 free Spaces | `demo/README.md`, "What you need" |
 | The stand-up check, printed as a dash and then the word `check` | The command is `bash demo/standup.sh --check`. The post's spelling works too | `demo/standup.sh` |
 | "about seven minutes", "Twenty minutes in all before the first outage" | Our times | `demo/README.md` |
-| "Run the three outages in order" | Outage 3 has not been run by agents: treat a difference there as new information, not a mistake | `demo/scenarios/03-repave.md` |
+| "Run the three outages in order" | Our run of outage 3 was by hand, piece by piece: treat a difference there as new information, not a mistake | `demo/scenarios/03-repave.md` |
 | "install the plugin and follow the onboarding guide" | `cub plugin install confighub/sveltos-confighub`, then `docs/user/onboard-your-sveltos-fleet.md` | `README.md` |
 | `examples/gpu-operator` "upgrades the driver on staging before production" | True, recorded on kind clusters on 27 September 2026 | `examples/gpu-operator/README.md` |
 
@@ -186,7 +187,7 @@ deployment without the annotation is refused at admission with the policy named.
 
 **Success for outage 3:** the rebuilt clusters show healthy in ConfigHub while they are in fact
 empty, which is the finding; then after Angel's fix, a repave brings the shop back with no human
-action. Note again that the agents have not run this one, so treat a difference here as new
+action. Our run of this one was by hand, piece by piece, so treat a difference here as new
 information rather than as a mistake.
 
 ### Approving

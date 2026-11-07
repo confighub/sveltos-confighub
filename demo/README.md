@@ -40,7 +40,7 @@ holds what a reader needs to check it.
 - **What has been run.** The agents ran onboarding and outages 1 and 2 end to
   end twice, on 3 October 2026 ([diary/](diary/README.md)). Outage 3, the
   nightly repave, replaced an earlier outage 3 on 26 October 2026. Each of its
-  pieces was run and checked by hand that day. The agents have not run it yet.
+  pieces was run and checked by hand that day.
 - **The workloads.** A small web application, "the shop": two services, `api`
   and `web`, in namespace `shop`, both Python on `python:3.12-alpine`, plus one
   platform component, Stakater Reloader. Nothing here depends on the workload

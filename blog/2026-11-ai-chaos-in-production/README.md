@@ -28,9 +28,9 @@ do not. The first is silent: ConfigHub says Healthy while prod is empty.
 | --- | --- | --- | --- |
 | Onboarding, outages 1 and 2 | The agents, end to end | 3 October 2026, first run | A person |
 | The same again | The agents, end to end | 3 October 2026, second run | Milton: all 19 approvals, and one refusal |
-| Outage 3, the nightly repave | By hand, piece by piece, without agents | 26 October 2026 | Not part of the hand checks |
+| Outage 3, the nightly repave | By hand, piece by piece, checked live | 26 October 2026 | Not part of the hand checks |
 
-The agents have not run outage 3. The screenshots in the post come from outages 1 and 2:
+The screenshots in the post come from the agents' runs of outages 1 and 2:
 [`captions.md`](captions.md) says which. Milton's refusal was of a change in an earlier outage 3,
 which the repave replaced on 26 October.
 
