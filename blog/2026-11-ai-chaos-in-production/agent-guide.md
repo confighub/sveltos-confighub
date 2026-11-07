@@ -16,11 +16,11 @@ should not ask your reader to take yours.
    never round one into a better story.
 2. **Say NOT OBSERVED.** If something cannot be answered from the repository or from a run you
    have done, say so and say what you would need. A gap named is more useful than a gap filled.
-3. **Get these right.** Outages 1 and 2 were run by the agents, end to end. Outage 3
-   was run by hand, piece by piece, on 26 October 2026. The policy preview's view inside ConfigHub is a mock, although the preview itself is
-   real on the command line. The fleet is `kind` clusters standing in for production, not
-   production. The post's screenshots come from outages 1 and 2, including the two shown under
-   its outage 3 heading.
+3. **Get these right.** Outages 1 and 2 were run by the agents, end to end. Outage 3 was run
+   by hand, piece by piece, on 26 October 2026. The policy preview's view inside ConfigHub is a
+   mock, although the preview itself is real on the command line. The fleet is `kind` clusters
+   standing in for production, not production. The post's screenshots come from outages 1 and
+   2, including the two shown under its outage 3 heading.
 4. **Versions move.** The recorded runs of 3 October 2026 used older versions than the repository
    now targets. If your reader's output differs, check the version table before calling it a bug.
 
