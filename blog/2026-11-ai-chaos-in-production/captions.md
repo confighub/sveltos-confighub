@@ -44,7 +44,7 @@ The loop the demo runs for each outage. Three of its lines, and what stands behi
 In the post, under "The fleet".
 
 ConfigHub's component graph during outage 2. `prod-eu` and `staging` are Live. `prod-us-1` and
-`prod-us-2` are Degraded. All four are Synced, at the same release.
+`prod-us-2` are Degraded. All four read Synced, at the same release.
 
 What to notice: every cluster has exactly the configuration that was asked for, and two of them
 are down. The two that broke are the two labelled `region=us`, which is what the hand-applied

@@ -126,8 +126,8 @@ several times a week under a standing approval, without telling the application 
 the point of doing it.
 
 So the clusters are rebuilt from nothing overnight. A real repave usually moves each cluster
-onto newly hardened images as well. Ours come back on the same image, and neither of the
-failures below depends on it. A cluster rebuilt from nothing should get everything back from its source of
+onto newly hardened images as well. Ours come back on the same image as before, and neither
+of the failures below involves the image. A cluster rebuilt from nothing should get everything back from its source of
 truth.
 
 Two things went wrong, and we found both while building it.
@@ -138,8 +138,8 @@ everything already, and nothing had told it the clusters were new. ConfigHub rea
 so live status went on saying healthy while production was empty.
 
 The second was simpler, and not silent. When delivery did resume, the shop came back without its
-token, because that token had been made by hand in each cluster and no release held it. The pods
-said which Secret was missing, and live status went degraded.
+token, because that token had been made by hand in each cluster and no release held it. The
+shop could not start, and live status went degraded.
 
 The prevention here is not a cluster rule but a check ConfigHub runs on every change: everything
 a workload uses must either be held in its release or be created by something in its release.
