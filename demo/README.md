@@ -1,58 +1,77 @@
 # AI chaos in production: run it yourself on K8s
 
-A demonstration of the 'chaos' approach to testing a production fleet
-using AI with a sveltos-confighub layer on standard K8s. The idea is
-that a 'devil' chaos agent causes problems but these are remedied by
-an 'angel' agent, and then a 3rd party (AI or human) does approvals.
+Three outages on a Kubernetes fleet, caused on purpose by one AI agent and
+repaired by another. Each repair comes in two parts: a fix for what broke, and
+a policy that stops it happening again. Neither part takes effect until
+somebody who did not write it approves.
 
-Each time, the angel proposes two changes, and neither takes effect
-until it is approved: a fix for the configuration that caused the
-outage, and a rule that stops the same failure happening again. In
-this demo we have three outages: in both 1 and 2 that new rule is an
-admission policy; in outage 3 it is a gate that ConfigHub itself checks on
-every change, which the approver turns on.
-
-By using ConfigHub we get the advantage of a single operational database
-for configuration and facts. So the demo is a simple set of compliance
-apps. The config data is combined with a policy engine (you choose which
-one) for this.
-
-## At a glance
-
-- **What you will see.** Three outages on a fleet of kind clusters standing in
-  for production. An agent causes each one. The fleet's own health checks show
-  it in ConfigHub. Another agent fixes it through ConfigHub's approval gates,
-  then proposes a rule that stops it happening again.
-- **What it takes.** A Mac, Docker with room for six kind clusters, a ConfigHub
-  organization where you are an admin, and Claude Code. About two to three
-  hours, and $20 to $30 of model time with `MODEL=claude-opus-5-5`.
-  [What you need](#what-you-need) has the detail.
-- **Where to start.** [Stand it up](#stand-it-up), then onboard the fleet
-  ([scenarios/00-onboard.md](scenarios/00-onboard.md)), then run the three
-  outages in order.
-- **What has been run.** The agents ran onboarding and outages 1 and 2 end to
-  end twice, on 3 October 2026 ([diary/](diary/README.md)). Outage 3, the
-  nightly repave, replaced an earlier outage 3 on 26 October 2026. Each of its
-  pieces was run and checked by hand that day. The agents have not run it yet.
-
-Summary: there are three outages on a Sveltos fleet, each caused on purpose,
-and fixed through ConfigHub, and then prevented through ConfigHub. This is
-orchestrated by some AI agents each with their own ConfigHub identities:
-
-- **Devil** causes each outage the way it happens in real life.
-- **Angel** finds the cause, fixes it through ConfigHub, and proposes what
+- **Devil Agent** causes each outage the way it happens in real life.
+- **Angel Agent** finds the cause, fixes it through ConfigHub, and proposes what
   stops it recurring.
 - **Milton** reviews and approves, if you let it.
 - **You** approve by hand at any step, or leave it to Milton.
 
-NOTE: Neither Devil nor Angel can approve. Milton can approve. Or a human.
-NOTE: In this demo version, kind clusters are 'standing in' for production.
+Neither the Devil Agent nor the Angel Agent can approve anything. Only Milton,
+or a person, can.
+
+We wrote it up on the ConfigHub blog as
+[No human in the loop? Agents manage a Sveltos fleet in ConfigHub](https://confighub.com/blog/no-human-in-the-loop-agents-manage-a-sveltos-fleet-in-confighub-178205600338).
+[blog/2026-11-ai-chaos-in-production/](../blog/2026-11-ai-chaos-in-production/README.md)
+holds what a reader needs to check it.
+
+## At a glance
+
+- **What it manages.** ConfigHub and Sveltos together, doing three jobs at once:
+  **fleets**, **compliance** and **agentic operations**. ConfigHub holds the
+  configuration, the policies, and the record of every change and approval.
+  Sveltos delivers each cluster's configuration and reports its health. The
+  policies are enforced by a policy engine you choose, and the demo uses the one
+  built into Kubernetes.
+- **What you will see.** Three outages on a fleet of kind clusters standing in
+  for production. An agent causes each one. The fleet's own health checks show
+  it in ConfigHub. Another agent fixes it through ConfigHub's approval gates,
+  then proposes a policy that stops it happening again.
+- **A repaving example.** Outage 3 is a nightly repave: the prod clusters are
+  rebuilt from nothing overnight, which is what security teams ask for under the
+  three Rs, rotate and repave and repair. A cluster rebuilt from nothing should
+  get everything back from its source of truth. This one does not, twice over,
+  and the first failure is silent: ConfigHub says Healthy while prod is empty.
+  If you came here for one thing, come for this.
+- **What has been run.** The agents ran onboarding and outages 1 and 2 end to
+  end twice, on 3 October 2026 ([diary/](diary/README.md)). Outage 3, the
+  nightly repave, replaced an earlier outage 3 on 26 October 2026. Each of its
+  pieces was run and checked by hand that day.
+- **The workloads.** A small web application, "the shop": two services, `api`
+  and `web`, in namespace `shop`, both Python on `python:3.12-alpine`, plus one
+  platform component, Stakater Reloader. Nothing here depends on the workload
+  being an application or being small. The same pattern carries platform
+  components and GPU stacks: see
+  [examples/gpu-operator](../examples/gpu-operator/README.md), which takes an
+  NVIDIA GPU operator fleet onto one ConfigHub variant per cluster and upgrades
+  the driver on staging before prod.
+- **What it takes.** A Mac, which the agent runs require. Docker with room for
+  six kind clusters, a ConfigHub organization where you are an admin, and Claude
+  Code. About two to three hours, and $20 to $30 of model time with
+  `MODEL=claude-opus-5-5`. [What you need](#what-you-need) has the detail.
+- **Where to start.** [Stand it up](#stand-it-up), then onboard the fleet
+  ([scenarios/00-onboard.md](scenarios/00-onboard.md)), then run the three
+  outages in order.
+
+Each agent signs in to ConfigHub as its own identity, so every change in the
+record says who made it. The kind clusters stand in for production.
+
+In outages 1 and 2 the new policy is a Kubernetes admission policy. In outage 3
+it is a gate ConfigHub itself checks on every change, which the approver turns
+on.
 
 | Outage | What breaks | What prevents it |
 | --- | --- | --- |
 | [1. A rotation nobody picked up](scenarios/01-rotation.md) | A Secret rotated outside ConfigHub; `web` keeps the old token on every cluster | Admission policy: a workload that takes a Secret from its environment must say how it picks up a rotation |
 | [2. Half the fleet at once](scenarios/02-blast-radius.md) | A ClusterProfile applied by hand blocks the shop on the two `region=us` clusters | Admission policy on the management cluster: profiles come only from the record |
 | [3. The nightly repave](scenarios/03-repave.md) | The prod clusters, rebuilt from nothing overnight, come back without the shop: Sveltos delivers nothing, and the shop's hand-made token is gone | A gate ConfigHub checks on every change: what a workload uses, the release holds or makes. The repave job asks Sveltos to deliver again |
+
+[GLOSSARY.md](GLOSSARY.md) explains every word this demo uses in a particular
+way: Space, unit, variant, change order, release, trigger, live status.
 
 [PROOF.md](PROOF.md) lists each claim and where to check it, in the CLI and
 the web UI. [diary/](diary/README.md) tells the two recorded runs as they
@@ -99,35 +118,6 @@ flowchart TD
   writes it into ConfigHub as live status every 15 seconds.
 - **The agents** work with `cub` and `kubectl`, each as its own ConfigHub
   identity. Milton, or you, approves in ConfigHub.
-
-## The words used here
-
-| Word | What it means here |
-| --- | --- |
-| **Space** | A ConfigHub folder of configuration, one per base, class base or cluster. The demo's are named `chaos-*` |
-| **Unit** | One piece of configuration in a Space, with every revision kept: here the shop's manifests (`shop`), Reloader's (`reloader`), or a policy (`guardrails`) |
-| **Base, class base, variant** | The shop's configuration in `chaos-shop-base`, cloned into a class base for staging and one for prod, then into one variant per cluster (`chaos-shop-staging`, `chaos-shop-prod-eu`, ...). The web UI shows each variant as a deployment |
-| **Change order** | One named change, followed through a workflow. Written `<base Space>/<name>`, for example `chaos-shop-base/web-reload-on-token-rotation` |
-| **Workflow, stage** | The path a change order takes: `bases`, then `staging`, then `prod`. Each stage may need approvals before its release |
-| **Release** | What ConfigHub publishes for a variant, and what Sveltos fetches and applies to that cluster |
-| **Attestation** | A recorded verdict on a change: an Approval by you or Milton |
-| **Trigger** | A function ConfigHub runs on every change to a unit. A validating one that fails blocks the unit's release |
-| **The record** | The management cluster's Space, `chaos-management`. Its releases deliver every Sveltos delivery profile, so profiles come from ConfigHub, not by hand |
-| **Live status** | What each cluster reports, written into ConfigHub every 15 seconds: Synced or not, Healthy or Degraded. The web UI shows Healthy as Live |
-| **The shop** | The demo's app: `api` and `web` in namespace `shop`, Python on `python:3.12-alpine`. Its code is the ConfigMap `shop-code`, and its API token the Secret `shop-token`, made by hand in each cluster |
-| **Reloader** | Stakater Reloader, which restarts the pods that use a Secret when it changes. The demo's platform component, `chaos-platform` |
-| **Sveltos** | The add-on manager that delivers configuration from the management cluster to the workload clusters |
-| **Management cluster** | `chaos-mgmt`, where Sveltos runs. The workload clusters are `chaos-staging`, `chaos-prod-eu`, `chaos-prod-us-1` and `chaos-prod-us-2` |
-| **SveltosCluster** | Sveltos's registration of a workload cluster, with its labels: `env` (staging or prod) and `region` (eu or us) |
-| **Delivery profile** | A Sveltos ClusterProfile that fetches one variant's release and applies it to its one cluster |
-| **ClusterSummary** | Sveltos's record of what one profile delivered to one cluster |
-| **Promote** | Move a change order into its next stage. The stage's variants take the change; nothing is released yet |
-| **Baseline** | A variant's first release, published during onboarding: what its cluster already ran |
-| **Handover** | The onboarding step that moves delivery from the profiles you applied by hand to ConfigHub's releases |
-| **Service account** | A ConfigHub identity for something that is not a person. Each agent is one |
-| **Policy sandbox** | A kind cluster that holds admission policies and nothing else, where a policy is previewed before it ships |
-| **Command sandbox** | Claude Code's macOS sandbox, which holds every command an agent runs |
-| **Restore list** | Outage 3's list of what a repave brings back of the shop, which ConfigHub checks on every change |
 
 ## Which policy engine
 

@@ -29,8 +29,8 @@ Three agents work in the fleet, each with its own ConfigHub identity:
 Outage 3 of these runs has since been retired. On ConfigHub v0.9.5 a change
 made only in a prod Space is no longer released by the rollout on its own, so
 it could not be staged as written. The demo's outage 3 is now
-[the nightly repave](../scenarios/03-repave.md), which the agents have not run
-yet. These runs also predate the agents' service accounts and Claude Code's
+[the nightly repave](../scenarios/03-repave.md), run by hand on 26 October
+2026. These runs also predate the agents' service accounts and Claude Code's
 command sandbox: the agents here were ConfigHub workers.
 
 [The demo's README](../README.md) has the full description, the versions it
