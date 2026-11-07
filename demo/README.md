@@ -14,6 +14,11 @@ somebody who did not write it approves.
 Neither the Devil Agent nor the Angel Agent can approve anything. Only Milton,
 or a person, can.
 
+We wrote it up on the ConfigHub blog as
+[No human in the loop? Agents manage a Sveltos fleet in ConfigHub](https://confighub.com/blog/no-human-in-the-loop-agents-manage-a-sveltos-fleet-in-confighub-178205600338).
+[blog/2026-11-ai-chaos-in-production/](../blog/2026-11-ai-chaos-in-production/README.md)
+holds what a reader needs to check it.
+
 ## At a glance
 
 - **What it manages.** ConfigHub and Sveltos together, doing three jobs at once:
@@ -30,7 +35,8 @@ or a person, can.
   rebuilt from nothing overnight, which is what security teams ask for under the
   three Rs, rotate and repave and repair. A cluster rebuilt from nothing should
   get everything back from its source of truth. This one does not, twice over,
-  and both failures are silent. If you came here for one thing, come for this.
+  and the first failure is silent: ConfigHub says Healthy while prod is empty.
+  If you came here for one thing, come for this.
 - **What has been run.** The agents ran onboarding and outages 1 and 2 end to
   end twice, on 3 October 2026 ([diary/](diary/README.md)). Outage 3, the
   nightly repave, replaced an earlier outage 3 on 26 October 2026. Each of its

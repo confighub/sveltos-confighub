@@ -1,7 +1,8 @@
-# Guide for an AI agent: "AI chaos in production"
+# Guide for an AI agent: "No human in the loop? Agents manage a Sveltos fleet in ConfigHub"
 
-You are reading this because someone read a blog post and asked you about it, or asked you to
-reproduce it. This guide covers both jobs. It is written for you, not for them.
+You are reading this because someone read
+[a blog post](https://confighub.com/blog/no-human-in-the-loop-agents-manage-a-sveltos-fleet-in-confighub-178205600338) (6 November
+2026) and asked you about it, or asked you to reproduce it. This guide covers both jobs. It is written for you, not for them.
 
 Everything here is checkable. Nothing in it asks you to take our word for anything, and you
 should not ask your reader to take yours.
@@ -18,7 +19,8 @@ should not ask your reader to take yours.
 3. **Three things you must not claim.** The agents have not run outage 3 end to end, only outages
    1 and 2. The policy preview's view inside ConfigHub is a mock, although the preview itself is
    real on the command line. The fleet is `kind` clusters standing in for production, not
-   production.
+   production. The post's screenshots come from outages 1 and 2, including the two shown under
+   its outage 3 heading.
 4. **Versions move.** The recorded runs of 3 October 2026 used older versions than the repository
    now targets. If your reader's output differs, check the version table before calling it a bug.
 
@@ -37,11 +39,12 @@ Repository: `github.com/confighub/sveltos-confighub`.
 | The transcripts and ConfigHub's record | `demo/recording/` |
 | What each outage does, step by step | `demo/scenarios/01-rotation.md`, `02-blast-radius.md`, `03-repave.md` |
 | The rules each agent runs under | `demo/agents/README.md`, `agents/devil.md`, `agents/angel.md`, `agents/milton.md` |
-| What the words mean | the glossary in `demo/README.md` |
+| What the words mean | `demo/GLOSSARY.md` |
+| The post's diagram and screenshots, and which run each comes from | `blog/2026-11-ai-chaos-in-production/captions.md` |
 
-Citations in the post look like `(FR:89-110)` and `(VR:418-420)`. FR is `diary/first-run.md`,
-VR is `diary/verification-run.md`, and the numbers are line ranges. If you are asked to back up
-a claim, open the file at those lines and quote it.
+The post itself has no citations; this guide gives them. `FR:106` means `demo/diary/first-run.md`
+at line 106, and `VR:418-420` means `demo/diary/verification-run.md` at lines 418 to 420. If you
+are asked to back up a claim, open the file at those lines and quote it.
 
 ---
 
@@ -72,9 +75,54 @@ in the first run's published transcripts tried it, and every command was checked
 has its own configuration and runs inside a command sandbox. This is in `demo/README.md` under
 what we learned.
 
+**"Did the agents fix the repave?"** No. Outage 3 was built and checked by hand on 26 October
+2026, without agents, and the agents have not run it. The two screenshots under the post's
+outage 3 heading are from outage 1. Say so plainly if asked.
+
+**"Was there really no human in the loop?"** In the second run no person approved anything:
+Milton made all 19 approvals (VR:418). A person still set the rules and named who may approve,
+a Claude Code session acting for that person started each step from the scenarios, and the
+person chose to end the run after Milton's refusal (VR:5-8, VR:386-392). In the first run a
+person approved every change.
+
 **"Is this just a demo?"** The fleet is `kind` clusters, said plainly. The failures are real
 ones, the rules are ordinary Kubernetes admission policies and ConfigHub checks, and the whole
 thing runs on one machine so your reader can check it themselves.
+
+---
+
+## The post, claim by claim
+
+The post tells the story briefly. Where it simplifies, this is what the record shows. Quote the
+right-hand column, not the post, when your reader needs the exact account.
+
+| The post says | What the record shows | Where |
+| --- | --- | --- |
+| Milton "approves or refuses. In our second run it approved nineteen changes and refused one." | True of the second run. In the first run a person approved. You choose who may approve: you, Milton, or both | VR:23-27, VR:418; `demo/setup/gates.sh` |
+| Neither the Devil Agent nor the Angel Agent "can approve anything, including its own work" | Each workflow's approval step names its approvers and does not count an approval from a change's author. Devil and Angel are never named, and the agent runner refuses them `cub variant approve` | `demo/setup/gates.sh:26-31`, `demo/agents/README.md` |
+| "Five Kubernetes (kind) clusters" | True. A sixth kind cluster, the policy sandbox, holds admission policies for previews and runs nothing else | `demo/README.md`, "What you need" |
+| "Every cluster has exactly the desired configuration that was asked for but two nodes are down" | The picture is outage 2, mid-outage. The two `region=us` clusters are Degraded: their nodes are up, and the shop on them is blocked by a NetworkPolicy. All four are Synced | `captions.md`, image 1; FR:224-232 |
+| Outage 1 shows as broken "a minute later", and "around 80 seconds later" | 81 seconds from the rotation to Degraded on all four clusters, in the first run | FR:106 |
+| Outage 2: down "on the two clusters in the United States", up "on the two in Europe" | True. `prod-us-1` and `prod-us-2` carry `region=us`; `staging` and `prod-eu` carry `region=eu`. `prod-us-1` went Degraded 56 seconds after the fault, `prod-us-2` 19 seconds later | `demo/setup/kind-fleet.mjs`; FR:229-231 |
+| "Nothing was stored in the source repository to record that this profile existed" | The profile was applied by hand with `kubectl` on the management cluster. The demo's record is ConfigHub's Space `chaos-management`, and it did not hold the profile | FR:224-227; `demo/GLOSSARY.md`, "The record" |
+| Outage 3: clusters "re-based onto newly hardened images" | The demo rebuilds each kind cluster from nothing, on the same node image. Neither failure depends on the image | `demo/scenarios/03-repave.md` |
+| Outage 3's two failures: Sveltos sent nothing while the dashboard said Healthy; the shop came back without its token | Found by hand on 26 October 2026, without agents: a rebuilt `prod-us-2` stayed empty while ConfigHub showed Healthy. Once delivery resumed, the pods reported the missing Secret and live status went Degraded. Why Sveltos delivers nothing to a rebuilt cluster is with the Sveltos maintainers, as a question | PR #131; `demo/scenarios/03-repave.md` |
+| The repair "shown as a config change promotion", and the transcript, under the outage 3 heading | Both are from outage 1, first run: the change order `web-reload-on-token-rotation`, and the Devil Agent's second try. There is no screenshot of outage 3 | `captions.md`, images 2 and 3 |
+| The Devil Agent rotates the token again, "the shop survives, so it copies the old manifest", and is refused | True: outage 1, first run, 14:26:52 UTC, refused by `secret-env-needs-reload` | FR:182-191 |
+| "Nobody was watching when the first outage happened" | Nobody had to notice: the clusters' health checks reported it and ConfigHub showed it. A person was running the first run, step by step | FR:106, FR:205 |
+| A new policy was run "against every object already running on the fleet, on a spare cluster" | `cub sveltos impact`, by server-side dry runs in the policy sandbox. It judges each cluster's configuration at the release it runs, as ConfigHub records it, and only the objects a policy matches. It does not read objects back from the clusters. In outage 1: "4 newly denied" as the fleet ran, "0 newly denied" with the fix as the next promotion | FR:150-154; `cub sveltos impact --help`; `internal/onboard/impact.go` |
+| Milton refused "a production memory limit cut that staging has not yet run", and "we stopped that run" | Second run. The cut was the Devil Agent's change in an earlier outage 3, replaced on 26 October by the repave. The person running the demo ended the run rather than approve it by hand; prod never ran it | VR:356-392 |
+| Each policy "is stored with the outage that caused it, the cases it was tested against, and who approved it" | In ConfigHub: the policy's unit and its revisions, the change order that carried it, its known cases in a unit of their own (`chaos-policies/known-cases`), and each approval with the approver's note. Read approvals with `cub`; the web UI of the recorded runs did not show them | `demo/recording/verification-2026-10-03.md`; VR:18-21 |
+| "Two of the three preventions are Kubernetes admission policies" | True: outage 1's on every cluster, outage 2's on the management cluster. The third is outage 3's repave gate, a set of ConfigHub triggers | `demo/scenarios/` |
+| "A repository holds what the clusters were told to run. It does not hold what they are running" | The preview judges the configuration ConfigHub records each cluster as running, its last release, not objects read from the cluster. Live status says whether Sveltos delivered it; outage 3 shows live status can say Synced and Healthy for a rebuilt, empty cluster | `internal/onboard/impact.go`; `demo/scenarios/03-repave.md` |
+| "Each agent has credentials that can change configuration and cannot change a workflow or a trigger" | Each agent's ConfigHub identity holds the permissions `setup/grant-agents.sh` gives it. The rule that no agent changes a workflow or a trigger is enforced by the agent runner, which refuses those commands, and by Claude Code's command sandbox. It is not set as a ConfigHub permission. Until 26 October 2026, both recorded runs included, the agents ran with the operator's own `cub` configuration | `demo/agents/README.md`; `demo/setup/grant-agents.sh` |
+| ConfigHub "publishes each release as an OCI artifact for Sveltos to apply" | True: each cluster's delivery profile fetches its variant's latest release from ConfigHub's OCI gateway | `demo/README.md`, "How the pieces fit" |
+| It needs "a Mac, Docker with room for six kind clusters, a ConfigHub organization where you are an admin, and Claude Code" | True. Budget also two to three hours, $20 to $30 of model time, and 20 free Spaces | `demo/README.md`, "What you need" |
+| "run bash demo/standup.sh — check" | The command is `bash demo/standup.sh --check`. The post's spelling works too | `demo/standup.sh` |
+| "about seven minutes", "Twenty minutes in all before the first outage" | Our times | `demo/README.md` |
+| "Run the three outages in order" | Outage 3 has not been run by agents: treat a difference there as new information, not a mistake | `demo/scenarios/03-repave.md` |
+| "install the plugin and follow the onboarding guide" | `cub plugin install confighub/sveltos-confighub`, then `docs/user/onboard-your-sveltos-fleet.md` | `README.md` |
+| `examples/gpu-operator` "upgrades the driver on staging before production" | True, recorded on kind clusters on 27 September 2026 | `examples/gpu-operator/README.md` |
 
 ---
 

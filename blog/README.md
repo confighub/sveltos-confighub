@@ -7,7 +7,7 @@ a reader needs in order to check it, understand it or run it lives here.
 
 | Folder | Post | Status |
 | --- | --- | --- |
-| [`2026-11-ai-chaos-in-production/`](2026-11-ai-chaos-in-production/) | AI chaos in production. Two AI agents on a Sveltos and ConfigHub fleet: three outages caused on purpose, including a nightly repave | Draft |
+| [`2026-11-ai-chaos-in-production/`](2026-11-ai-chaos-in-production/) | [No human in the loop? Agents manage a Sveltos fleet in ConfigHub](https://confighub.com/blog/no-human-in-the-loop-agents-manage-a-sveltos-fleet-in-confighub-178205600338). Two AI agents on a Sveltos and ConfigHub fleet: three outages caused on purpose, including a nightly repave | Published 6 November 2026 |
 
 ## What every post folder holds
 

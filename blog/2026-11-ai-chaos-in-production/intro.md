@@ -1,7 +1,8 @@
 # Three outages we had on purpose
 
-*A companion to the post. It tells the whole story at a walking pace, and assumes you have not
-read anything else we have written.*
+*A companion to the post
+[No human in the loop? Agents manage a Sveltos fleet in ConfigHub](https://confighub.com/blog/no-human-in-the-loop-agents-manage-a-sveltos-fleet-in-confighub-178205600338). It tells
+the whole story at a walking pace, and assumes you have not read anything else we have written.*
 
 ## Fleets fail in a few familiar ways
 
@@ -44,7 +45,9 @@ the fleet, they keep it compliant, and they are what lets the agents work at all
 watches whether what it delivered is healthy. **ConfigHub** holds the configuration itself, the
 policies, and the record of every change and every approval.
 
-What is running on the fleet is a small web application we call the shop: two services, `api`
+The fleet is five Kubernetes clusters, local `kind` clusters standing in for production: one
+management cluster, where Sveltos runs, one staging cluster and three production clusters.
+What is running on it is a small web application we call the shop: two services, `api`
 and `web`, both written in Python, plus one platform component that restarts pods when a secret
 changes. None of what follows depends on the workload being an application, or being small. The
 same arrangement carries platform components and GPU stacks, and there is a second example in
@@ -63,7 +66,7 @@ settles it.
 | It is fixed | Health back to healthy, and the exact release that was delivered |
 | The new rule is safe | A real Kubernetes API server, judging the rule against everything currently running |
 | This may ship | An approval from a person, or from Milton, and never from the change's author |
-| It cannot happen again | Devil tries the identical fault, and it is refused |
+| It cannot happen again | Devil tries again, the same fault or a way round it, and is refused |
 
 That last row is the one to watch for. A prevention you have tested by attacking it is worth
 more than a prevention you have reasoned about.
@@ -103,9 +106,10 @@ evidence than anything we could write.
 Devil applied one delivery profile by hand on the management cluster. It selected clusters by a
 label, `region=us`, and delivered a network policy that blocked the shop.
 
-Two of the four clusters carry that label. Those two went degraded, sixty seconds apart. The
-other two stayed healthy. One hand-applied object, written in one place, reaching exactly as far
-as its selector said and no further than anyone could see.
+Two of the four clusters carry that label. The first went degraded fifty-six seconds after the
+fault, and the second nineteen seconds after that. The other two stayed healthy. One
+hand-applied object, written in one place, reaching exactly as far as its selector said and no
+further than anyone could see.
 
 Angel found a profile that no record held, took it over through ConfigHub, and proposed a rule:
 delivery profiles come from the record, and a delivery profile names the single cluster it is
@@ -121,8 +125,10 @@ was a rotation. This one is a repave. Some large organisations rebuild their ent
 several times a week under a standing approval, without telling the application teams, which is
 the point of doing it.
 
-So the clusters are rebuilt from nothing overnight. A cluster rebuilt from nothing should get
-everything back from its source of truth.
+So the clusters are rebuilt from nothing overnight. A real repave usually moves each cluster
+onto newly hardened images as well. Ours come back on the same image, and neither of the
+failures below depends on it. A cluster rebuilt from nothing should get everything back from its source of
+truth.
 
 Two things went wrong, and we found both while building it.
 
@@ -131,8 +137,9 @@ delivered nothing to the rebuilt clusters. It still held its own record saying i
 everything already, and nothing had told it the clusters were new. ConfigHub reads that record,
 so live status went on saying healthy while production was empty.
 
-The second was simpler. When delivery did resume, the shop came back without its token, because
-that token had been made by hand in each cluster and no release held it.
+The second was simpler, and not silent. When delivery did resume, the shop came back without its
+token, because that token had been made by hand in each cluster and no release held it. The pods
+said which Secret was missing, and live status went degraded.
 
 The prevention here is not a cluster rule but a check ConfigHub runs on every change: everything
 a workload uses must either be held in its release or be created by something in its release.
@@ -140,6 +147,41 @@ If it is not, the change does not ship.
 
 **Where this one stands.** Outage three has been built and checked by hand, and the agents have
 not yet run it end to end. The first two have been run twice, by the agents, and are recorded.
+
+## Letting an agent approve
+
+In the first run a person approved every change. In the second, nobody did: Milton made all
+nineteen approvals. ConfigHub held it to the same rules as any approver: it refused Milton's
+first approval, "Use permission required", until Milton was granted that permission.
+
+Milton also refused one change. In an earlier version of outage three, since replaced by the
+repave, Devil cut a memory limit in production alone, a limit staging had never run. Milton said
+no: the limit had never run anywhere, and approving it would have put it on all three production
+clusters at once. The person running the demo chose to end the run there, rather than approve
+the cut by hand. Production never ran it.
+
+So in the second run there was no person among the approvers. A person still set the rules and
+named who may approve, a Claude Code session acting for that person started each step, and the
+person decided when the run ended.
+
+## Why not keep all this in Git
+
+Two of the three preventions are ordinary Kubernetes admission policies, and a Git repository
+could hold those as well as ConfigHub does.
+
+The third, the repave check, is a check ConfigHub runs on every change before it releases
+anything. And before any policy ships, it is previewed against each cluster's configuration at
+the release that cluster runs, which ConfigHub records cluster by cluster. The preview judges
+that configuration, not objects read back from the clusters, so something made by hand on a
+cluster is not in it.
+
+ConfigHub keeps the history around each policy: its revisions, each with a description and an
+author, the change order that carried it, the approval with the approver's note, and the known
+cases it was tested against, in a unit of their own.
+
+The agents may change configuration, and may not change a workflow or a check. What holds them
+to that is the program that runs them, which refuses those commands, and the sandbox it runs
+them in.
 
 ## What the fleet keeps
 
