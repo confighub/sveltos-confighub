@@ -217,7 +217,7 @@ when in doubt, read `governedRecords` in `scripts/lib/per-cluster-fleet.mjs`
    [live status](onboard-your-sveltos-fleet.md#live-status-in-confighub).
    You can then declare the workflow required
    on the component,
-   `cub component update --patch <component> --change-workflow-required --allowed-change-workflow <base-space>/<workflow>`;
+   `cub component update --patch <component> --require-change-workflow --allowed-change-workflow <base-space>/<workflow>`;
    measured on 2026-09-26, ConfigHub records that but does not yet refuse a
    plain publish outside a change order, so send every release through one
    yourself.
