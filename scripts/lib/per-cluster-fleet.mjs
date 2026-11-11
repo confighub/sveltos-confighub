@@ -161,7 +161,7 @@ const knownCubFlags = new Map([
   ["filter get", ["space", "o"]],
   ["trigger get", ["space", "o"]],
   ["component create", ["label", "quiet"]],
-  ["component update", ["patch", "change-workflow-required", "allowed-change-workflow", "quiet"]],
+  ["component update", ["patch", "require-change-workflow", "allowed-change-workflow", "quiet"]],
   ["component get", ["o"]],
   ["component delete", ["quiet"]],
   ["space create", ["label", "trigger-filter", "where-trigger", "component", "quiet"]],
@@ -675,7 +675,7 @@ export function governedRecords(deps) {
   function requireChangeWorkflow(context, { component, workflowRef }) {
     cub(context, [
       "component", "update", "--patch", component,
-      "--change-workflow-required",
+      "--require-change-workflow",
       "--allowed-change-workflow", workflowRef,
       "--quiet",
     ]);

@@ -14,7 +14,7 @@ set -euo pipefail
 [ -n "${AI_CHAOS_DIR:-}" ] && [ -n "${CHAOS_RUNS:-}" ] && [ -n "${DEMO:-}" ] || . "$(cd "$(dirname "$0")/.." && pwd)/env.sh"
 approvers=${APPROVERS:-"${YOU_ID:?source demo/env.sh after setup/identities.sh} ${MILTON_ID:?}"}
 for c in shop platform; do
-  cub component update --patch "chaos-$c" --change-workflow-required --allowed-change-workflow "chaos-$c-base/rollout" --quiet
+  cub component update --patch "chaos-$c" --require-change-workflow --allowed-change-workflow "chaos-$c-base/rollout" --quiet
   echo "chaos-$c: changes only through chaos-$c-base/rollout"
 done
 workflow=$(mktemp)
@@ -37,5 +37,5 @@ workflow=$(mktemp)
 } > "$workflow"
 cub changeworkflow create --space chaos-management record --filename "$workflow" --allow-exists --quiet
 rm -f "$workflow"
-cub component update --patch chaos-management --change-workflow-required --allowed-change-workflow chaos-management/record --quiet
+cub component update --patch chaos-management --require-change-workflow --allowed-change-workflow chaos-management/record --quiet
 echo "chaos-management: changes only through chaos-management/record, approved by: $approvers"

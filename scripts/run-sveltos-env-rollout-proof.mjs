@@ -1593,7 +1593,7 @@ function openChangeWorkflow({ policyContext, baseSpace, plan, runId, component }
     workflowRequired: {
       component,
       declared: true,
-      command: "cub component update --patch <component> --change-workflow-required --allowed-change-workflow <base-space>/<workflow>",
+      command: "cub component update --patch <component> --require-change-workflow --allowed-change-workflow <base-space>/<workflow>",
       enforcedOnPlainPublish: false,
       measuredOn: "2026-09-26",
       note: workflowRequiredNote,
@@ -6037,7 +6037,7 @@ function replayAttestationProbe(hub, workRoot) {
     "--filename", workflowFile(true), "--quiet",
   ], "workflow with an approval requirement, from a file");
   must([
-    "component", "update", "--patch", probe, "--change-workflow-required",
+    "component", "update", "--patch", probe, "--require-change-workflow",
     "--allowed-change-workflow", `${base}/line`, "--quiet",
   ], "declare the workflow required");
   check(
@@ -6581,7 +6581,7 @@ function createFakeConfigHub() {
       for (const ref of allowed) {
         if (!workflows.has(ref)) return refuse(`ChangeWorkflow ${ref} not found`);
       }
-      row.ChangeWorkflowRequired = flags["change-workflow-required"] === true;
+      row.RequireChangeWorkflow = flags["require-change-workflow"] === true;
       row.AllowedChangeWorkflows = allowed;
       return ok("");
     }
@@ -7271,7 +7271,7 @@ function createFakeConfigHub() {
   };
   const componentRequires = (slug) => {
     const row = componentFor(slug);
-    return row?.ChangeWorkflowRequired ? (row.AllowedChangeWorkflows ?? [])[0] : null;
+    return row?.RequireChangeWorkflow ? (row.AllowedChangeWorkflows ?? [])[0] : null;
   };
   const attestationsOn = (spaceSlug) => [...units.values()]
     .filter((unit) => unit.SpaceSlug === spaceSlug)
@@ -7350,7 +7350,7 @@ function mergeValue(baseOld, baseNew, mine) {
 function parseCubCommand(args) {
   const booleans = new Set([
     "--quiet", "--wait", "--patch", "--refresh-triggers", "--recursive-force",
-    "--upgrade", "--change-workflow-required", "--help",
+    "--upgrade", "--require-change-workflow", "--help",
   ]);
   const repeatable = new Set(["label", "stage", "prerequisites"]);
   const positionals = [];

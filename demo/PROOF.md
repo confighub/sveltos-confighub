@@ -35,7 +35,7 @@ baseline, and the record's first, which the handover publishes.
 | --- | --- |
 | Each agent has its own identity, and none can approve | Service accounts page, or `cub serviceaccount list`. `cub space get chaos-shop-prod-eu -o yaml`: under Permissions, ApproveChildren names only `chaos-milton`. Approving also needs Use on the change order (UseChildren on its base Space) |
 | Only you or Milton may approve, never a change's author | `evidence.sh`, Gates: `approval = 1 Approval from you, chaos-milton (Service Account); authors counted: False` |
-| A component takes changes only through its workflow | `cub component get chaos-shop -o yaml`: `ChangeWorkflowRequired: true` |
+| A component takes changes only through its workflow | `cub component get chaos-shop -o yaml`: `RequireChangeWorkflow: true` |
 | The management record can't be published directly | `cub release publish chaos-management` is refused: "requires a ChangeWorkflow" |
 | Live status reaches ConfigHub | Components: each deployment Live and Synced. `cub sveltos status --kube-context kind-chaos-mgmt` |
 
